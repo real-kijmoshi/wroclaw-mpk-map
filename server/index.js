@@ -234,14 +234,15 @@ const fetchLines = async () => {
     //foreach every line, extract the shapes
     shapes.clear();
 
-    rawLines.forEach(line => {
-      const shape = getShapesForRoute(line);
-      if (shape) {
-        shapes.set(line, shape[Object.keys(shape)[0]]);
-      } else {
-        console.warn(`No shape found for line: ${line}`);
-      }
-    });
+    // COMENTED FOR NOW BECASE ITS NOT OPTIMIZED AND SERVER JAMS
+    // rawLines.forEach(line => {
+    //   const shape = getShapesForRoute(line);
+    //   if (shape) {
+    //     shapes.set(line, shape[Object.keys(shape)[0]]); // Assuming shape is an object with a single key
+    //   } else {
+    //     console.warn(`No shape found for line: ${line}`);
+    //   }
+    // });
 
     // Categorize lines
     const categorizedLines = categorizeLines(rawLines);
