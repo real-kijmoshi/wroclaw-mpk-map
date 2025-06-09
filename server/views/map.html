@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wrocław Public Transport Live Map</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #121212;
+            height: 100vh;
+            overflow: hidden;
+            color: #FFFFFF;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        .sidebar {
+            width: 380px;
+            background: linear-gradient(145deg, #1e1e1e 0%, #2a2a2a 100%);
+            backdrop-filter: blur(20px);
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            flex-direction: column;
+            z-index: 1000;
+            box-shadow: 4px 0 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .header {
+            padding: 25px 20px;
+            background: linear-gradient(135deg, #0075FF 0%, #4A90E2 100%);
+            color: white;
+            text-align: center;
+            position: relative;
+        }
+
+        .header h1 {
+            font-size: 1.6rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
+
+        .stats {
+            padding: 25px 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .stat-card {
+            background: linear-gradient(145deg, #2a2a2a 0%, #1e1e1e 100%);
+            padding: 20px 15px;
+            border-radius: 16px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: 800;
+            color: #0075FF;
+            margin-bottom: 8px;
+            text-shadow: 0 2px 4px rgba(0, 117, 255, 0.3);
+        }
+
+        .stat-label {
+            font-size: 0.85rem;
+            color: #E0E0E0;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+
+        .filters {
+            padding: 25px 20px;
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+
+        .filters::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .filters::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+        }
+
+        .filters::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+        }
+
+        .category-container {
+            margin-bottom: 30px;
+        }
+
+        .category-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 15px;
+            color: #E0E0E0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .lines-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: flex-start;
+        }
+
+        .line-button {
+            min-width: 50px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: white;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            user-select: none;
+            border: 2px solid transparent;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .line-button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 100%);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .line-button:hover::before {
+            opacity: 1;
+        }
+
+        .line-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+        }
+
+        .line-button.selected {
+            border-color: #BB86FC;
+            box-shadow: 0 0 0 2px #BB86FC, 0 4px 15px rgba(187, 134, 252, 0.3);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { 
+                box-shadow: 0 0 0 2px #BB86FC, 0 4px 15px rgba(187, 134, 252, 0.3);
+            }
+            50% { 
+                box-shadow: 0 0 0 4px rgba(187, 134, 252, 0.5), 0 4px 20px rgba(187, 134, 252, 0.4);
+            }
+        }
+
+        .last-update {
+            padding: 20px;
+            background: linear-gradient(145deg, #1a1a1a 0%, #0d0d0d 100%);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.85rem;
+            color: #B0B0B0;
+            text-align: center;
+        }
+
+        .update-time {
+            font-weight: 700;
+            color: #0075FF;
+        }
+
+        #map {
+            flex-grow: 1;
+            position: relative;
+            background: #1a1a1a;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: linear-gradient(145deg, #2a2a2a 0%, #1e1e1e 100%);
+            color: white;
+            padding: 25px 35px;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(255, 255, 255, 0.2);
+            border-top: 3px solid #0075FF;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .vehicle-popup {
+            text-align: center;
+            font-family: inherit;
+            color: #333;
+        }
+
+        .vehicle-popup .line-number {
+            font-size: 1.3rem;
+            font-weight: 800;
+            margin-bottom: 8px;
+        }
+
+        .vehicle-popup .vehicle-type {
+            font-size: 0.9rem;
+            color: #666;
+            text-transform: capitalize;
+            font-weight: 600;
+        }
+
+        .route-info {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: linear-gradient(145deg, #2a2a2a 0%, #1e1e1e 100%);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+            z-index: 999;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: none;
+        }
+
+        .route-info.visible {
+            display: block;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .route-info h3 {
+            margin: 0 0 5px 0;
+            font-size: 1.1rem;
+            font-weight: 700;
+        }
+
+        .route-info p {
+            margin: 0;
+            font-size: 0.85rem;
+            color: #B0B0B0;
+        }
+
+        .close-route {
+            position: absolute;
+            top: 8px;
+            right: 12px;
+            background: none;
+            border: none;
+            color: #B0B0B0;
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 0;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .close-route:hover {
+            color: white;
+        }
+
+        /* Mobile responsiveness */
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 100%;
+                position: absolute;
+                height: 60vh;
+                z-index: 1001;
+                overflow: hidden;
+            }
+
+            .container {
+                flex-direction: column;
+            }
+
+            .route-info {
+                top: 10px;
+                right: 10px;
+                left: 10px;
+                right: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <div class="header">
+                <h1>🚋 Wrocław Transit</h1>
+                <p>Live vehicle tracking system</p>
+            </div>
+            
+            <div class="stats">
+                <div class="stat-grid">
+                    <div class="stat-card">
+                        <div class="stat-number" id="tramCount">0</div>
+                        <div class="stat-label">Tramwaje</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="busCount">0</div>
+                        <div class="stat-label">Autobusy</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="filters" id="filtersContainer">
+                <!-- Categories will be populated dynamically -->
+            </div>
+
+            <div class="last-update">
+                Ostatnia aktualizacja: <span class="update-time" id="lastUpdate">Nigdy</span>
+            </div>
+        </div>
+
+        <div id="map">
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <span>Ładowanie pojazdów...</span>
+            </div>
+            
+            <div class="route-info" id="routeInfo">
+                <button class="close-route" onclick="hideRoute()">×</button>
+                <h3 id="routeTitle">Linia X</h3>
+                <p id="routeType">Typ pojazdu</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    
+    <script>
+        // Colors matching your React Native app
+        const Colors = {
+            tram: "#0075FF",
+            tramSpecial: "#50E3C2", 
+            tramTemporary: "#F8E71C",
+            bus: "#E85D75",
+            busSpecial: "#F5A623",
+            busNight: "#9013FE",
+            busTemporary: "#B8E986", 
+            busSuburban: "#7ED321",
+            busZone: "#F8E71C",
+            busExpress: "#F5A623",
+            unknown: "#D0021B"
+        };
+
+        // Translations matching your React Native app
+        const translations = {
+            tram: { name: "Tramwaje", color: "#0075FF" },
+            tramSpecial: { name: "Tramwaje Specjalne", color: "#50E3C2" },
+            tramTemporary: { name: "Tramwaje Tymczasowe", color: "#F8E71C" },
+            bus: { name: "Autobusy", color: "#E85D75" },
+            busNight: { name: "Autobusy Nocne", color: "#9013FE" },
+            busSuburban: { name: "Autobusy Podmiejskie", color: "#7ED321" },
+            busTemporary: { name: "Autobusy Tymczasowe", color: "#B8E986" },
+            busZone: { name: "Autobusy Strefowe", color: "#F8E71C" },
+            busExpress: { name: "Autobusy Ekspresowe", color: "#F5A623" },
+            busSpecial: { name: "Autobusy Specjalne", color: "#D0021B" },
+            unknown: { name: "Nieznane", color: "#D0021B" }
+        };
+
+        // Initialize map centered on Wrocław with dark theme
+        const map = L.map('map', {
+            center: [51.1079, 17.0385],
+            zoom: 12,
+            zoomControl: true,
+            attributionControl: false
+        });
+        
+        // Add dark theme map tiles
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '© OpenStreetMap contributors, © CARTO',
+            subdomains: 'abcd',
+            maxZoom: 19
+        }).addTo(map);
+
+        // Store markers, routes, and current selections
+        let vehicleMarkers = [];
+        let selectedLines = [];
+        let vehicleData = [];
+        let linesData = {};
+        let currentRoute = null;
+
+        // Create custom vehicle marker
+        function createVehicleMarker(vehicle) {
+            const color = Colors[vehicle.type] || Colors.unknown;
+            
+            const customIcon = L.divIcon({
+                html: `
+                    <div style="
+                        background: ${color};
+                        color: white;
+                        border-radius: 8px;
+                        width: 32px;
+                        height: 32px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-weight: 700;
+                        font-size: 12px;
+                        border: 2px solid rgba(255,255,255,0.9);
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+                        text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+                    ">${vehicle.line}</div>
+                `,
+                className: 'custom-vehicle-icon',
+                iconSize: [32, 32],
+                iconAnchor: [16, 16]
+            });
+
+            const marker = L.marker([vehicle.lat, vehicle.lon], { icon: customIcon });
+            
+            marker.bindPopup(`
+                <div class="vehicle-popup">
+                    <div class="line-number">Linia ${vehicle.line}</div>
+                    <div class="vehicle-type">${translations[vehicle.type]?.name || vehicle.type}</div>
+                </div>
+            `);
+
+            // Add click handler to show route
+            marker.on('click', () => {
+                fetchRouteShape(vehicle.line, vehicle.type);
+            });
+
+            return marker;
+        }
+
+        // Fetch and display route shape
+        async function fetchRouteShape(routeId, type) {
+            try {
+                const response = await fetch(`/shapes/${routeId}`);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch route shape');
+                }
+                
+                const data = await response.json();
+                
+                // Remove existing route
+                if (currentRoute) {
+                    map.removeLayer(currentRoute);
+                }
+                
+                // Create new route polyline
+                const routeCoords = data.map(point => [point.lat, point.lon]);
+                const routeColor = Colors[type] || Colors.unknown;
+                
+                currentRoute = L.polyline(routeCoords, {
+                    color: routeColor,
+                    weight: 4,
+                    opacity: 0.8,
+                    lineJoin: 'round'
+                }).addTo(map);
+                
+                // Show route info
+                showRouteInfo(routeId, type);
+                
+                // Fit map to route bounds
+                map.fitBounds(currentRoute.getBounds(), { padding: [20, 20] });
+                
+            } catch (error) {
+                console.error('Error fetching route shape:', error);
+            }
+        }
+
+        // Show route information panel
+        function showRouteInfo(lineNumber, type) {
+            const routeInfo = document.getElementById('routeInfo');
+            const routeTitle = document.getElementById('routeTitle');
+            const routeType = document.getElementById('routeType');
+            
+            routeTitle.textContent = `Linia ${lineNumber}`;
+            routeType.textContent = translations[type]?.name || type;
+            routeInfo.style.color = Colors[type] || Colors.unknown;
+            
+            routeInfo.classList.add('visible');
+        }
+
+        // Hide route
+        function hideRoute() {
+            if (currentRoute) {
+                map.removeLayer(currentRoute);
+                currentRoute = null;
+            }
+            document.getElementById('routeInfo').classList.remove('visible');
+        }
+
+        // Create line selection interface
+        function createLineFilters(lines) {
+            const container = document.getElementById('filtersContainer');
+            container.innerHTML = '';
+            
+            Object.keys(lines)
+                .filter(cat => !['allBuses', 'allTrams'].includes(cat) && lines[cat].length > 0)
+                .forEach(category => {
+                    const categoryDiv = document.createElement('div');
+                    categoryDiv.className = 'category-container';
+                    
+                    const title = document.createElement('div');
+                    title.className = 'category-title';
+                    title.textContent = translations[category]?.name || category;
+                    categoryDiv.appendChild(title);
+                    
+                    const linesRow = document.createElement('div');
+                    linesRow.className = 'lines-row';
+                    
+                    lines[category]
+                        .sort((a, b) => parseInt(a) - parseInt(b))
+                        .forEach(line => {
+                            const lineButton = document.createElement('div');
+                            lineButton.className = 'line-button';
+                            lineButton.style.backgroundColor = Colors[category] || Colors.unknown;
+                            lineButton.textContent = line;
+                            lineButton.dataset.line = line;
+                            
+                            lineButton.addEventListener('click', () => {
+                                toggleLineSelection(line, lineButton);
+                            });
+                            
+                            linesRow.appendChild(lineButton);
+                        });
+                    
+                    categoryDiv.appendChild(linesRow);
+                    container.appendChild(categoryDiv);
+                });
+        }
+
+        // Toggle line selection
+        function toggleLineSelection(line, buttonElement) {
+            const index = selectedLines.indexOf(line);
+            if (index > -1) {
+                selectedLines.splice(index, 1);
+                buttonElement.classList.remove('selected');
+            } else {
+                selectedLines.push(line);
+                buttonElement.classList.add('selected');
+            }
+            filterVehicles();
+        }
+
+        // Filter vehicles based on selected lines
+        function filterVehicles() {
+            vehicleMarkers.forEach(marker => map.removeLayer(marker));
+            vehicleMarkers = [];
+
+            const filteredVehicles = selectedLines.length === 0 
+                ? vehicleData 
+                : vehicleData.filter(vehicle => selectedLines.includes(vehicle.line));
+
+            filteredVehicles.forEach(vehicle => {
+                const marker = createVehicleMarker(vehicle);
+                marker.addTo(map);
+                vehicleMarkers.push(marker);
+            });
+
+            updateStats();
+        }
+
+        // Update statistics
+        function updateStats() {
+            const visibleVehicles = selectedLines.length === 0 ? vehicleData : 
+                vehicleData.filter(vehicle => selectedLines.includes(vehicle.line));
+                
+            const tramCount = visibleVehicles.filter(v => v.type.startsWith('tram')).length;
+            const busCount = visibleVehicles.filter(v => v.type.startsWith('bus')).length;
+            
+            document.getElementById('tramCount').textContent = tramCount;
+            document.getElementById('busCount').textContent = busCount;
+        }
+
+        // Fetch lines data
+        async function fetchLines() {
+            try {
+                const response = await fetch('/lines');
+                linesData = await response.json();
+                createLineFilters(linesData);
+            } catch (error) {
+                console.error('Error fetching lines:', error);
+            }
+        }
+
+        // Fetch vehicle locations
+        async function fetchVehicles() {
+            try {
+                const response = await fetch('/locations');
+                const data = await response.json();
+                
+                vehicleData = (data.locations || []).filter(v => 
+                    v.lat !== 0 && v.lon !== 0 && !isNaN(v.lat) && !isNaN(v.lon)
+                );
+                
+                filterVehicles();
+                
+                if (data.lastUpdated) {
+                    const lastUpdate = new Date(data.lastUpdated);
+                    document.getElementById('lastUpdate').textContent = lastUpdate.toLocaleTimeString();
+                }
+                
+                document.getElementById('loading').style.display = 'none';
+                
+            } catch (error) {
+                console.error('Error fetching vehicles:', error);
+                document.getElementById('loading').innerHTML = `
+                    <div style="color: #E85D75;">
+                        ❌ Błąd ładowania pojazdów
+                    </div>
+                `;
+            }
+        }
+
+        // Initialize app
+        async function initApp() {
+            await fetchLines();
+            await fetchVehicles();
+            setInterval(fetchVehicles, 10000); // Refresh every 10 seconds
+        }
+
+        // Start the application
+        initApp();
+        
+        window.hideRoute = hideRoute;
+    </script>
+</body>
+</html>

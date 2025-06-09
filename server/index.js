@@ -545,6 +545,10 @@ app.get('/status', (req, res) => {
   res.sendFile(path.join(__dirname, "views", 'status.html'));
 });
 
+app.get('/map', (req, res) => {
+  res.sendFile(path.join(__dirname, "views", 'map.html'));
+});
+
 // Initialize data and start server
 const startServer = async () => {
   try {
@@ -564,7 +568,7 @@ const startServer = async () => {
     startLocationFetching();
     
     const PORT = process.env.PORT || 3000;
-    app.listen(PORT, () => {
+    app.listen(PORT, "0.0.0.0", () => {
       // Initial console display
       updateConsoleDisplay();
       
