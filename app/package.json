@@ -1,0 +1,32 @@
+{
+  "dependencies": {
+    "@expo/vector-icons": "^14.1.0",
+    "@gorhom/bottom-sheet": "^5.1.6",
+    "@react-native-async-storage/async-storage": "^2.1.2",
+    "expo": "^53.0.11",
+    "expo-linear-gradient": "^14.1.5",
+    "expo-location": "~18.1.5",
+    "lucide-react-native": "^0.513.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "react-native": "0.79.3",
+    "react-native-gesture-handler": "^2.25.0",
+    "react-native-map-clustering": "^3.4.2",
+    "react-native-maps": "1.20.1",
+    "react-native-reanimated": "^3.18.0",
+    "react-native-svg": "15.11.2",
+    "react-native-web": "^0.20.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.19.3"
+  },
+  "name": "wroclaw-mpk-map",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "expo": {
+    "name": "wroclaw-mpk-map",
+    "slug": "wroclaw-mpk-map",
+    "version": "1.0.0",
+    "platforms": ["ios", "android", "web"]
+  }
+}
