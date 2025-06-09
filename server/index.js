@@ -14,6 +14,7 @@ const locations = {
     lastUpdated: null
 }
 
+
 // Store GTFS data globally so fetchLocations can access it
 let gtfsData = {
   lines: null
@@ -381,10 +382,21 @@ app.get('/alerts', (req, res) => {
 
 app.get('/shapes/:line', (req, res) => {
   const line = req.params.line;
+  
+  if(!shapes.has(line) && !lines.allTrams.includes(line) && !lines.allBuses.includes(line)) {
+    return res.status(404).json({ error: 'Line not found' });
+  }
+
   if (shapes.has(line)) {
-    res.json(shapes.get(line));
+    return res.json(shapes.get(line));
   } else {
-    res.status(404).json({ error: 'Shape not found for line', line });
+    const shape = getShapesForRoute(line);
+    if (shape) {
+      shapes.set(line, shape[Object.keys(shape)[0]]); // Assuming shape is an object with a single key
+      return res.json(shape[Object.keys(shape)[0]]);
+    } else {
+      return res.status(404).json({ error: 'Shape not found for this line' });
+    }
   }
 });
 

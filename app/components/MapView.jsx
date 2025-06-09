@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from "react-native";
 import Maps, { Marker as MapMarker, Polyline } from "react-native-maps";
 import { useMemo, useState } from "react";
+import { API_URL } from "../const.json";
 
 const Colors = {
   tram: "#0075FF",
@@ -15,7 +16,7 @@ const Colors = {
   unknown: "#D0021B",
 };
 
-const API_URL = "https://0455-176-121-80-161.ngrok-free.app";
+
 
 function VehicleMarker({ vehicle, i, onPress }) {
   return (

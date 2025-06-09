@@ -7,8 +7,7 @@ import LinesSelection from "./modals/LinesSelection";
 import SettingsModal from "./modals/SettingsModal";
 import AlertsModal from "./modals/AlertsModal";
 import InfoBox from "./components/InfoBox";
-
-const API_URL = "https://0455-176-121-80-161.ngrok-free.app";
+import { API_URL } from "./const.json";
 
 export default function App() {
   const [lines, setLines] = useState([]);
