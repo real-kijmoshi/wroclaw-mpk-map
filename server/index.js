@@ -151,6 +151,10 @@ const displayFooter = () => {
 };
 
 const updateConsoleDisplay = () => {
+  if(process.argv.includes('--no-console')) {
+    return; // Skip console display if --no-console flag is set
+  }
+
   clearConsole();
   displayHeader();
   displaySystemStatus();
