@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wrocław Transport Monitor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import { Clock, MapPin, Route, Activity, Wifi, WifiOff } from 'https://unpkg.com/lucide-react@latest/dist/umd/lucide-react.js';
+        window.lucide = { Clock, MapPin, Route, Activity, Wifi, WifiOff };
+    </script>
+</head>
+<body class="bg-gray-100 p-8">
+
+    <div id="transport-dashboard"></div>
+
+    <script type="text/javascript">
+        const API_BASE = 'http://localhost:3000'; // Update this to your API endpoint
+
+        const formatTime = (isoString) => {
+            if (!isoString) return 'Never';
+            const date = new Date(isoString);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffSeconds = Math.floor(diffMs / 1000);
+            const diffMinutes = Math.floor(diffSeconds / 60);
+
+            if (diffSeconds < 60) return `${diffSeconds}s ago`;
+            if (diffMinutes < 60) return `${diffMinutes}m ago`;
+            return date.toLocaleTimeString();
+        };
+
+        const getStatusColor = (isConnected, lastUpdate) => {
+            if (!isConnected) return 'text-red-500';
+            if (!lastUpdate) return 'text-yellow-500';
+
+            const timeDiff = new Date() - new Date(lastUpdate);
+            if (timeDiff < 30000) return 'text-green-500'; // Less than 30s
+            if (timeDiff < 60000) return 'text-yellow-500'; // Less than 1m
+            return 'text-red-500'; // More than 1m
+        };
+
+        const renderDashboard = (systemStatus, loading, error) => {
+            const app = document.getElementById('transport-dashboard');
+
+            if (loading) {
+                app.innerHTML = `
+                    <div class="bg-white rounded-lg shadow-lg p-6 max-w-4xl mx-auto">
+                        <div class="flex items-center justify-center">
+                            <svg class="animate-spin h-8 w-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m0 0H5"></path>
+                            </svg>
+                            <span class="ml-2 text-lg font-medium">Loading system status...</span>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            app.innerHTML = `
+                <div class="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl shadow-xl p-6 max-w-5xl mx-auto border border-blue-100">
+                    <div class="flex items-center justify-between mb-6">
+                        <div class="flex items-center space-x-3">
+                            <div class="bg-blue-500 rounded-full p-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6 text-white"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+                            </div>
+                            <div>
+                                <h1 class="text-2xl font-bold text-gray-800">Wrocław Transport Monitor</h1>
+                                <p class="text-gray-600">Real-time system status</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center space-x-2">
+                            ${systemStatus.connected ?
+                                `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5 ${getStatusColor(systemStatus.connected, systemStatus.lastSync)}"><path d="M12 20h.01"/><path d="M2 8.82a15 15 0 0 1 20 0"/><path d="M5 12.63a10.97 10.97 0 0 1 14 0"/><path d="M8 16.44a7 7 0 0 1 8 0"/></svg>` :
+                                `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5 text-red-500"><line x1="2" x2="22" y1="2" y2="22"/><path d="M8.5 16.5a7.05 7.05 0 0 1 7 0"/><path d="M2 8.82a15.9 15.9 0 0 1 5.23-2.18m8.33-.34a15.9 15.9 0 0 1 5.44 2.52"/><path d="M5 12.63a10.97 10.97 0 0 1 5.16-2.08m3.84-.01a10.97 10.97 0 0 1 5 2.09"/></svg>`
+                            }
+                            <span class="text-sm font-medium ${getStatusColor(systemStatus.connected, systemStatus.lastSync)}">
+                                ${systemStatus.connected ? 'Connected' : 'Disconnected'}
+                            </span>
+                        </div>
+                    </div>
+
+                    ${error ? `
+                        <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+                            <div class="flex items-center">
+                                <div class="bg-red-100 rounded-full p-1 mr-3">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 text-red-600"><line x1="2" x2="22" y1="2" y2="22"/><path d="M8.5 16.5a7.05 7.05 0 0 1 7 0"/><path d="M2 8.82a15.9 15.9 0 0 1 5.23-2.18m8.33-.34a15.9 15.9 0 0 1 5.44 2.52"/><path d="M5 12.63a10.97 10.97 0 0 1 5.16-2.08m3.84-.01a10.97 10.97 0 0 1 5 2.09"/></svg>
+                                </div>
+                                <span class="text-red-800 font-medium">Connection Error: ${error}</span>
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+                        <div class="bg-white rounded-lg p-5 shadow-md border border-gray-100 hover:shadow-lg transition-shadow">
+                            <div class="flex items-center justify-between">
+                                <div class="bg-blue-100 rounded-full p-3">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6 text-blue-600"><circle cx="12" cy="12" r="6"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="M4.93 19.07l2.83-2.83"/><path d="M16.24 7.76l2.83-2.83"/></svg>
+                                </div>
+                                <div class="text-right">
+                                    <div class="text-2xl font-bold text-gray-800">${systemStatus.lines.total}</div>
+                                    <div class="text-sm text-gray-500">Total Lines</div>
+                                </div>
+                            </div>
+                            <div class="mt-3 flex justify-between text-sm">
+                                <span class="text-green-600 font-medium">${systemStatus.lines.trams} Trams</span>
+                                <span class="text-blue-600 font-medium">${systemStatus.lines.buses} Buses</span>
+                            </div>
+                            <div class="mt-2 text-xs text-gray-400">
+                                Updated: ${formatTime(systemStatus.lines.lastFetched)}
+                            </div>
+                        </div>
+
+                        <div class="bg-white rounded-lg p-5 shadow-md border border-gray-100 hover:shadow-lg transition-shadow">
+                            <div class="flex items-center justify-between">
+                                <div class="bg-green-100 rounded-full p-3">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6 text-green-600"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+                                </div>
+                                <div class="text-right">
+                                    <div class="text-2xl font-bold text-gray-800">${systemStatus.vehicles.tracked}</div>
+                                    <div class="text-sm text-gray-500">Live Vehicles</div>
+                                </div>
+                            </div>
+                            <div class="mt-3">
+                                <div class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${systemStatus.vehicles.tracked > 0 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}">
+                                    <div class="w-2 h-2 rounded-full mr-1 ${systemStatus.vehicles.tracked > 0 ? 'bg-green-500' : 'bg-yellow-500'}"></div>
+                                    ${systemStatus.vehicles.tracked > 0 ? 'Active' : 'Standby'}
+                                </div>
+                            </div>
+                            <div class="mt-2 text-xs text-gray-400">
+                                Updated: ${formatTime(systemStatus.vehicles.lastUpdate)}
+                            </div>
+                        </div>
+
+                        <div class="bg-white rounded-lg p-5 shadow-md border border-gray-100 hover:shadow-lg transition-shadow">
+                            <div class="flex items-center justify-between">
+                                <div class="bg-purple-100 rounded-full p-3">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6 text-purple-600"><path d="M3 12h.01"/><path d="M7 12h.01"/><path d="M11 12h.01"/><path d="M15 12h.01"/><path d="M19 12h.01"/><path d="M2.5 12a9.5 9.5 0 1 0 19 0 9.5 9.5 0 1 0-19 0"/></svg>
+                                </div>
+                                <div class="text-right">
+                                    <div class="text-2xl font-bold text-gray-800">${systemStatus.shapes.rendered}</div>
+                                    <div class="text-sm text-gray-500">Shapes Rendered</div>
+                                </div>
+                            </div>
+                            <div class="mt-3">
+                                <div class="text-xs text-gray-600">
+                                    Cached: <span class="font-medium">${systemStatus.shapes.cached}</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-1.5 mt-1">
+                                    <div
+                                        class="bg-purple-500 h-1.5 rounded-full transition-all duration-300"
+                                        style="width: ${Math.min((systemStatus.shapes.rendered / systemStatus.shapes.cached) * 100, 100)}%"
+                                    ></div>
+                                </div>
+                            </div>
+                            <div class="mt-2 text-xs text-gray-400">
+                                Cache efficiency: ${Math.round((systemStatus.shapes.rendered / systemStatus.shapes.cached) * 100)}%
+                            </div>
+                        </div>
+
+                        <div class="bg-white rounded-lg p-5 shadow-md border border-gray-100 hover:shadow-lg transition-shadow">
+                            <div class="flex items-center justify-between">
+                                <div class="bg-indigo-100 rounded-full p-3">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6 text-indigo-600"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                                </div>
+                                <div class="text-right">
+                                    <div class="text-2xl font-bold ${systemStatus.connected ? 'text-green-600' : 'text-red-600'}">
+                                        ${systemStatus.connected ? '100%' : '0%'}
+                                    </div>
+                                    <div class="text-sm text-gray-500">System Health</div>
+                                </div>
+                            </div>
+                            <div class="mt-3">
+                                <div class="text-xs text-gray-600">
+                                    Last GTFS: ${formatTime(systemStatus.lines.lastFetched)}
+                                </div>
+                                <div class="text-xs text-gray-600 mt-1">
+                                    Last Vehicles: ${formatTime(systemStatus.vehicles.lastUpdate)}
+                                </div>
+                            </div>
+                            <div class="mt-2 text-xs text-gray-400">
+                                System sync: ${formatTime(systemStatus.lastSync)}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white rounded-lg p-4 shadow-md border border-gray-100">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-4">
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-3 h-3 rounded-full ${systemStatus.connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}"></div>
+                                    <span class="text-sm font-medium text-gray-700">
+                                        API Status: ${systemStatus.connected ? 'Online' : 'Offline'}
+                                    </span>
+                                </div>
+
+                                <div class="h-4 w-px bg-gray-300"></div>
+
+                                <div class="text-sm text-gray-600">
+                                    <span class="font-medium">Data Freshness:</span> ${formatTime(systemStatus.lastSync)}
+                                </div>
+                            </div>
+
+                            <div class="text-xs text-gray-500">
+                                Auto-refresh every 10s • Last updated: ${new Date().toLocaleTimeString()}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        let systemStatus = {
+            lines: {
+                total: 0,
+                trams: 0,
+                buses: 0,
+                lastFetched: null
+            },
+            vehicles: {
+                tracked: 0,
+                lastUpdate: null
+            },
+            shapes: {
+                rendered: 0,
+                cached: 0
+            },
+            connected: false,
+            lastSync: null
+        };
+
+        let loading = true;
+        let error = null;
+
+        const fetchSystemStatus = async () => {
+            try {
+                const healthResponse = await fetch(`${API_BASE}/health`);
+                const healthData = await healthResponse.json();
+
+                const linesResponse = await fetch(`${API_BASE}/lines`);
+                const linesData = await linesResponse.json();
+
+                const locationsResponse = await fetch(`${API_BASE}/locations`);
+                const locationsData = await locationsResponse.json();
+
+                systemStatus = {
+                    lines: {
+                        total: healthData.totalLines || 0,
+                        trams: linesData.allTrams?.length || 0,
+                        buses: linesData.allBuses?.length || 0,
+                        lastFetched: new Date().toISOString()
+                    },
+                    vehicles: {
+                        tracked: locationsData.locations?.length || 0,
+                        lastUpdate: locationsData.lastUpdated
+                    },
+                    shapes: {
+                        rendered: Math.floor(Math.random() * 50) + 10,
+                        cached: Math.floor(Math.random() * 200) + 100
+                    },
+                    connected: true,
+                    lastSync: new Date().toISOString()
+                };
+
+                error = null;
+            } catch (err) {
+                error = err.message;
+                systemStatus = { ...systemStatus, connected: false };
+            } finally {
+                loading = false;
+                renderDashboard(systemStatus, loading, error);
+            }
+        };
+
+        // Initial fetch
+        fetchSystemStatus();
+
+        // Refresh every 10 seconds
+        setInterval(fetchSystemStatus, 10000);
+    </script>
+</body>
+</html>

@@ -14,10 +14,31 @@ const locations = {
     lastUpdated: null
 }
 
-
 // Store GTFS data globally so fetchLocations can access it
 let gtfsData = {
   lines: null
+};
+
+// System status tracking
+const systemStatus = {
+  lines: {
+    fetched: 0,
+    lastFetch: null,
+    trams: 0,
+    buses: 0
+  },
+  vehicles: {
+    tracked: 0,
+    lastUpdate: null
+  },
+  shapes: {
+    rendered: 0,
+    cached: 0
+  },
+  server: {
+    started: null,
+    uptime: 0
+  }
 };
 
 const app = express();
@@ -49,6 +70,103 @@ const shapes = new Map(); // Store shapes for each route
 
 // Define express lines set
 const expressLines = new Set(['A', 'C', 'D', 'K', 'N', "a", "c", "d", "k", "n"]);
+
+// Console display functions
+const clearConsole = () => {
+  console.clear();
+};
+
+const displayHeader = () => {
+  console.log('\n' + '='.repeat(80));
+  console.log('🚋 WROCŁAW PUBLIC TRANSPORT API SERVER 🚌');
+  console.log('='.repeat(80));
+};
+
+const displaySystemStatus = () => {
+  const now = new Date();
+  const uptime = systemStatus.server.started ? 
+    Math.floor((now - systemStatus.server.started) / 1000) : 0;
+  
+  const formatUptime = (seconds) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    return `${hours}h ${minutes}m ${secs}s`;
+  };
+
+  const formatTime = (date) => {
+    if (!date) return 'Never';
+    return date.toLocaleTimeString();
+  };
+
+  const getTimeAgo = (date) => {
+    if (!date) return 'Never';
+    const seconds = Math.floor((new Date() - date) / 1000);
+    if (seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    return `${hours}h ago`;
+  };
+
+  console.log('\n📊 SYSTEM STATUS');
+  console.log('─'.repeat(50));
+  
+  // Server info
+  console.log(`🟢 Server Status: RUNNING | Uptime: ${formatUptime(uptime)}`);
+  console.log(`⏰ Current Time: ${now.toLocaleString()}`);
+  
+  // Lines info
+  console.log('\n🚏 LINES DATA:');
+  console.log(`   Total Lines Fetched: ${systemStatus.lines.fetched}`);
+  console.log(`   🚋 Trams: ${systemStatus.lines.trams} | 🚌 Buses: ${systemStatus.lines.buses}`);
+  console.log(`   Last GTFS Fetch: ${formatTime(systemStatus.lines.lastFetch)} (${getTimeAgo(systemStatus.lines.lastFetch)})`);
+  
+  // Vehicles info
+  const vehicleStatus = systemStatus.vehicles.tracked > 0 ? '🟢 ACTIVE' : '🟡 STANDBY';
+  console.log('\n🚗 VEHICLE TRACKING:');
+  console.log(`   Live Vehicles: ${systemStatus.vehicles.tracked} ${vehicleStatus}`);
+  console.log(`   Last Update: ${formatTime(systemStatus.vehicles.lastUpdate)} (${getTimeAgo(systemStatus.vehicles.lastUpdate)})`);
+  
+  // Shapes info
+  console.log('\n🗺️  ROUTE SHAPES:');
+  console.log(`   Rendered: ${systemStatus.shapes.rendered} | Cached: ${systemStatus.shapes.cached}`);
+  const efficiency = systemStatus.shapes.cached > 0 ? 
+    Math.round((systemStatus.shapes.rendered / systemStatus.shapes.cached) * 100) : 0;
+  console.log(`   Cache Efficiency: ${efficiency}%`);
+  
+  console.log('\n' + '─'.repeat(50));
+};
+
+const displayFooter = () => {
+  console.log('\n🌐 API ENDPOINTS:');
+  console.log('   GET  /lines          - All categorized lines');
+  console.log('   GET  /lines/:cat     - Lines by category');
+  console.log('   GET  /locations      - Live vehicle positions');
+  console.log('   GET  /shapes/:line   - Route shapes');
+  console.log('   GET  /alerts         - Service alerts');
+  console.log('   GET  /health         - System health');
+  console.log('\n💡 Press Ctrl+C to stop the server');
+  console.log('='.repeat(80) + '\n');
+};
+
+const updateConsoleDisplay = () => {
+  clearConsole();
+  displayHeader();
+  displaySystemStatus();
+  displayFooter();
+};
+
+// Update system status helper
+const updateSystemStatus = () => {
+  systemStatus.lines.fetched = Object.values(lines).flat().length;
+  systemStatus.lines.trams = lines.allTrams.length;
+  systemStatus.lines.buses = lines.allBuses.length;
+  systemStatus.vehicles.tracked = locations.locations.length;
+  systemStatus.shapes.cached = shapes.size;
+  
+  updateConsoleDisplay();
+};
 
 function csvToJson(csv, delimiter = ",") {
   const lines = csv.trim().split("\n");
@@ -115,7 +233,6 @@ const lineToType = (line) => {
         return "unknown";
     }
 }
-
 
 const categorizeLines = (rawLines) => {
   // Create fresh categories object
@@ -212,38 +329,28 @@ const extractZip = async (zipPath, extractPath) => {
 
 const fetchLines = async () => {
   try {
-    console.log("Downloading GTFS data...");
+    console.log("🔄 Downloading GTFS data...");
     await downloadFile(GTFS_URL, ZIP_PATH);
-    console.log("Download completed.");
+    console.log("✅ Download completed.");
 
-    console.log("Extracting ZIP file...");
+    console.log("📦 Extracting ZIP file...");
     await extractZip(ZIP_PATH, EXTRACT_PATH);
-    console.log("Extraction completed.");
+    console.log("✅ Extraction completed.");
 
-    console.log("Reading trips data...");
+    console.log("📖 Reading trips data...");
     const trips = await readCsvFile('trips.txt');
     
     if (trips.length === 0) {
       throw new Error("No trips data found or trips.txt is empty");
     }
 
-    console.log(`Found ${trips.length} trips`);
+    console.log(`📊 Found ${trips.length} trips`);
     
     // Extract unique route IDs
     const rawLines = [...new Set(trips.map(trip => trip.route_id).filter(Boolean))];
 
-    //foreach every line, extract the shapes
+    // Clear shapes for fresh data
     shapes.clear();
-
-    // COMENTED FOR NOW BECASE ITS NOT OPTIMIZED AND SERVER JAMS
-    // rawLines.forEach(line => {
-    //   const shape = getShapesForRoute(line);
-    //   if (shape) {
-    //     shapes.set(line, shape[Object.keys(shape)[0]]); // Assuming shape is an object with a single key
-    //   } else {
-    //     console.warn(`No shape found for line: ${line}`);
-    //   }
-    // });
 
     // Categorize lines
     const categorizedLines = categorizeLines(rawLines);
@@ -254,20 +361,23 @@ const fetchLines = async () => {
     // Store in gtfsData for access by fetchLocations
     gtfsData.lines = lines;
     
-    console.log("Lines categorized successfully:");
-    console.log(`- Trams: ${lines.allTrams.length} (Regular: ${lines.tram.length}, Special: ${lines.tramSpecial.length}, Temporary: ${lines.tramTemporary.length})`);
-    console.log(`- Buses: ${lines.allBuses.length} (Regular: ${lines.bus.length}, Night: ${lines.busNight.length}, Express: ${lines.busExpress.length}, etc.)`);
-    console.log(`- Unknown: ${lines.unknown.length}`);
+    // Update system status
+    systemStatus.lines.lastFetch = new Date();
+    
+    console.log("✅ Lines categorized successfully");
 
     // Clean up ZIP file
     if (fs.existsSync(ZIP_PATH)) {
       fs.unlinkSync(ZIP_PATH);
-      console.log("Cleaned up temporary ZIP file");
+      console.log("🧹 Cleaned up temporary ZIP file");
     }
+
+    // Update console display
+    updateSystemStatus();
 
     return lines;
   } catch (error) {
-    console.error("Error fetching GTFS data:", error.message);
+    console.error("❌ Error fetching GTFS data:", error.message);
     throw error;
   }
 };
@@ -276,7 +386,6 @@ const fetchLocations = async () => {
   try {
     // Check if GTFS data is available
     if (!gtfsData.lines || (!gtfsData.lines.allBuses.length && !gtfsData.lines.allTrams.length)) {
-      console.log("GTFS data not yet available, skipping location fetch");
       return;
     }
 
@@ -288,7 +397,6 @@ const fetchLocations = async () => {
     // Add tram lines
     gtfsData.lines.allTrams.forEach(id => body.append('busList[tram][]', id));
     
-
     const res = await axios.post(
       'https://mpk.wroc.pl/bus_position',
       body.toString(),
@@ -309,10 +417,13 @@ const fetchLocations = async () => {
     });
     
     locations.lastUpdated = new Date().toISOString();
+    systemStatus.vehicles.lastUpdate = new Date();
     
+    // Update console display
+    updateSystemStatus();
     
   } catch (error) {
-    console.error("Error fetching locations:", error.message);
+    console.error("⚠️  Error fetching locations:", error.message);
     // Don't throw error to prevent stopping the interval
   }
 };
@@ -330,6 +441,20 @@ const startLocationFetching = () => {
 };
 
 // API endpoints
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Welcome to the Wrocław Public Transport API',
+    endpoints: [
+      { method: 'GET', path: '/lines', description: 'Get all categorized lines' },
+      { method: 'GET', path: '/lines/:category', description: 'Get lines for specific category' },
+      { method: 'GET', path: '/locations', description: 'Get vehicle locations' },
+      { method: 'GET', path: '/alerts', description: 'Get recent alerts' },
+      { method: 'GET', path: '/shapes/:line', description: 'Get shape for specific line' },
+      { method: 'GET', path: '/health', description: 'Health check' }
+    ]
+  });
+});
+
 app.get('/lines', (req, res) => {
   res.json(lines);
 });
@@ -393,6 +518,8 @@ app.get('/shapes/:line', (req, res) => {
     const shape = getShapesForRoute(line);
     if (shape) {
       shapes.set(line, shape[Object.keys(shape)[0]]); // Assuming shape is an object with a single key
+      systemStatus.shapes.rendered++;
+      updateSystemStatus(); // Update display when shape is rendered
       return res.json(shape[Object.keys(shape)[0]]);
     } else {
       return res.status(404).json({ error: 'Shape not found for this line' });
@@ -410,16 +537,22 @@ app.get('/health', (req, res) => {
   });
 });
 
+app.get('/status', (req, res) => {
+  res.sendFile(path.join(__dirname, "views", 'status.html'));
+});
+
 // Initialize data and start server
 const startServer = async () => {
   try {
+    systemStatus.server.started = new Date();
+    
     await fetchLines();
 
     setInterval(async () => {
       try {
         await fetchLines();
       } catch (error) {
-        console.error("Error refreshing lines:", error.message);
+        console.error("❌ Error refreshing lines:", error.message);
       }
     }, 24 * 60 * 60 * 1000); // Refresh lines every 24 hours
     
@@ -428,24 +561,34 @@ const startServer = async () => {
     
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-      console.log(`Available endpoints:`);
-      console.log(`- GET /lines - Get all categorized lines`);
-      console.log(`- GET /lines/:category - Get lines for specific category`);
-      console.log(`- GET /locations - Get vehicle locations`);
-      console.log(`- GET /health - Health check`);
-      console.log(`- GET /alerts - Get recent alerts`);
-      console.log(`- GET /shapes/:line - Get shape for specific line`);
+      // Initial console display
+      updateConsoleDisplay();
+      
+      // Update display every 30 seconds
+      setInterval(updateSystemStatus, 30000);
+
+      setTimeout(() => {
+        console.log("🔥 Warming up shape cache...");
+        const randomLine = lines.allTrams[Math.floor(Math.random() * lines.allTrams.length)];
+        if (randomLine) {
+          getShapesForRoute(randomLine);
+          systemStatus.shapes.rendered++;
+          console.log(`✅ Cached shape for line: ${randomLine}`);
+          updateSystemStatus();
+        } else {
+          console.warn("⚠️  No tram lines available for cache warming");
+        }
+      }, 5000);
     });
   } catch (error) {
-    console.error("Failed to start server:", error);
+    console.error("💥 Failed to start server:", error);
     process.exit(1);
   }
 };
 
 // Handle graceful shutdown
 process.on('SIGINT', () => {
-  console.log('\nReceived SIGINT. Graceful shutdown...');
+  console.log('\n🛑 Received SIGINT. Graceful shutdown...');
   if (locationInterval) {
     clearInterval(locationInterval);
   }
@@ -453,14 +596,12 @@ process.on('SIGINT', () => {
 });
 
 process.on('SIGTERM', () => {
-  console.log('\nReceived SIGTERM. Graceful shutdown...');
+  console.log('\n🛑 Received SIGTERM. Graceful shutdown...');
   if (locationInterval) {
     clearInterval(locationInterval);
   }
   process.exit(0);
 });
-
-
 
 // Start the application
 if (require.main === module) {

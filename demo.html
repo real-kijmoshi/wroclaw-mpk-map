@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Wroclaw MPK Map - Real-time public transport tracker for buses, trams, night and express lines in Wroclaw.">
+  <meta name="author" content="realkijmoshi">
+  <title>Wrocław MPK Map • Real-time Transit Tracker</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <!-- Open Graph / Facebook -->
+  <meta property="og:title" content="Wrocław MPK Map" />
+  <meta property="og:description" content="Track buses and trams in Wrocław in real-time. Updates every 10 seconds." />
+  <meta property="og:image" content="/images/og-image.png" />
+  <meta property="og:url" content="https://github.com/realkijmoshi/wroclaw-mpk-map" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="theme-color" content="#d32f2f" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/normalize/8.0.1/normalize.min.css" integrity="sha512-oHDEc8XedO/jv7h1qN1iBMt+M0eEbaaE0wobXSodYxakqonULX1B+5svTgAgjmw8ybtpH5mZfYvYfFm3jvCKhw==" crossorigin="anonymous" />
+  <style>
+    /* Base */
+    :root {
+      --primary: #ff6767;
+      --primary-dark: #1672fc;
+      --text: #333;
+      --bg: #f9f9f9;
+      --card-bg: #fff;
+      --radius: 1rem;
+      --transition: 0.3s ease;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.6;
+    }
+    a { color: var(--primary); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header, footer { text-align: center; padding: 4rem 2rem; background: var(--primary); color: #fff; }
+    main { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+    .btn { display: inline-block; background: var(--primary); color: white; padding: 1rem 2rem; border-radius: var(--radius); font-weight: bold; transition: background var(--transition); }
+    .btn:hover { background: var(--primary-dark); }
+    .grid { display: grid; gap: 2rem; }
+    .features { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin-top: 3rem; }
+    .feature {
+      background: var(--card-bg);
+      padding: 1.5rem;
+      border-radius: var(--radius);
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      transition: transform var(--transition);
+    }
+    .feature:hover { transform: translateY(-5px); }
+    .emoji { font-size: 2rem; margin-bottom: 0.5rem; }
+    .screenshots { display: flex; flex-wrap: wrap; justify-content: center; gap: 1.5rem; margin: 2rem 0; }
+    .screenshots img { border-radius: var(--radius); box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 300px; width: 100%; height: auto; }
+    footer small { display: block; margin-top: 1rem; opacity: 0.8; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #121212; --text: #eee; --card-bg: #1e1e1e; }
+      header, footer { background: var(--primary-dark); }
+    }
+  </style>
+</head>
+<body>
+  <header role="banner">
+    <h1>Wrocław MPK Map</h1>
+    <p>Real-time transit tracker for buses, trams & special lines in Wrocław</p>
+  </header>
+  <main>
+    <section aria-labelledby="screenshots-heading">
+      <h2 id="screenshots-heading">Screenshots</h2>
+      <div class="screenshots">
+            <img src="images/screen1.jpg" alt="Application Screenshot 1">
+            <img src="images/screen2.jpg" alt="Application Screenshot 2">
+      </div>
+    </section>
+    <section aria-labelledby="features-heading">
+      <h2 id="features-heading">Features</h2>
+      <div class="grid features">
+        <div class="feature" role="region" aria-label="Real-time Tracking">
+          <div class="emoji">🚌</div>
+          <h3>Real-time Tracking</h3>
+          <p>Live location updates every 10 seconds. Track buses and trams seamlessly across the city.</p>
+        </div>
+        <div class="feature" role="region" aria-label="Complete Coverage">
+          <div class="emoji">🚊</div>
+          <h3>Complete Coverage</h3>
+          <p>All transport types supported: trams, day & night buses, express and special lines.</p>
+        </div>
+        <div class="feature" role="region" aria-label="Route Visualization">
+          <div class="emoji">🗺️</div>
+          <h3>Route Visualization</h3>
+          <p>View full route shapes on an interactive map and follow vehicle progress in real-time.</p>
+        </div>
+        <div class="feature" role="region" aria-label="Service Alerts">
+          <div class="emoji">⚠️</div>
+          <h3>Service Alerts</h3>
+          <p>Instant notifications for delays, disruptions, and schedule changes on your routes.</p>
+        </div>
+        <div class="feature" role="region" aria-label="Auto Updates">
+          <div class="emoji">🔄</div>
+          <h3>Auto Updates</h3>
+          <p>Seamless background refresh every 10 seconds—never manually reload!</p>
+        </div>
+        <div class="feature" role="region" aria-label="Mobile Friendly">
+          <div class="emoji">📱</div>
+          <h3>Mobile Friendly</h3>
+          <p>Designed for mobile devices with a responsive layout and intuitive controls.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer role="contentinfo">
+    <p>Built by <a href="https://github.com/realkijmoshi" target="_blank" rel="noopener noreferrer">realkijmoshi</a></p>
+    <p><a href="https://github.com/realkijmoshi/wroclaw-mpk-map" target="_blank" rel="noopener noreferrer">GitHub Repository</a></p>
+    <small>&copy; 2025 Wrocław MPK Map. All rights reserved.</small>
+  </footer>
+</body>
+</html>
