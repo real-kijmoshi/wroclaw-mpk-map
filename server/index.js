@@ -1,22 +1,245 @@
 const express = require('express');
 const axios = require('axios');
-const unzipper = require('unzipper');
-const fs = require('fs');
-const path = require('path');
 const cors = require('cors');
-const getShapesForRoute = require('./utils/getShapesForRoute');
+const path = require('path');
+const TwitterFetcher = require('./TwitterFetcher'); 
 
-// Ensure data directory exists
-fs.mkdirSync(path.join(__dirname, "data"), { recursive: true });
+const fetch = require("node-fetch");
+const AdmZip = require("adm-zip");
+const { parse } = require("csv-parse/sync");
+const cron = require("node-cron");
+const { DateTime } = require("luxon");
 
+class WroclawGTFS {
+  constructor() {
+    this.url = "https://www.wroclaw.pl/open-data/87b09b32-f076-4475-8ec9-6020ed1f9ac0/OtwartyWroclaw_rozklad_jazdy_GTFS.zip";
+    this.data = {};
+    this.isInitialized = false;
+    this.refreshData(); // initial load
+    this.setupCron(); // schedule daily refresh
+  }
+
+  async refreshData() {
+    try {
+      console.log(`[${new Date().toISOString()}] Refreshing GTFS data...`);
+      const response = await fetch(this.url);
+      if (!response.ok) throw new Error(`${response.statusText}`);
+
+      const zip = new AdmZip(await response.buffer());
+      const entries = zip.getEntries();
+
+      const parsed = {};
+      for (const entry of entries) {
+        if (entry.entryName.endsWith(".txt")) {
+          const content = entry.getData().toString("utf8");
+          
+          parsed[entry.entryName.replace(".txt", "")] = parse(content, {
+            columns: header => header.map(h => h.trim()),
+            skip_empty_lines: true,
+          });
+        }
+      }
+
+      this.data = parsed;
+      this.isInitialized = true;
+      console.log("✅ GTFS data refreshed");
+    } catch (err) {
+      console.error("❌ Failed to refresh GTFS data:", err);
+    }
+  }
+
+  setupCron() {
+    const times = ["0 8 * * *", "0 16 * * *"];
+    times.forEach(cronTime => {
+      cron.schedule(
+        cronTime,
+        () => {
+          const now = DateTime.now().setZone("Europe/Warsaw");
+          console.log(`⏰ Scheduled refresh at ${now.toFormat("HH:mm")}`);
+          this.refreshData();
+        },
+        { timezone: "Europe/Warsaw" }
+      );
+    });
+  }
+
+  // Enhanced method to get ALL variants of a route
+  getAllRouteVariants(routeShortName) {
+    const { routes, trips, shapes, stop_times, stops } = this.data;
+    if (!routes || !trips || !shapes || !stop_times || !stops) return null;
+
+    const route = routes.find(r => r.route_short_name === routeShortName);
+    if (!route) return null;
+
+    const matchingTrips = trips.filter(t => t.route_id === route.route_id);
+    if (!matchingTrips.length) return null;
+
+    // Group trips by shape_id to get different variants
+    const variantsByShape = {};
+    
+    matchingTrips.forEach(trip => {
+      if (!variantsByShape[trip.shape_id]) {
+        variantsByShape[trip.shape_id] = [];
+      }
+      variantsByShape[trip.shape_id].push(trip);
+    });
+
+    const variants = [];
+
+    Object.keys(variantsByShape).forEach(shapeId => {
+      const tripsForShape = variantsByShape[shapeId];
+      const representativeTrip = tripsForShape[0]; // Use first trip as representative
+
+      // Get shape points
+      const shapePoints = shapes
+        .filter(s => s.shape_id === shapeId)
+        .sort((a, b) => Number(a.shape_pt_sequence) - Number(b.shape_pt_sequence));
+
+      // Get stops for this variant
+      const tripStops = stop_times
+        .filter(st => st.trip_id === representativeTrip.trip_id)
+        .sort((a, b) => Number(a.stop_sequence) - Number(b.stop_sequence))
+        .map(st => ({
+          stop: stops.find(s => s.stop_id === st.stop_id),
+          arrival_time: st.arrival_time,
+          departure_time: st.departure_time,
+          stop_sequence: st.stop_sequence
+        }));
+
+      // Determine direction/variant name based on first and last stops
+      const firstStop = tripStops[0]?.stop?.stop_name || '';
+      const lastStop = tripStops[tripStops.length - 1]?.stop?.stop_name || '';
+      const directionName = `${firstStop} → ${lastStop}`;
+
+      variants.push({
+        shape_id: shapeId,
+        direction: directionName,
+        trip_headsign: representativeTrip.trip_headsign || directionName,
+        shapePoints,
+        stops: tripStops,
+        tripCount: tripsForShape.length
+      });
+    });
+
+    return {
+      route_short_name: routeShortName,
+      route_id: route.route_id,
+      variants: variants
+    };
+  }
+
+  // Keep the original method for backward compatibility
+  getShapeByRoute(routeShortName) {
+    const allVariants = this.getAllRouteVariants(routeShortName);
+    if (!allVariants || !allVariants.variants.length) return null;
+    
+    // Return the first variant (maintains existing behavior)
+    const firstVariant = allVariants.variants[0];
+    return {
+      shapePoints: firstVariant.shapePoints,
+      stops: firstVariant.stops
+    };
+  }
+
+  // New method to get the best matching route variant based on vehicle position
+  getBestRouteVariant(routeShortName, vehicleLat, vehicleLon) {
+    const allVariants = this.getAllRouteVariants(routeShortName);
+    if (!allVariants || !allVariants.variants.length) return null;
+
+    let bestVariant = null;
+    let minDistance = Infinity;
+
+    // Calculate distance from vehicle to each route variant
+    allVariants.variants.forEach(variant => {
+      if (!variant.shapePoints || variant.shapePoints.length === 0) return;
+
+      // Find the closest point on this variant to the vehicle
+      const closestDistance = Math.min(...variant.shapePoints.map(point => {
+        return this.calculateDistance(
+          vehicleLat, 
+          vehicleLon, 
+          parseFloat(point.shape_pt_lat), 
+          parseFloat(point.shape_pt_lon)
+        );
+      }));
+
+      if (closestDistance < minDistance) {
+        minDistance = closestDistance;
+        bestVariant = variant;
+      }
+    });
+
+    return bestVariant ? {
+      shapePoints: bestVariant.shapePoints,
+      stops: bestVariant.stops,
+      direction: bestVariant.direction,
+      shape_id: bestVariant.shape_id
+    } : null;
+  }
+
+  // Helper method to calculate distance between two points (Haversine formula)
+  calculateDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371; // Earth's radius in kilometers
+    const dLat = this.toRadians(lat2 - lat1);
+    const dLon = this.toRadians(lon2 - lon1);
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(this.toRadians(lat1)) * Math.cos(this.toRadians(lat2)) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }
+
+  toRadians(degrees) {
+    return degrees * (Math.PI/180);
+  }
+
+  getStopTimesByStop(stopId) {
+    const { stop_times, trips, stops } = this.data;
+    if (!stop_times || !trips || !stops) return [];
+
+    const targetStop = stops.find(s => s.stop_id === stopId);
+    if (!targetStop) return [];
+
+    return stop_times
+      .filter(st => st.stop_id === stopId)
+      .map(st => {
+        const trip = trips.find(t => t.trip_id === st.trip_id);
+        return {
+          route_id: trip?.route_id,
+          trip_id: st.trip_id,
+          arrival_time: st.arrival_time,
+          departure_time: st.departure_time,
+        };
+      });
+  }
+
+  // Get all routes for categorization
+  getAllRoutes() {
+    if (!this.data.routes) return [];
+    return this.data.routes.map(route => route.route_short_name).filter(Boolean);
+  }
+
+  // Get all stops
+  getAllStops() {
+    if (!this.data.stops) return [];
+    return this.data.stops;
+  }
+}
+
+// Initialize GTFS data handler
+const gtfsHandler = new WroclawGTFS();
+
+// Initialize Twitter fetcher for alerts
+const twitter = new TwitterFetcher({
+  userId: "296212741", // MPK Wrocław Twitter ID
+})
+twitter.init();
+
+// Store vehicle locations
 const locations = {
     locations: [],
     lastUpdated: null
-}
-
-// Store GTFS data globally so fetchLocations can access it
-let gtfsData = {
-  lines: null
 };
 
 // System status tracking
@@ -66,100 +289,10 @@ const lines = {
   unknown: []
 };
 
-const shapes = new Map(); // Store shapes for each route
+const shapes = new Map(); // Store shapes cache
 
 // Define express lines set
 const expressLines = new Set(['A', 'C', 'D', 'K', 'N', "a", "c", "d", "k", "n"]);
-
-// Console display functions
-const clearConsole = () => {
-  console.clear();
-};
-
-const displayHeader = () => {
-  console.log('\n' + '='.repeat(80));
-  console.log('🚋 WROCŁAW PUBLIC TRANSPORT API SERVER 🚌');
-  console.log('='.repeat(80));
-};
-
-const displaySystemStatus = () => {
-  const now = new Date();
-  const uptime = systemStatus.server.started ? 
-    Math.floor((now - systemStatus.server.started) / 1000) : 0;
-  
-  const formatUptime = (seconds) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    return `${hours}h ${minutes}m ${secs}s`;
-  };
-
-  const formatTime = (date) => {
-    if (!date) return 'Never';
-    return date.toLocaleTimeString();
-  };
-
-  const getTimeAgo = (date) => {
-    if (!date) return 'Never';
-    const seconds = Math.floor((new Date() - date) / 1000);
-    if (seconds < 60) return `${seconds}s ago`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    return `${hours}h ago`;
-  };
-
-  console.log('\n📊 SYSTEM STATUS');
-  console.log('─'.repeat(50));
-  
-  // Server info
-  console.log(`🟢 Server Status: RUNNING | Uptime: ${formatUptime(uptime)}`);
-  console.log(`⏰ Current Time: ${now.toLocaleString()}`);
-  
-  // Lines info
-  console.log('\n🚏 LINES DATA:');
-  console.log(`   Total Lines Fetched: ${systemStatus.lines.fetched}`);
-  console.log(`   🚋 Trams: ${systemStatus.lines.trams} | 🚌 Buses: ${systemStatus.lines.buses}`);
-  console.log(`   Last GTFS Fetch: ${formatTime(systemStatus.lines.lastFetch)} (${getTimeAgo(systemStatus.lines.lastFetch)})`);
-  
-  // Vehicles info
-  const vehicleStatus = systemStatus.vehicles.tracked > 0 ? '🟢 ACTIVE' : '🟡 STANDBY';
-  console.log('\n🚗 VEHICLE TRACKING:');
-  console.log(`   Live Vehicles: ${systemStatus.vehicles.tracked} ${vehicleStatus}`);
-  console.log(`   Last Update: ${formatTime(systemStatus.vehicles.lastUpdate)} (${getTimeAgo(systemStatus.vehicles.lastUpdate)})`);
-  
-  // Shapes info
-  console.log('\n🗺️  ROUTE SHAPES:');
-  console.log(`   Rendered: ${systemStatus.shapes.rendered} | Cached: ${systemStatus.shapes.cached}`);
-  const efficiency = systemStatus.shapes.cached > 0 ? 
-    Math.round((systemStatus.shapes.rendered / systemStatus.shapes.cached) * 100) : 0;
-  console.log(`   Cache Efficiency: ${efficiency}%`);
-  
-  console.log('\n' + '─'.repeat(50));
-};
-
-const displayFooter = () => {
-  console.log('\n🌐 API ENDPOINTS:');
-  console.log('   GET  /lines          - All categorized lines');
-  console.log('   GET  /lines/:cat     - Lines by category');
-  console.log('   GET  /locations      - Live vehicle positions');
-  console.log('   GET  /shapes/:line   - Route shapes');
-  console.log('   GET  /alerts         - Service alerts');
-  console.log('   GET  /health         - System health');
-  console.log('\n💡 Press Ctrl+C to stop the server');
-  console.log('='.repeat(80) + '\n');
-};
-
-const updateConsoleDisplay = () => {
-  if(process.argv.includes('--no-console')) {
-    return; // Skip console display if --no-console flag is set
-  }
-
-  clearConsole();
-  displayHeader();
-  displaySystemStatus();
-  displayFooter();
-};
 
 // Update system status helper
 const updateSystemStatus = () => {
@@ -168,45 +301,6 @@ const updateSystemStatus = () => {
   systemStatus.lines.buses = lines.allBuses.length;
   systemStatus.vehicles.tracked = locations.locations.length;
   systemStatus.shapes.cached = shapes.size;
-  
-  updateConsoleDisplay();
-};
-
-function csvToJson(csv, delimiter = ",") {
-  const lines = csv.trim().split("\n");
-  if (lines.length === 0) return [];
-
-  const headers = lines[0].split(delimiter).map(h => h.trim());
-  const result = [];
-
-  for (let i = 1; i < lines.length; i++) {
-    const values = lines[i].split(delimiter);
-    const obj = {};
-
-    if (values.length >= headers.length) {
-      for (let j = 0; j < headers.length; j++) {
-        obj[headers[j]] = values[j]?.trim() || "";
-      }
-      result.push(obj);
-    }
-  }
-
-  return result;
-}
-
-const GTFS_URL = "https://www.wroclaw.pl/open-data/87b09b32-f076-4475-8ec9-6020ed1f9ac0/OtwartyWroclaw_rozklad_jazdy_GTFS.zip";
-const ZIP_PATH = path.join(__dirname, "data", "gtfs.zip");
-const EXTRACT_PATH = path.join(__dirname, "data", "gtfs");
-
-// Utility function to read a CSV file from disk and parse it
-const readCsvFile = async (filename) => {
-  const filePath = path.join(EXTRACT_PATH, filename);
-  if (!fs.existsSync(filePath)) {
-    console.warn(`File not found: ${filename}`);
-    return [];
-  }
-  const csvData = await fs.promises.readFile(filePath, 'utf-8');
-  return csvToJson(csvData);
 };
 
 const lineToType = (line) => {
@@ -256,7 +350,7 @@ const categorizeLines = (rawLines) => {
     unknown: []
   };
 
-    rawLines.forEach(line => {
+  rawLines.forEach(line => {
     const type = lineToType(line);
     switch (type) {
       case "tram":
@@ -302,57 +396,31 @@ const categorizeLines = (rawLines) => {
       default:
         categories.unknown.push(line);
     }
-    }
-    );
+  });
 
   return categories;
 };
 
-const downloadFile = async (url, filePath) => {
-  const response = await axios.get(url, { 
-    responseType: 'stream',
-    timeout: 30000 // 30 second timeout
-  });
-  
-  return new Promise((resolve, reject) => {
-    const writer = fs.createWriteStream(filePath);
-    response.data.pipe(writer);
-    writer.on('finish', resolve);
-    writer.on('error', reject);
-  });
-};
-
-const extractZip = async (zipPath, extractPath) => {
-  return new Promise((resolve, reject) => {
-    fs.createReadStream(zipPath)
-      .pipe(unzipper.Extract({ path: extractPath }))
-      .on('close', resolve)
-      .on('error', reject);
-  });
-};
-
+// Updated fetchLines using the new GTFS handler
 const fetchLines = async () => {
   try {
-    console.log("🔄 Downloading GTFS data...");
-    await downloadFile(GTFS_URL, ZIP_PATH);
-    console.log("✅ Download completed.");
-
-    console.log("📦 Extracting ZIP file...");
-    await extractZip(ZIP_PATH, EXTRACT_PATH);
-    console.log("✅ Extraction completed.");
-
-    console.log("📖 Reading trips data...");
-    const trips = await readCsvFile('trips.txt');
-    
-    if (trips.length === 0) {
-      throw new Error("No trips data found or trips.txt is empty");
+    // Wait for GTFS data to be initialized
+    if (!gtfsHandler.isInitialized) {
+      console.log("⏳ Waiting for GTFS data to initialize...");
+      return;
     }
 
-    console.log(`📊 Found ${trips.length} trips`);
+    console.log("📖 Processing routes from GTFS data...");
     
-    // Extract unique route IDs
-    const rawLines = [...new Set(trips.map(trip => trip.route_id).filter(Boolean))];
+    // Get all routes from GTFS data
+    const rawLines = gtfsHandler.getAllRoutes();
+    
+    if (rawLines.length === 0) {
+      throw new Error("No routes found in GTFS data");
+    }
 
+    console.log(`📊 Found ${rawLines.length} routes`);
+    
     // Clear shapes for fresh data
     shapes.clear();
 
@@ -362,44 +430,32 @@ const fetchLines = async () => {
     // Update the global lines object
     Object.assign(lines, categorizedLines);
     
-    // Store in gtfsData for access by fetchLocations
-    gtfsData.lines = lines;
-    
     // Update system status
     systemStatus.lines.lastFetch = new Date();
     
     console.log("✅ Lines categorized successfully");
 
-    // Clean up ZIP file
-    if (fs.existsSync(ZIP_PATH)) {
-      fs.unlinkSync(ZIP_PATH);
-      console.log("🧹 Cleaned up temporary ZIP file");
-    }
-
-    // Update console display
-    updateSystemStatus();
-
     return lines;
   } catch (error) {
-    console.error("❌ Error fetching GTFS data:", error.message);
+    console.error("❌ Error processing GTFS data:", error.message);
     throw error;
   }
 };
 
 const fetchLocations = async () => {
   try {
-    // Check if GTFS data is available
-    if (!gtfsData.lines || (!gtfsData.lines.allBuses.length && !gtfsData.lines.allTrams.length)) {
+    // Check if lines are available
+    if (!lines.allBuses.length && !lines.allTrams.length) {
       return;
     }
 
     const body = new URLSearchParams();
     
     // Add bus lines
-    gtfsData.lines.allBuses.forEach(id => body.append('busList[bus][]', id));
+    lines.allBuses.forEach(id => body.append('busList[bus][]', id));
     
     // Add tram lines
-    gtfsData.lines.allTrams.forEach(id => body.append('busList[tram][]', id));
+    lines.allTrams.forEach(id => body.append('busList[tram][]', id));
     
     const res = await axios.post(
       'https://mpk.wroc.pl/bus_position',
@@ -423,25 +479,33 @@ const fetchLocations = async () => {
     locations.lastUpdated = new Date().toISOString();
     systemStatus.vehicles.lastUpdate = new Date();
     
-    // Update console display
-    updateSystemStatus();
-    
   } catch (error) {
     console.error("⚠️  Error fetching locations:", error.message);
     // Don't throw error to prevent stopping the interval
   }
 };
 
-// Start location fetching after a delay to ensure GTFS data is loaded
+// Start location fetching after a delay to ensure data is loaded
 let locationInterval;
 
 const startLocationFetching = () => {
-  // Initial fetch after 5 seconds
+  // Initial fetch after 10 seconds
   setTimeout(() => {
     fetchLocations();
     // Then fetch every 10 seconds
     locationInterval = setInterval(fetchLocations, 10 * 1000);
-  }, 5000);
+  }, 10000);
+};
+
+// Wait for GTFS initialization and then fetch lines
+const initializeLines = async () => {
+  const checkInitialization = setInterval(async () => {
+    if (gtfsHandler.isInitialized) {
+      clearInterval(checkInitialization);
+      await fetchLines();
+      startLocationFetching();
+    }
+  }, 1000);
 };
 
 // API endpoints
@@ -452,8 +516,11 @@ app.get('/', (req, res) => {
       { method: 'GET', path: '/lines', description: 'Get all categorized lines' },
       { method: 'GET', path: '/lines/:category', description: 'Get lines for specific category' },
       { method: 'GET', path: '/locations', description: 'Get vehicle locations' },
+      { method: 'GET', path: '/shapes/:line', description: 'Get shape for specific line (supports ?lat=&lon= for best variant)' },
+      { method: 'GET', path: '/shapes/:line/variants', description: 'Get all variants of a route' },
+      { method: 'GET', path: '/stops/:line', description: 'Get stops for specific line' },
+      { method: 'GET', path: '/stop/:id', description: 'Get schedule for specific stop' },
       { method: 'GET', path: '/alerts', description: 'Get recent alerts' },
-      { method: 'GET', path: '/shapes/:line', description: 'Get shape for specific line' },
       { method: 'GET', path: '/health', description: 'Health check' }
     ]
   });
@@ -476,64 +543,109 @@ app.get('/locations', (req, res) => {
   res.json(locations);
 });
 
-const affectedLines = (content) => {
-  //extacrt lines with space before no other requirement
-  const regex = /(?:\s|^)(\d+)(?:\s|$)/g;
-  const matches = [];
-  let match;
-  while ((match = regex.exec(content)) !== null) {
-    matches.push(match[1]);
-  }
-  return matches;
-}
-
-const alertsMock = [
-  {
-    id: 1,
-    content: "Rondo Regana brak przejazdu peron 1 (awaria tramwaju) Tramaj linii 2 przekierowany na peron 2",
-    timestamp: Date.now() - 3600000, // 1 hour ago
-    affected: affectedLines("Rondo Regana brak przejazdu peron 1 (awaria tramwaju) Tramaj linii 2 przekierowany na peron 2")
-  }
-];
-
-app.get('/alerts', (req, res) => {
-  const from = req.query.from || 0;
-
-  return res.json({
-    alerts: alertsMock.filter(alert => alert.timestamp >= from).map(alert => ({
-      id: alert.id,
-      content: alert.content,
-      timestamp: alert.timestamp,
-      affected: alert.affected
-    }))
-  });
-});
-
-app.get('/shapes/:line', (req, res) => {
+// New endpoint to get all variants of a route
+app.get('/shapes/:line/variants', (req, res) => {
   const line = req.params.line;
   
-  if(!shapes.has(line) && !lines.allTrams.includes(line) && !lines.allBuses.includes(line)) {
+  if (!lines.allTrams.includes(line) && !lines.allBuses.includes(line)) {
     return res.status(404).json({ error: 'Line not found' });
   }
 
-  if (shapes.has(line)) {
-    return res.json(shapes.get(line));
+  const allVariants = gtfsHandler.getAllRouteVariants(line);
+  if (allVariants) {
+    return res.json(allVariants);
   } else {
-    const shape = getShapesForRoute(line);
-    if (shape) {
-      shapes.set(line, shape[Object.keys(shape)[0]]); // Assuming shape is an object with a single key
+    return res.status(404).json({ error: 'No variants found for this line' });
+  }
+});
+
+// Enhanced shapes endpoint that can find best variant based on vehicle position
+app.get('/shapes/:line', (req, res) => {
+  const line = req.params.line;
+  const vehicleLat = req.query.lat ? parseFloat(req.query.lat) : null;
+  const vehicleLon = req.query.lon ? parseFloat(req.query.lon) : null;
+  
+  if (!shapes.has(line) && !lines.allTrams.includes(line) && !lines.allBuses.includes(line)) {
+    return res.status(404).json({ error: 'Line not found' });
+  }
+
+  // Create cache key including position if provided
+  const cacheKey = vehicleLat && vehicleLon ? 
+    `${line}_${vehicleLat.toFixed(4)}_${vehicleLon.toFixed(4)}` : line;
+
+  if (shapes.has(cacheKey)) {
+    return res.json(shapes.get(cacheKey));
+  } else {
+    let shapeData;
+    
+    // If vehicle position is provided, try to get the best matching variant
+    if (vehicleLat && vehicleLon) {
+      shapeData = gtfsHandler.getBestRouteVariant(line, vehicleLat, vehicleLon);
+    } else {
+      // Fallback to original method
+      shapeData = gtfsHandler.getShapeByRoute(line);
+    }
+    
+    if (shapeData) {
+      shapes.set(cacheKey, shapeData);
       systemStatus.shapes.rendered++;
-      updateSystemStatus(); // Update display when shape is rendered
-      return res.json(shape[Object.keys(shape)[0]]);
+      updateSystemStatus();
+      return res.json(shapeData);
     } else {
       return res.status(404).json({ error: 'Shape not found for this line' });
     }
   }
 });
 
+// New endpoint for stops on a route
+app.get('/stops/:line', (req, res) => {
+  const line = req.params.line;
+  
+  if (!lines.allTrams.includes(line) && !lines.allBuses.includes(line)) {
+    return res.status(404).json({ error: 'Line not found' });
+  }
+
+  const shapeData = gtfsHandler.getShapeByRoute(line);
+  if (shapeData && shapeData.stops) {
+    const stops = shapeData.stops.map(stopData => ({
+      stop_id: stopData.stop?.stop_id,
+      stop_name: stopData.stop?.stop_name,
+      stop_lat: stopData.stop?.stop_lat,
+      stop_lon: stopData.stop?.stop_lon,
+      arrival_time: stopData.arrival_time,
+      departure_time: stopData.departure_time
+    }));
+    
+    return res.json({ line, stops });
+  } else {
+    return res.status(404).json({ error: 'Stops not found for this line' });
+  }
+});
+
+// New endpoint for stop schedules
+app.get('/stop/:id', (req, res) => {
+  const stopId = req.params.id;
+  
+  const schedule = gtfsHandler.getStopTimesByStop(stopId);
+  if (schedule.length > 0) {
+    return res.json({ stop_id: stopId, schedule });
+  } else {
+    return res.status(404).json({ error: 'Stop not found or no schedule available' });
+  }
+});
+
+
+app.get('/alerts', (req, res) => {
+    const from = parseInt(req.query.from) || 0;
+    const alerts = twitter.getAlerts(from);
+    return res.json({ alerts });
+});
+
+
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
+    gtfsInitialized: gtfsHandler.isInitialized,
     totalLines: Object.values(lines).flat().length,
     locationsCount: locations.locations.length,
     lastUpdated: new Date().toISOString(),
@@ -541,6 +653,7 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Static file endpoints
 app.get('/status', (req, res) => {
   res.sendFile(path.join(__dirname, "views", 'status.html'));
 });
@@ -554,39 +667,29 @@ const startServer = async () => {
   try {
     systemStatus.server.started = new Date();
     
-    await fetchLines();
-
-    setInterval(async () => {
-      try {
-        await fetchLines();
-      } catch (error) {
-        console.error("❌ Error refreshing lines:", error.message);
-      }
-    }, 24 * 60 * 60 * 1000); // Refresh lines every 24 hours
-    
-    // Start location fetching
-    startLocationFetching();
+    // Initialize lines processing
+    initializeLines();
     
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, "0.0.0.0", () => {
-      // Initial console display
-      updateConsoleDisplay();
-      
-      // Update display every 30 seconds
-      setInterval(updateSystemStatus, 30000);
+      console.log(`🚀 Server started on http://localhost:${PORT}`);
 
+      // Cache warming after server starts
       setTimeout(() => {
-        console.log("🔥 Warming up shape cache...");
-        const randomLine = lines.allTrams[Math.floor(Math.random() * lines.allTrams.length)];
-        if (randomLine) {
-          getShapesForRoute(randomLine);
-          systemStatus.shapes.rendered++;
-          console.log(`✅ Cached shape for line: ${randomLine}`);
-          updateSystemStatus();
-        } else {
-          console.warn("⚠️  No tram lines available for cache warming");
+        if (lines.allTrams.length > 0) {
+          console.log("🔥 Warming up shape cache...");
+          const randomLine = lines.allTrams[Math.floor(Math.random() * lines.allTrams.length)];
+          if (randomLine) {
+            const shapeData = gtfsHandler.getShapeByRoute(randomLine);
+            if (shapeData) {
+              shapes.set(randomLine, shapeData);
+              systemStatus.shapes.rendered++;
+              console.log(`✅ Cached shape for line: ${randomLine}`);
+              updateSystemStatus();
+            }
+          }
         }
-      }, 5000);
+      }, 15000);
     });
   } catch (error) {
     console.error("💥 Failed to start server:", error);
@@ -617,10 +720,10 @@ if (require.main === module) {
 }
 
 module.exports = { 
-  fetchLines, 
   lines, 
   app,
   categorizeLines,
-  readCsvFile,
-  fetchLocations
+  fetchLocations,
+  gtfsHandler,
+  WroclawGTFS
 };

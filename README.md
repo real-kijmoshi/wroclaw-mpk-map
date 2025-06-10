@@ -7,6 +7,7 @@ Real-time tracking application for public transportation in Wrocław, Poland. Tr
 <div style="display: flex; gap: 10px;">
     <img src="images/screen1.jpg" alt="Application Screenshot 1" width="300"/>
     <img src="images/screen2.jpg" alt="Application Screenshot 2" width="300"/>
+    <img src="images/screen3.jpg" alt="Application Screenshot 3" width="300"/>
 </div>
 
 ## Features

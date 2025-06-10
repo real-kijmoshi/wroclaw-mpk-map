@@ -43,3 +43,5 @@ server/data/gtfs.zip
 
 # Example files
 app-example/
+
+.env

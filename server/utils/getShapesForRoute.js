@@ -136,3 +136,56 @@ getShapesForRoute.clearCache = function() {
 };
 
 module.exports = getShapesForRoute;
+
+const stopsCache = {};
+// Function to get stops for a route
+
+function getStopsForRoute(routeShortName) {
+  if (stopsCache[routeShortName]) {
+    return stopsCache[routeShortName];
+  }
+
+  // 1. Get routes
+  var routes = readCSV('routes.txt');
+  var routeIds = routes
+    .filter(function(r) { return r.route_short_name === routeShortName; })
+    .map(function(r) { return r.route_id; });
+
+  if (routeIds.length === 0) {
+    console.error('No route found: ' + routeShortName);
+    return null;
+  }
+
+  // 2. Get trips
+  var trips = readCSV('trips.txt');
+  var tripIds = trips
+    .filter(function(t) { return routeIds.includes(t.route_id); })
+    .map(function(t) { return t.trip_id; });
+
+  if (tripIds.length === 0) {
+    console.error('No trips found for route: ' + routeShortName);
+    return null;
+  }
+
+  // 3. Get stop times
+  var stopTimes = readCSV('stop_times.txt');
+  var stops = {};
+
+  stopTimes.forEach(function(stopTime) {
+    if (tripIds.includes(stopTime.trip_id)) {
+      stops[stopTime.stop_id] = {
+        arrival_time: stopTime.arrival_time,
+        departure_time: stopTime.departure_time,
+        stop_sequence: parseInt(stopTime.stop_sequence, 10)
+      };
+    }
+  });
+
+  // Cache the result
+  stopsCache[routeShortName] = stops;
+
+  return stops;
+}
+
+// Export the function
+module.exports.getStopsForRoute = getStopsForRoute;
