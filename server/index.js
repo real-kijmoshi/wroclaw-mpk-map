@@ -15,8 +15,8 @@ class WroclawGTFS {
     this.url = "https://www.wroclaw.pl/open-data/87b09b32-f076-4475-8ec9-6020ed1f9ac0/OtwartyWroclaw_rozklad_jazdy_GTFS.zip";
     this.data = {};
     this.isInitialized = false;
-    this.refreshData(); // initial load
-    this.setupCron(); // schedule daily refresh
+    this.refreshData();
+    this.setupCron();
   }
 
   async refreshData() {

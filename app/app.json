@@ -1,8 +1,18 @@
 {
   "expo": {
-    "name": "wroclaw-mpk-map",
-    "slug": "wroclaw-mpk-map",
+    "name": "wromap",
+    "slug": "wrocmap",
     "version": "1.0.0",
-    "platforms": ["ios", "android", "web"]
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "f374495e-92ee-4948-aa17-b8622cf2ea20"
+      }
+    },
+    "owner": "kijmoshi"
   }
 }

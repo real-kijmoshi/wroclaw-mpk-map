@@ -52,14 +52,16 @@ class TwitterFetcher {
                 id: tweet.id,
                 text: tweet.text,
                 created_at: tweet.created_at,
-                public_metrics: tweet.public_metrics
+                public_metrics: tweet.public_metrics,
+                url: `https://twitter.com/${this.username}/status/${tweet.id}`
             }));
 
             this.alerts = this.tweets.map((tweet, index) => ({
                 id: index + 1, // or tweet.id if you prefer
                 content: tweet.text,
                 timestamp: new Date(tweet.created_at).getTime(),
-                affected: this.extractAffectedLines(tweet.text)
+                affected: this.extractAffectedLines(tweet.text),
+                url: tweet.url
             }));
 
             console.log(`[${new Date().toLocaleTimeString()}] Updated ${this.tweets.length} tweets.`);
@@ -69,7 +71,7 @@ class TwitterFetcher {
     }
 
     extractAffectedLines(content) {
-        const matches = content.match(/(?:linia|linii)\s+(\d+)/gi);
+        const matches = content.match(/\s+(\d+)/gi);
         return matches ? matches.map(m => m.match(/\d+/)[0]) : [];
     }
 

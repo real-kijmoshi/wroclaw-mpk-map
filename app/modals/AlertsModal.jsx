@@ -5,111 +5,202 @@ import {
   ScrollView,
   StyleSheet,
   ActivityIndicator,
+  Linking,
 } from "react-native";
 import SwipeableModal from "../components/Modal";
 
 export default function AlertsModal({ visible, onClose, alerts = [], loading, error }) {
+  const formatTime = (timestamp) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffInMinutes = Math.floor((now - date) / (1000 * 60));
+    
+    if (diffInMinutes < 1) return 'teraz';
+    if (diffInMinutes < 60) return `${diffInMinutes}m`;
+    if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h`;
+    return `${Math.floor(diffInMinutes / 1440)}d`;
+  };
+
   return (
     <SwipeableModal visible={visible} onClose={onClose}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Alerty</Text>
-        <TouchableOpacity onPress={onClose} style={styles.closeButton} accessibilityLabel="Close alerts modal">
-          <Text style={styles.closeButtonText}>Zamknij</Text>
-        </TouchableOpacity>
-      </View>
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Powiadomienia</Text>
+          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+            <Text style={styles.closeButtonText}>✕</Text>
+          </TouchableOpacity>
+        </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {loading && <ActivityIndicator size="large" color="#0A84FF" style={{ marginTop: 20 }} />}
-
-        {error && (
-          <Text style={[styles.alertText, styles.errorText]}>
-            {error}
-          </Text>
-        )}
-
-        {!loading && !error && alerts.length === 0 && (
-          <Text style={styles.emptyText}>Brak alertów.</Text>
-        )}
-
-        {!loading && !error && alerts.length > 0 && (
-          alerts.map((alert, idx) => (
-            <View key={idx} style={styles.alertContainer}>
-              <Text style={styles.alertText}>{alert.content}</Text>
-              <Text style={styles.timestampText}>
-                {new Date(alert.timestamp).toLocaleString()}
-              </Text>
-              <Text style={styles.affectedLinesText}>
-                Affected Lines: {alert.affected.join(", ")}
-              </Text>
+        <ScrollView
+          style={styles.scrollView}
+          showsVerticalScrollIndicator={false}
+        >
+          {loading && (
+            <View style={styles.centerContainer}>
+              <ActivityIndicator size="large" color="#666" />
             </View>
-          ))
-        )}
-      </ScrollView>
+          )}
+
+          {error && (
+            <View style={styles.centerContainer}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          )}
+
+          {!loading && !error && alerts.length === 0 && (
+            <View style={styles.centerContainer}>
+              <Text style={styles.emptyText}>Brak powiadomień</Text>
+            </View>
+          )}
+
+          {!loading && !error && alerts.length > 0 && (
+            alerts.map((alert, idx) => (
+              <TouchableOpacity
+                onPress={() => {
+                  if (alert.url) {
+                    Linking.openURL(alert.url).catch(err => console.error('Failed to open URL:', err));
+                  }
+                }} 
+                key={idx} 
+                style={styles.notification}
+                
+                >
+                
+                <View style={styles.notificationHeader}>
+                  <Text style={styles.senderName}>MPK Wrocław</Text>
+                  <Text style={styles.handle}>@AlertMPK</Text>
+                  <Text style={styles.time}>· {formatTime(alert.timestamp)}</Text>
+                </View>
+                
+                <View style={styles.notificationContent}>
+                  {alert.content.includes('#AlertMPK') && (
+                    <Text style={styles.hashtagText}>#AlertMPK </Text>
+                  )}
+                  {alert.content.includes('#TRAM') && (
+                    <Text style={styles.hashtagText}>#TRAM{'\n'}</Text>
+                  )}
+                  {alert.priority === 'high' && <Text style={styles.warningIcon}>⚠️ </Text>}
+                  {alert.type === 'tram' && <Text style={styles.tramIcon}>🚋 </Text>}
+                  {alert.type === 'bus' && <Text style={styles.busIcon}>🚌 </Text>}
+                  <Text style={styles.notificationText}>
+                    {alert.content.replace(/#AlertMPK|#TRAM/g, '').trim()}
+                  </Text>
+                </View>
+
+                {alert.affected && alert.affected.length > 0 && (
+                  <Text style={styles.affectedLines}>
+                    Linie: {alert.affected.join(', ')}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            ))
+          )}
+        </ScrollView>
+      </View>
     </SwipeableModal>
   );
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#444",
-    paddingBottom: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 0,
   },
   headerTitle: {
-    fontSize: 22,
+    fontSize: 28,
     fontWeight: "700",
     color: "#fff",
   },
   closeButton: {
-    padding: 8,
+    padding: 4,
   },
   closeButtonText: {
-    fontSize: 17,
-    color: "#0A84FF",
-    fontWeight: "600",
+    fontSize: 18,
+    color: "#8E8E93",
+    fontWeight: "400",
   },
-  scrollContent: {
-    paddingBottom: 30,
-    backgroundColor: "#121212",
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingTop: 4,
+  scrollView: {
+    flex: 1,
   },
-  alertContainer: {
+  centerContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 60,
+  },
+  notification: {
+    backgroundColor: '#1C1C1E',
+    marginHorizontal: 8,
+    marginBottom: 8,
+    borderRadius: 12,
+    paddingHorizontal: 16,
     paddingVertical: 12,
-    borderBottomColor: "#333",
-    borderBottomWidth: 1,
   },
-  alertText: {
-    fontSize: 16,
-    color: "#E0E0E0",
+  notificationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: 4,
   },
-  timestampText: {
-    fontSize: 12,
-    color: "#888",
-    marginBottom: 2,
+  senderName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
+    marginRight: 4,
   },
-  affectedLinesText: {
-    fontSize: 12,
-    color: "#888",
+  handle: {
+    fontSize: 15,
+    color: '#8E8E93',
+    marginRight: 4,
+    fontWeight: '400',
+  },
+  time: {
+    fontSize: 15,
+    color: '#8E8E93',
+    fontWeight: '400',
+  },
+  notificationContent: {
+    marginTop: 2,
+  },
+  hashtagText: {
+    fontSize: 15,
+    color: '#0A84FF',
+    fontWeight: '400',
+  },
+  warningIcon: {
+    fontSize: 15,
+  },
+  tramIcon: {
+    fontSize: 15,
+  },
+  busIcon: {
+    fontSize: 15,
+  },
+  notificationText: {
+    fontSize: 15,
+    color: '#fff',
+    lineHeight: 20,
+    fontWeight: '400',
+  },
+  affectedLines: {
+    fontSize: 13,
+    color: '#8E8E93',
+    marginTop: 6,
+    fontWeight: '400',
   },
   errorText: {
-    color: "#FF3B30",
-    marginTop: 20,
-    fontWeight: "600",
+    fontSize: 16,
+    color: '#ff3b30',
+    textAlign: 'center',
   },
   emptyText: {
     fontSize: 16,
-    color: "#AAA",
-    marginTop: 20,
-    fontStyle: "italic",
+    color: '#666',
+    textAlign: 'center',
   },
 });

@@ -16,7 +16,8 @@
     "react-native-reanimated": "^3.18.0",
     "react-native-svg": "15.11.2",
     "react-native-web": "^0.20.0",
-    "@expo/metro-runtime": "~5.0.4"
+    "@expo/metro-runtime": "~5.0.4",
+    "expo-notifications": "~0.31.3"
   },
   "devDependencies": {
     "@babel/core": "^7.19.3"
