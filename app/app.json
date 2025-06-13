@@ -13,6 +13,12 @@
         "projectId": "f374495e-92ee-4948-aa17-b8622cf2ea20"
       }
     },
-    "owner": "kijmoshi"
+    "owner": "kijmoshi",
+    "ios": {
+      "bundleIdentifier": "com.kijmoshi.wrocmap",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    }
   }
 }

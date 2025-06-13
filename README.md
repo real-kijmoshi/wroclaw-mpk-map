@@ -21,7 +21,7 @@ Real-time tracking application for public transportation in Wrocław, Poland. Tr
   - Temporary lines
   - Special lines
 - 🗺️ Route shapes visualization
-- ⚠️ Service alerts and disruptions (soon)
+- ⚠️ Service alerts and disruptions
 - 🔄 Auto-updating every 10 seconds
 - 📱 Mobile-friendly interface
 
@@ -114,7 +114,7 @@ npm start
 - Express buses (A, C, D, K, N)
 - Suburban buses (lines 600-699)
 - Temporary buses (lines 700-799)
-- Zone buses (lines 900-999)
+- Zone buses (lines 900-999) [not supported yet becase its not operated by MPK Wrocław but by długołęka i think]
 - Special buses (B-prefix)
 
 ### Real-time Updates
@@ -129,5 +129,3 @@ Feel free to contribute to this project by submitting issues or pull requests. P
 ## License
 
 This project uses public transport data from MPK Wrocław and the City of Wrocław Open Data platform. Please ensure compliance with their terms of use when using this application.
-
-

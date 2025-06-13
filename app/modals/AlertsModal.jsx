@@ -83,7 +83,7 @@ export default function AlertsModal({ visible, onClose, alerts = [], loading, er
                   {alert.type === 'tram' && <Text style={styles.tramIcon}>🚋 </Text>}
                   {alert.type === 'bus' && <Text style={styles.busIcon}>🚌 </Text>}
                   <Text style={styles.notificationText}>
-                    {alert.content.replace(/#AlertMPK|#TRAM/g, '').trim()}
+                    {alert.content.replace(/#AlertMPK|#TRAM/g, '').replace("&gt;", ">").replace("&lt;", "<").replace(/&amp;/g, "&").trim()}
                   </Text>
                 </View>
 
