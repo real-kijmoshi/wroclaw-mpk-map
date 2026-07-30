@@ -24,6 +24,34 @@ const FIELD_ALIASES = {
   id: ['k', 'id', 'vehicle_id', 'nr_boczny', 'brigade'],
 };
 
+/**
+ * Ways to ask `bus_position` for a set of lines.
+ *
+ * Community projects document two different encodings — the typed
+ * `busList[bus][]` / `busList[tram][]` form and the flat `busList[][]` form —
+ * and it is not clear which one MPK will keep. Rather than betting on one, the
+ * tracker tries each in turn and then sticks to whichever answered.
+ */
+const BODY_ENCODINGS = [
+  {
+    name: 'typed',
+    build: (lines) => {
+      const body = new URLSearchParams();
+      for (const line of lines.allBuses) body.append('busList[bus][]', line);
+      for (const line of lines.allTrams) body.append('busList[tram][]', line);
+      return body;
+    },
+  },
+  {
+    name: 'flat',
+    build: (lines) => {
+      const body = new URLSearchParams();
+      for (const line of [...lines.allTrams, ...lines.allBuses]) body.append('busList[][]', line);
+      return body;
+    },
+  },
+];
+
 const pick = (row, aliases) => {
   for (const key of aliases) {
     if (row[key] !== undefined && row[key] !== null && row[key] !== '') return row[key];
@@ -49,10 +77,16 @@ const normalizeVehicle = (row) => {
   if (!line) return null;
 
   const rawId = pick(row, FIELD_ALIASES.id);
+
+  // The line number gives the finer category (night, express, suburban…), but
+  // fall back to whatever the upstream record says for labels we do not know.
+  let type = lineToType(line);
+  if (type === 'unknown' && (row.type === 'tram' || row.type === 'bus')) type = row.type;
+
   return {
     id: rawId !== undefined ? `${line}-${rawId}` : `${line}-${lat.toFixed(5)}-${lon.toFixed(5)}`,
     line,
-    type: lineToType(line),
+    type,
     lat,
     lon,
   };
@@ -81,8 +115,11 @@ class VehicleTracker {
     /** @type {Map<string, object>} vehicle id -> last known state */
     this.fleet = new Map();
     this.timer = null;
+    /** Body encoding that last worked; tried first on the next poll. */
+    this.preferredEncoding = null;
     this.status = {
       source: null,
+      encoding: null,
       lastSuccessAt: null,
       lastAttemptAt: null,
       lastError: null,
@@ -115,10 +152,9 @@ class VehicleTracker {
     };
   }
 
-  async #request(url, lines) {
-    const body = new URLSearchParams();
-    for (const line of lines.allBuses) body.append('busList[bus][]', line);
-    for (const line of lines.allTrams) body.append('busList[tram][]', line);
+  /** One request with one body encoding. Throws when the answer is unusable. */
+  async #requestWith(url, lines, encoding) {
+    const body = encoding.build(lines);
 
     const response = await fetchWithTimeout(url, {
       method: 'POST',
@@ -143,9 +179,40 @@ class VehicleTracker {
       ? payload
       : payload.vehicles ?? payload.data ?? payload.locations ?? null;
     if (!Array.isArray(rows)) throw new Error('response did not contain a list of vehicles');
+    // An empty list is how this endpoint reports "I did not understand your
+    // body", so it has to count as a failure and let the next encoding try.
     if (!rows.length) throw new Error('response contained no vehicles');
 
     return rows;
+  }
+
+  /**
+   * Ask one URL for positions, trying each body encoding until one answers.
+   * The encoding that worked is remembered and tried first next time.
+   */
+  async #request(url, lines) {
+    const ordered = this.preferredEncoding
+      ? [
+          ...BODY_ENCODINGS.filter((encoding) => encoding.name === this.preferredEncoding),
+          ...BODY_ENCODINGS.filter((encoding) => encoding.name !== this.preferredEncoding),
+        ]
+      : BODY_ENCODINGS;
+
+    const errors = [];
+    for (const encoding of ordered) {
+      try {
+        const rows = await this.#requestWith(url, lines, encoding);
+        if (this.preferredEncoding !== encoding.name) {
+          logger.info(`Vehicle endpoint accepted the "${encoding.name}" body encoding`);
+          this.preferredEncoding = encoding.name;
+        }
+        return rows;
+      } catch (error) {
+        errors.push(`${encoding.name}: ${error.message}`);
+      }
+    }
+
+    throw new Error(errors.join('; '));
   }
 
   /** Fetch once and merge into the fleet. Resolves even when the poll fails. */
@@ -188,6 +255,7 @@ class VehicleTracker {
       this.status = {
         ...this.status,
         source: url,
+        encoding: this.preferredEncoding,
         lastSuccessAt: new Date(now).toISOString(),
         lastError: null,
         consecutiveFailures: 0,

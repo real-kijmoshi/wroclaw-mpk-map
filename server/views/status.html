@@ -129,7 +129,8 @@
           '<td><span class="pill ' + (gtfsReady ? 'ok' : 'bad') + '">' +
             escapeHtml(health.gtfs.state) + (health.gtfs.fromCache ? ' (cache)' : '') + '</span></td></tr>' +
         '<tr><td>Pozycje pojazdów</td>' +
-          '<td><code>' + escapeHtml(health.vehicles.source ?? '—') + '</code></td>' +
+          '<td><code>' + escapeHtml(health.vehicles.source ?? '—') + '</code>' +
+            (health.vehicles.encoding ? ' <code>' + escapeHtml(health.vehicles.encoding) + '</code>' : '') + '</td>' +
           '<td>' + ago(health.vehicles.lastSuccessAt) + '</td>' +
           '<td><span class="pill ' + (vehiclesFresh ? 'ok' : 'bad') + '">' +
             escapeHtml(vehiclesFresh ? 'ok' : (health.vehicles.lastError ?? 'brak danych')) + '</span></td></tr>' +

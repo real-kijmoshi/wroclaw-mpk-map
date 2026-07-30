@@ -42,6 +42,10 @@ place:
 - **`npm run doctor`** checks all of them from your machine and prints exactly what failed.
 - **The GTFS archive is cached on disk.** If the portal is down at boot, the server starts
   with the last good timetable rather than serving nothing.
+- **Both documented request formats are tried.** `bus_position` is described in the wild
+  with two different bodies — `busList[bus][]`/`busList[tram][]` and `busList[][]` — and it
+  answers `200 []` rather than an error when it does not like the one you sent. The tracker
+  tries each, sticks to whichever works, and shows it on `/health` as `vehicles.encoding`.
 - **Vehicle records are matched by field aliases,** so a renamed `x`/`y` field does not
   silently produce an empty map.
 - **A scheduled GitHub Action** runs the doctor daily and opens an issue when a required
