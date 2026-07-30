@@ -1,0 +1,64 @@
+name: Upstream watch
+
+# The whole app depends on two third-party endpoints that have moved without
+# notice before. This runs the same check as `npm run doctor` every morning and
+# opens an issue the day one of them stops answering, instead of the app going
+# quiet and nobody noticing for weeks.
+
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - run: npm ci
+
+      - name: Check upstream sources
+        id: doctor
+        run: |
+          set +e
+          npm run doctor 2>&1 | tee doctor.log
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Open an issue when a required source is down
+        if: steps.doctor.outputs.exit_code != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Upstream data source unreachable"
+          existing=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number')
+
+          {
+            echo "\`npm run doctor\` failed on $(date -u +%Y-%m-%d)."
+            echo
+            echo '```'
+            sed 's/\x1b\[[0-9;]*m//g' doctor.log
+            echo '```'
+            echo
+            echo "If an endpoint moved, add the new URL to the front of the matching list"
+            echo "in \`server/src/config.js\` (or set \`GTFS_URLS\` / \`VEHICLE_POSITION_URLS\` on the deployment)."
+          } > body.md
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file body.md
+          else
+            gh issue create --title "$title" --body-file body.md --label bug
+          fi

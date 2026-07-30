@@ -486,57 +486,72 @@
 
             // Add click handler to show route
             marker.on('click', () => {
-                fetchRouteShape(vehicle.line, vehicle.type);
+                fetchRouteShape(vehicle.line, vehicle.type, vehicle.lat, vehicle.lon);
             });
 
             return marker;
         }
 
         // Fetch and display route shape
-        async function fetchRouteShape(routeId, type) {
+        async function fetchRouteShape(routeId, type, lat, lon) {
             try {
-                const response = await fetch(`/shapes/${routeId}`);
+                // The compact format returns [lat, lon] pairs directly; the
+                // default response is the verbose one kept for old app builds.
+                const params = new URLSearchParams({ format: 'compact' });
+                if (Number.isFinite(lat) && Number.isFinite(lon)) {
+                    params.set('lat', lat);
+                    params.set('lon', lon);
+                }
+
+                const response = await fetch(`/shapes/${encodeURIComponent(routeId)}?${params}`);
                 if (!response.ok) {
-                    throw new Error('Failed to fetch route shape');
+                    throw new Error(`Failed to fetch route shape (${response.status})`);
                 }
-                
+
                 const data = await response.json();
-                
-                // Remove existing route
-                if (currentRoute) {
-                    map.removeLayer(currentRoute);
-                }
-                
-                // Create new route polyline
-                const routeCoords = data.map(point => [point.lat, point.lon]);
+                const routeCoords = data.points || [];
+                if (!routeCoords.length) throw new Error('Route has no shape points');
+
+                hideRoute();
+
                 const routeColor = Colors[type] || Colors.unknown;
-                
-                currentRoute = L.polyline(routeCoords, {
+                currentRoute = L.layerGroup().addTo(map);
+
+                const polyline = L.polyline(routeCoords, {
                     color: routeColor,
                     weight: 4,
-                    opacity: 0.8,
+                    opacity: 0.85,
                     lineJoin: 'round'
-                }).addTo(map);
-                
-                // Show route info
-                showRouteInfo(routeId, type);
-                
-                // Fit map to route bounds
-                map.fitBounds(currentRoute.getBounds(), { padding: [20, 20] });
-                
+                }).addTo(currentRoute);
+
+                for (const stop of data.stops || []) {
+                    L.circleMarker([stop.lat, stop.lon], {
+                        radius: 4,
+                        color: routeColor,
+                        fillColor: '#fff',
+                        fillOpacity: 1,
+                        weight: 2
+                    })
+                        .bindPopup(`<strong>${stop.name}</strong><br>${stop.departure || ''}`)
+                        .addTo(currentRoute);
+                }
+
+                showRouteInfo(routeId, type, data.direction);
+                map.fitBounds(polyline.getBounds(), { padding: [20, 20] });
+
             } catch (error) {
                 console.error('Error fetching route shape:', error);
             }
         }
 
         // Show route information panel
-        function showRouteInfo(lineNumber, type) {
+        function showRouteInfo(lineNumber, type, direction) {
             const routeInfo = document.getElementById('routeInfo');
             const routeTitle = document.getElementById('routeTitle');
             const routeType = document.getElementById('routeType');
-            
+
             routeTitle.textContent = `Linia ${lineNumber}`;
-            routeType.textContent = translations[type]?.name || type;
+            routeType.textContent = direction || translations[type]?.name || type;
             routeInfo.style.color = Colors[type] || Colors.unknown;
             
             routeInfo.classList.add('visible');
