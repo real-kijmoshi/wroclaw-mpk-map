@@ -68,40 +68,71 @@ const checkGtfs = async () => {
   }
 };
 
+// A handful of lines that always run, so an empty answer means the request was
+// rejected rather than that nothing happens to be moving.
+const SAMPLE_TRAMS = ['4', '17'];
+const SAMPLE_BUSES = ['128', '145'];
+
+const VEHICLE_BODIES = {
+  // Two encodings are documented in the wild; report which one MPK accepts.
+  typed: () => {
+    const body = new URLSearchParams();
+    for (const line of SAMPLE_BUSES) body.append('busList[bus][]', line);
+    for (const line of SAMPLE_TRAMS) body.append('busList[tram][]', line);
+    return body;
+  },
+  flat: () => {
+    const body = new URLSearchParams();
+    for (const line of [...SAMPLE_TRAMS, ...SAMPLE_BUSES]) body.append('busList[][]', line);
+    return body;
+  },
+};
+
 const checkVehicles = async () => {
   console.log('\nLive vehicle positions');
-  const body = new URLSearchParams();
-  for (const line of ['4', '17', '128']) body.append('busList[bus][]', line);
-  for (const line of ['4', '17']) body.append('busList[tram][]', line);
 
   for (const url of config.vehicles.sources) {
-    try {
-      const { value, ms } = await timed(async () => {
-        const response = await fetchWithTimeout(url, {
-          method: 'POST',
-          timeoutMs: config.vehicles.timeoutMs,
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Accept: 'application/json',
-          },
-          body: body.toString(),
+    let anyWorked = false;
+
+    for (const [name, buildBody] of Object.entries(VEHICLE_BODIES)) {
+      try {
+        const { value, ms } = await timed(async () => {
+          const response = await fetchWithTimeout(url, {
+            method: 'POST',
+            timeoutMs: config.vehicles.timeoutMs,
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              Accept: 'application/json',
+            },
+            body: buildBody().toString(),
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
+          const text = await response.text();
+          try {
+            return JSON.parse(text);
+          } catch {
+            throw new Error(`not JSON: ${text.slice(0, 80).replace(/\s+/g, ' ')}…`);
+          }
         });
-        if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
-        const text = await response.text();
-        try {
-          return JSON.parse(text);
-        } catch {
-          throw new Error(`not JSON: ${text.slice(0, 80).replace(/\s+/g, ' ')}…`);
-        }
-      });
 
-      const rows = Array.isArray(value) ? value : value.vehicles ?? value.data ?? [];
-      if (!Array.isArray(rows)) throw new Error('no vehicle list in the response');
+        const rows = Array.isArray(value) ? value : value.vehicles ?? value.data ?? [];
+        if (!Array.isArray(rows)) throw new Error('no vehicle list in the response');
+        if (!rows.length) throw new Error('empty list — this body encoding was not accepted');
 
-      const sample = rows[0] ? JSON.stringify(rows[0]) : 'none';
-      report('vehicles', url, rows.length > 0, `${rows.length} vehicles in ${ms} ms — sample ${sample}`);
-    } catch (error) {
-      report('vehicles', url, false, error.message);
+        anyWorked = true;
+        report(
+          'vehicles',
+          `${url}  [${name}]`,
+          true,
+          `${rows.length} vehicles in ${ms} ms — sample ${JSON.stringify(rows[0])}`,
+        );
+      } catch (error) {
+        report('vehicles', `${url}  [${name}]`, false, error.message);
+      }
+    }
+
+    if (!anyWorked) {
+      console.log(DIM('      No body encoding worked for this URL — the endpoint likely changed.'));
     }
   }
 };
