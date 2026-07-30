@@ -1,27 +1,37 @@
 {
-  "name": "base_server",
-  "version": "1.0.0",
+  "name": "wroclaw-mpk-map-server",
+  "version": "2.0.0",
+  "description": "Real-time API for Wrocław public transport: lines, vehicle positions, route shapes, stop departures and service alerts.",
   "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "node --test \"test/*.test.js\"",
+    "doctor": "node scripts/doctor.js",
+    "lint": "eslint ."
+  },
+  "keywords": [
+    "wroclaw",
+    "mpk",
+    "gtfs",
+    "public-transport",
+    "realtime"
+  ],
   "dependencies": {
     "adm-zip": "^0.5.16",
-    "axios": "^1.9.0",
+    "compression": "^1.8.0",
     "cors": "^2.8.5",
-    "csv-parser": "^3.2.0",
+    "csv-parse": "^5.6.0",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
-    "fs": "^0.0.1-security",
-    "luxon": "^3.6.1",
-    "node-cron": "^4.1.0",
-    "node-fetch": "^2.7.0",
-    "path": "^0.12.7",
-    "twitter-api-v2": "^1.23.2",
-    "unzipper": "^0.12.3"
+    "fast-xml-parser": "^5.2.0",
+    "node-cron": "^4.1.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.28.0"
   }
 }

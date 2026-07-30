@@ -33,9 +33,8 @@ yarn-error.*
 # TypeScript
 *.tsbuildinfo
 
-# Server data
-server/data/gtfs/
-server/data/gtfs.zip
+# Server data (downloaded GTFS cache)
+server/data/
 
 # IDE
 .vscode/

@@ -1,34 +1,37 @@
 {
-  "dependencies": {
-    "@expo/vector-icons": "^14.1.0",
-    "@gorhom/bottom-sheet": "^5.1.6",
-    "@react-native-async-storage/async-storage": "^2.1.2",
-    "expo": "^53.0.11",
-    "expo-linear-gradient": "^14.1.5",
-    "expo-location": "~18.1.5",
-    "lucide-react-native": "^0.513.0",
-    "react": "19.0.0",
-    "react-dom": "19.0.0",
-    "react-native": "0.79.3",
-    "react-native-gesture-handler": "^2.25.0",
-    "react-native-map-clustering": "^3.4.2",
-    "react-native-maps": "1.20.1",
-    "react-native-reanimated": "^3.18.0",
-    "react-native-svg": "15.11.2",
-    "react-native-web": "^0.20.0",
-    "@expo/metro-runtime": "~5.0.4",
-    "expo-notifications": "~0.31.3"
-  },
-  "devDependencies": {
-    "@babel/core": "^7.19.3"
-  },
   "name": "wroclaw-mpk-map",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
+  "main": "index.js",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "doctor": "npx expo-doctor",
+    "build:android": "eas build --platform android --profile production",
+    "build:ios": "eas build --platform ios --profile production",
+    "submit:android": "eas submit --platform android",
+    "submit:ios": "eas submit --platform ios"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo": "^57.0.9",
+    "expo-constants": "~57.0.8",
+    "expo-location": "~57.0.7",
+    "expo-status-bar": "~57.0.1",
+    "lucide-react-native": "^1.28.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-gesture-handler": "~2.32.0",
+    "react-native-maps": "1.27.2",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-svg": "15.15.4",
+    "react-native-web": "~0.21.0",
+    "@expo/metro-runtime": "~57.0.8"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.26.0"
   }
 }
