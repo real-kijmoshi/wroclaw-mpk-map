@@ -1,43 +1,56 @@
-# My Universal React Project
+# WroMapa — mobile app
 
-<p>
-  <!-- iOS -->
-  <a href="https://itunes.apple.com/app/apple-store/id982107779">
-    <img alt="Supports Expo iOS" longdesc="Supports Expo iOS" src="https://img.shields.io/badge/iOS-4630EB.svg?style=flat-square&logo=APPLE&labelColor=999999&logoColor=fff" />
-  </a>
-  <!-- Android -->
-  <a href="https://play.google.com/store/apps/details?id=host.exp.exponent&referrer=blankexample">
-    <img alt="Supports Expo Android" longdesc="Supports Expo Android" src="https://img.shields.io/badge/Android-4630EB.svg?style=flat-square&logo=ANDROID&labelColor=A4C639&logoColor=fff" />
-  </a>
-  <!-- Web -->
-  <a href="https://docs.expo.dev/workflow/web/">
-    <img alt="Supports Expo Web" longdesc="Supports Expo Web" src="https://img.shields.io/badge/web-4630EB.svg?style=flat-square&logo=GOOGLE-CHROME&labelColor=4285F4&logoColor=fff" />
-  </a>
-</p>
+Expo app showing MPK Wrocław trams and buses on a live map. See the
+[repository README](../README.md) for the project as a whole.
 
-## 🚀 How to use
+## Running it
 
-- Install packages with `yarn` or `npm install`.
-  - If you have native iOS code run `npx pod-install`
-- Run `yarn start` or `npm run start` to start the bundler.
-- Open the project in a React runtime to try it:
-  - iOS: [Client iOS](https://itunes.apple.com/app/apple-store/id982107779)
-  - Android: [Client Android](https://play.google.com/store/apps/details?id=host.exp.exponent&referrer=blankexample)
-  - Web: Any web browser
+```bash
+npm install
+API_URL=http://localhost:3000 npm start
+```
 
-## Running/Modifying Native Code
+Then press `a` for Android, `i` for iOS or `w` for web. Without `API_URL` the app talks to
+the default deployment in `app.config.js`.
 
-You can generate native iOS and Android projects from your Expo config file (**app.json**/ **app.config.js**) by runnning `npx expo prebuild`. These native projects can then be compiled and run via XCode and Android Studio.
+`react-native-maps` needs native code, so a development build gives the real map on both
+platforms:
 
-> 💡 Learn more about [native code in Expo](https://docs.expo.dev/workflow/customizing/)
+```bash
+eas build --profile development --platform android
+```
 
-## Publishing
+## Configuration
 
-- Deploy the native app to the App store and Play store using this guide: [Deployment](https://docs.expo.dev/distribution/app-stores/).
-- Deploy the website using this guide: [Web deployment](https://docs.expo.dev/distribution/publishing-websites/).
+The API base URL is **not** committed as a literal. It flows:
 
-## 📝 Notes
+```
+API_URL (env / eas.json)  ->  app.config.js extra.apiUrl  ->  api.js API_URL
+```
 
-- Learn more about [Universal React](https://docs.expo.dev/).
-- See what API and components are [available in the React runtimes](https://docs.expo.dev/versions/latest/).
-- Find out more about developing apps and websites: [Guides](https://docs.expo.dev/guides/).
+That keeps a plain-HTTP address out of production bundles, which both stores reject
+(App Transport Security on iOS, cleartext traffic on Android).
+
+## Layout
+
+| Path | What it does |
+| --- | --- |
+| `App.jsx` | State, polling loops, permission request, navigation bar |
+| `api.js` | API calls with timeouts and Polish error messages |
+| `theme.js` | Colours and category labels shared by every screen |
+| `components/MapView.jsx` | Map, vehicle markers, route polyline, departure board |
+| `components/Modal.jsx` | Swipe-to-dismiss bottom sheet |
+| `components/InfoBox.jsx` | Clock and data-freshness pill |
+| `modals/` | Line picker, alerts, settings |
+
+## Building for the stores
+
+```bash
+npx expo-doctor
+eas build --platform android --profile production
+eas build --platform ios --profile production
+eas submit --platform android
+```
+
+Bump `version` in `app.config.js` for each release; `eas.json` sets `autoIncrement` so
+build numbers advance on their own.

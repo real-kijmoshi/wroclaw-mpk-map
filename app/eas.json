@@ -1,12 +1,35 @@
 {
+  "cli": {
+    "version": ">= 12.0.0",
+    "appVersionSource": "remote"
+  },
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "API_URL": "http://localhost:3000"
+      }
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "preview",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "API_URL": "https://wroclaw-mpk-api.onrender.com"
+      }
     },
+    "production": {
+      "channel": "production",
+      "autoIncrement": true,
+      "env": {
+        "API_URL": "https://wroclaw-mpk-api.onrender.com"
+      }
+    }
+  },
+  "submit": {
     "production": {}
   }
 }

@@ -1,131 +1,150 @@
 # Wrocław MPK Map
 
-Real-time tracking application for public transportation in Wrocław, Poland. Track buses and trams on an interactive map with live updates and service alerts.
-
-## Screenshots
+Real-time tracking for Wrocław's trams and buses: an Expo app and the API that feeds it.
+Vehicle positions come from MPK Wrocław's public endpoint, timetables and route shapes from
+the city's GTFS feed, and disruption notices from public RSS feeds.
 
 <div style="display: flex; gap: 10px;">
-    <img src="images/screen1.jpg" alt="Application Screenshot 1" width="300"/>
-    <img src="images/screen2.jpg" alt="Application Screenshot 2" width="300"/>
-    <img src="images/screen3.jpg" alt="Application Screenshot 3" width="300"/>
+    <img src="images/screen1.jpg" alt="Map with tracked vehicles" width="260"/>
+    <img src="images/screen2.jpg" alt="Line selection" width="260"/>
+    <img src="images/screen3.jpg" alt="Service alerts" width="260"/>
 </div>
 
-## Features
+> Not affiliated with MPK Wrocław. It reads public data the city publishes as open data.
 
-- 🚌 Real-time vehicle tracking
-- 🚊 Support for all types of public transport:
-  - Regular trams and buses
-  - Night buses
-  - Express buses
-  - Suburban buses
-  - Temporary lines
-  - Special lines
-- 🗺️ Route shapes visualization
-- ⚠️ Service alerts and disruptions
-- 🔄 Auto-updating every 10 seconds
-- 📱 Mobile-friendly interface
+## Quick start
 
-## Project Structure
+```bash
+# API
+cd server
+npm install
+npm run doctor   # confirms MPK and the city portal are answering right now
+npm start        # http://localhost:3000
 
-```
-├── app/                   # React Native mobile application
-│   ├── components/       # Reusable UI components
-│   ├── modals/          # Modal dialog components
-│   └── assets/          # Images and static assets
-└── server/              # Express.js backend server
-    ├── utils/           # Utility functions
-    └── data/           # GTFS data storage
+# App (in another terminal)
+cd app
+npm install
+API_URL=http://localhost:3000 npm start
 ```
 
-## Backend API Endpoints
+Open <http://localhost:3000/map> for a browser map and <http://localhost:3000/status> for a
+dashboard showing which upstream sources are live.
 
-- `GET /lines` - Get all categorized transport lines
-- `GET /lines/:category` - Get lines for a specific category
-- `GET /locations` - Get real-time vehicle locations
-- `GET /shapes/:line` - Get route shape for specific line
-- `GET /alerts` - Get service alerts and disruptions
-- `GET /health` - Server health check endpoint
+## Why things break, and how this handles it
 
-## Technologies Used
+Both upstream sources have moved before — the city migrated its open-data portal, and the
+`bus_position` endpoint has changed shape more than once. So no URL is hardcoded in one
+place:
 
-### Backend
-- Node.js
-- Express.js
-- GTFS data integration
-- Real-time data from MPK Wrocław API
+- **Every source is a prioritised list.** The server tries each candidate in order and
+  reports the one that answered on `/health`. Add a new URL at the front of `GTFS_URLS`,
+  `VEHICLE_POSITION_URLS` or `ALERT_FEED_URLS` and nothing else needs changing.
+- **`npm run doctor`** checks all of them from your machine and prints exactly what failed.
+- **The GTFS archive is cached on disk.** If the portal is down at boot, the server starts
+  with the last good timetable rather than serving nothing.
+- **Both documented request formats are tried.** `bus_position` is described in the wild
+  with two different bodies — `busList[bus][]`/`busList[tram][]` and `busList[][]` — and it
+  answers `200 []` rather than an error when it does not like the one you sent. The tracker
+  tries each, sticks to whichever works, and shows it on `/health` as `vehicles.encoding`.
+- **Vehicle records are matched by field aliases,** so a renamed `x`/`y` field does not
+  silently produce an empty map.
+- **A scheduled GitHub Action** runs the doctor daily and opens an issue when a required
+  source stops answering.
 
-### Frontend
-- React Native
-- React Native Maps
-- Custom components for vehicle tracking
+## API
 
-## Installation
+Base URL: your deployment, or `http://localhost:3000`.
 
-### Backend Server
+| Endpoint | Description |
+| --- | --- |
+| `GET /lines` | All lines grouped by category (`tram`, `busNight`, `busExpress`, …) |
+| `GET /lines/:category` | One category |
+| `GET /locations` | Live vehicle positions. `?line=4,17` and `?type=tram` filter |
+| `GET /shapes/:line` | Route shape and stops. `?lat=&lon=` picks the variant nearest a vehicle, `?format=compact` halves the payload |
+| `GET /shapes/:line/variants` | Every variant of a route |
+| `GET /stops?q=rynek` | Stop search, diacritic-insensitive |
+| `GET /stops/:line` | Every stop served by a line |
+| `GET /stop/:id` | Stop details |
+| `GET /stop/:id/departures` | Next departures, filtered to services running today. `?limit=` `?within=` (minutes) |
+| `GET /alerts` | Disruption notices. `?since=` (ms epoch) `?line=` |
+| `GET /health` | Status of every upstream source and index |
+| `GET /map`, `GET /status` | Browser map and status dashboard |
 
-1. Navigate to the server directory:
+`/shapes/:line` returns the verbose legacy payload by default so app builds already on
+people's phones keep working; `?format=compact` is what the current app requests.
+
+## Repository layout
+
+```
+app/                 Expo app (SDK 57, React Native 0.86)
+  api.js             API client — base URL comes from Expo config, not a hardcoded IP
+  components/        Map, bottom sheet, status pill
+  modals/            Line picker, alerts, settings
+server/
+  index.js           Entry point: starts HTTP first, loads data in the background
+  src/config.js      Every tunable and every upstream URL list
+  src/gtfs/          Download, parse, index and query the GTFS feed
+  src/vehicles.js    Live position polling and normalisation
+  src/alerts.js      RSS/Atom providers (X/Twitter optional)
+  src/routes.js      HTTP endpoints
+  scripts/doctor.js  Upstream connectivity check
+  test/              Unit and HTTP tests, no network required
+```
+
+## Development
+
 ```bash
 cd server
+npm test       # unit + HTTP integration tests against an in-memory GTFS fixture
+npm run lint
+npm run dev    # restarts on change
 ```
 
-2. Install dependencies:
+Tests build a small GTFS archive in memory, so they run offline and in CI.
+
+## Deploying
+
+The server holds the whole timetable in memory. Budget roughly 400 MB with the departure
+index enabled, about half that with `GTFS_BUILD_STOP_INDEX=false`.
+
 ```bash
-npm install
+docker build -t wroclaw-mpk-api ./server
+docker run -p 3000:3000 -v gtfs-cache:/app/data wroclaw-mpk-api
 ```
 
-3. Start the server:
-```bash
-npm start
-```
+`server/render.yaml` deploys it to Render as-is. Any host works — it is a plain Node
+process with no database. Mount a volume at `/app/data` so the cached GTFS archive
+survives restarts.
 
-The server will run on port 3000 by default.
+See [`server/.env.example`](server/.env.example) for every setting.
 
-### Mobile App
+## Publishing the app
 
-1. Navigate to the app directory:
+`app/app.config.js` holds the store metadata; the API URL comes from `API_URL` at build
+time (set per profile in `app/eas.json`), so no plain-HTTP address ships in the bundle.
+
 ```bash
 cd app
+npx expo-doctor                                    # config and dependency check
+eas build --platform android --profile production
+eas submit --platform android
 ```
 
-2. Install dependencies:
-```bash
-npm install
-```
+Before the first submission you still need to, outside this repo:
 
-3. Start the development server:
-```bash
-npm start
-```
+- create the Play Console and App Store Connect listings,
+- provide a privacy policy URL (the app collects nothing; location stays on the device),
+- upload screenshots and a feature graphic,
+- point `API_URL` in `eas.json` at your deployed API.
 
-4. Use the Expo Go app to run the application on your device, or run in an emulator.
+## Data sources
 
-## Data Sources
+- Timetables: [Otwarte Dane Wrocław — GTFS](https://opendata.cui.wroclaw.pl/dataset/rozkladjazdytransportupublicznegoplik_data)
+- Vehicle positions: `POST https://mpk.wroc.pl/bus_position`
+- Disruptions: public RSS feeds (configurable)
 
-- GTFS Data: [Wrocław Open Data](https://www.wroclaw.pl/open-data/)
-- Real-time vehicle positions: MPK Wrocław API
-
-## Features in Detail
-
-### Vehicle Categories
-- Regular trams (lines 0-39)
-- Temporary trams (lines 70-99)
-- Regular buses
-- Night buses (lines 200-299)
-- Express buses (A, C, D, K, N)
-- Suburban buses (lines 600-699)
-- Temporary buses (lines 700-799)
-- Zone buses (lines 900-999) [not supported yet becase its not operated by MPK Wrocław but by długołęka i think]
-- Special buses (B-prefix)
-
-### Real-time Updates
-- Vehicle positions update every 10 seconds
-- GTFS data refreshes daily
-- Service alerts are provided in real-time
-
-## Contributing
-
-Feel free to contribute to this project by submitting issues or pull requests. Please ensure that your code follows the existing style and includes appropriate tests.
+Check the terms of use of each source before deploying publicly.
 
 ## License
 
-This project uses public transport data from MPK Wrocław and the City of Wrocław Open Data platform. Please ensure compliance with their terms of use when using this application.
+MIT — see [LICENSE](LICENSE).
