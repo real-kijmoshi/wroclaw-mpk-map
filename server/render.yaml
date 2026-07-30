@@ -1,0 +1,29 @@
+# One-click deploy on Render. `render.yaml` lives here so the service's root
+# directory is the server folder.
+#
+# The free tier sleeps after 15 minutes of inactivity and reloads the whole
+# GTFS feed on wake, which takes about a minute — fine for a hobby deployment,
+# but pick a paid instance if you want the app to feel instant.
+services:
+  - type: web
+    name: wroclaw-mpk-api
+    runtime: node
+    plan: free
+    region: frankfurt
+    rootDir: server
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      # The timetable index is the memory-hungry part; turn this off if the
+      # instance runs out of memory.
+      - key: GTFS_BUILD_STOP_INDEX
+        value: 'true'
+    disk:
+      name: gtfs-cache
+      mountPath: /opt/render/project/src/server/data
+      sizeGB: 1
