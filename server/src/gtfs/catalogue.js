@@ -311,6 +311,23 @@ const resolveFeedCandidates = async ({ now = Date.now() } = {}) => {
           downloadBase: config.gtfs.downloadBase,
           limit: config.gtfs.maxFileLookups,
         });
+
+        if (!listing.length) {
+          // No metadata endpoint answered, so there are no names to sort by.
+          // The ids are ordered newest upload first and each archive states its
+          // own effective dates, so download them in that order and let the
+          // in-force check in the download loop choose. Slower, but it needs
+          // nothing from an endpoint whose shape is undocumented.
+          logger.warn(
+            'no file metadata endpoint answered; falling back to downloading ' +
+              `ids in listed order from ${config.gtfs.downloadBase}`,
+          );
+          listing = ids.slice(0, config.gtfs.maxIdDownloads).map((id) => ({
+            name: null,
+            url: `${config.gtfs.downloadBase}/${id}/`,
+            effectiveDate: null,
+          }));
+        }
       }
     }
 
@@ -318,7 +335,10 @@ const resolveFeedCandidates = async ({ now = Date.now() } = {}) => {
 
     if (ordered.length) {
       logger.info(
-        `catalogue lists ${ordered.length} snapshot(s); using ${ordered[0].name}`,
+        `catalogue lists ${ordered.length} snapshot(s); ` +
+          (ordered[0].name
+            ? `using ${ordered[0].name}`
+            : 'names unavailable, choosing by the dates inside each archive'),
       );
       candidates.push(...ordered.map((entry) => ({ url: entry.url, name: entry.name })));
     } else {

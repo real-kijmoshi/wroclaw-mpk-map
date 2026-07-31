@@ -76,6 +76,9 @@ module.exports = {
     // Dataset 6 lists ~66 file ids, ordered newest first. Only the recent ones
     // can be the timetable in force, so there is no point resolving all of them.
     maxFileLookups: num(process.env.GTFS_MAX_FILE_LOOKUPS, 24),
+    // Blind downloads to attempt when no metadata endpoint answers. Each is a
+    // ~11 MB fetch, so this stays small; the ids are newest first.
+    maxIdDownloads: num(process.env.GTFS_MAX_ID_DOWNLOADS, 4),
     // How many discovered candidates to try before giving up.
     maxCandidates: num(process.env.GTFS_MAX_CANDIDATES, 6),
     // Where the last successfully downloaded archive is kept so a restart (or a

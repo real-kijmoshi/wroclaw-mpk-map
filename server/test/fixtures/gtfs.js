@@ -11,9 +11,10 @@ const AdmZip = require('adm-zip');
  * @param {{ omit?: string[], prefix?: string }} options
  *   `omit` leaves tables out, for testing the completeness check against the
  *   short snapshots the city's archive contains. `prefix` nests every table in
- *   a directory, which is how some publishers ship the archive.
+ *   a directory, which is how some publishers ship the archive. `feedDates`
+ *   writes feed_info.txt, which is how an archive states when it takes effect.
  */
-const buildFixtureZip = ({ omit = [], prefix = '' } = {}) => {
+const buildFixtureZip = ({ omit = [], prefix = '', feedDates = null } = {}) => {
   const files = {
     'routes.txt': [
       'route_id,route_short_name,route_long_name,route_type,route_color',
@@ -84,6 +85,13 @@ const buildFixtureZip = ({ omit = [], prefix = '' } = {}) => {
       'WEEKEND,20261225,1',
     ].join('\n'),
   };
+
+  if (feedDates) {
+    files['feed_info.txt'] = [
+      'feed_publisher_name,feed_publisher_url,feed_lang,feed_start_date,feed_end_date',
+      `MPK,https://mpk.wroc.pl,pl,${feedDates.start},${feedDates.end}`,
+    ].join('\n');
+  }
 
   const zip = new AdmZip();
   for (const [name, content] of Object.entries(files)) {

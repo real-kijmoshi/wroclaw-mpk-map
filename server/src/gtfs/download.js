@@ -59,17 +59,35 @@ const fetchArchive = async (url) => {
  * Falls back to the last archive written to disk when every candidate fails, so
  * a portal outage degrades to a stale timetable rather than an empty service.
  *
- * @param {{ validate?: (buffer: Buffer) => void, now?: number }} options
+ * `prefer` decides between valid candidates: the first one it accepts wins, and
+ * if none is accepted the first valid candidate is used anyway. That is what
+ * keeps a future-dated snapshot from being served early when the candidates
+ * arrived without names to sort by — the archive states its own dates.
+ *
+ * @param {{
+ *   validate?: (buffer: Buffer) => void,
+ *   prefer?: (buffer: Buffer, now: Date) => boolean,
+ *   now?: number,
+ * }} options
  */
-const downloadGtfs = async ({ validate, now = Date.now() } = {}) => {
+const downloadGtfs = async ({ validate, prefer, now = Date.now() } = {}) => {
   const previous = await readMeta();
   const candidates = await resolveFeedCandidates({ now });
   const errors = [];
+  let fallback = null;
 
   for (const candidate of candidates.slice(0, config.gtfs.maxCandidates)) {
     try {
       const buffer = await fetchArchive(candidate.url);
       validate?.(buffer);
+
+      if (prefer && !prefer(buffer, new Date(now))) {
+        logger.info(
+          `${candidate.name ?? candidate.url} is not in force today; looking for a better one`,
+        );
+        fallback ??= { buffer, candidate };
+        continue;
+      }
 
       const checksum = crypto.createHash('sha256').update(buffer).digest('hex');
       const meta = {
@@ -96,6 +114,26 @@ const downloadGtfs = async ({ validate, now = Date.now() } = {}) => {
       errors.push(`${candidate.url}: ${error.message}`);
       logger.warn(`candidate rejected (${candidate.url}): ${error.message}`);
     }
+  }
+
+  if (fallback) {
+    // Nothing was in force — an archive that is merely valid still beats no
+    // timetable at all, and /health records which one it settled for.
+    const { buffer, candidate } = fallback;
+    logger.warn(
+      `No snapshot is in force today; falling back to ${candidate.name ?? candidate.url}`,
+    );
+    const meta = {
+      source: candidate.url,
+      snapshot: candidate.name,
+      checksum: crypto.createHash('sha256').update(buffer).digest('hex'),
+      fetchedAt: new Date().toISOString(),
+      bytes: buffer.length,
+    };
+    if (config.gtfs.useCache) {
+      await writeCache(buffer, meta).catch(() => {});
+    }
+    return { buffer, ...meta, fromCache: false };
   }
 
   const detail = errors.length ? `\n  - ${errors.join('\n  - ')}` : ' (no candidates resolved)';
