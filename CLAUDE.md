@@ -47,8 +47,9 @@ it is set.
 **2. `/od2/6/` returns file ids, not files.**
 The dataset payload is `{id: 6, active: true, pliki: [119, 117, 121, …]}` —
 about 66 bare integers, ordered newest upload first. Each one has to be
-resolved separately (`/od2/6/<id>/` gives `{nazwa, rozszerzenie}`), and the
-metadata carries no download URL, so it is built from `GTFS_DOWNLOAD_BASE`.
+resolved separately, and no metadata endpoint has been found — `/od2/6/<id>/`
+is a 404. The download URL is `https://open-data.cui.wroclaw.pl/hdb/download/<id>/`
+(`GTFS_DOWNLOAD_BASE`), which is what the portal's "Pobierz" buttons point at.
 Only the first `GTFS_MAX_FILE_LOOKUPS` ids are resolved; nothing older can be
 the timetable in force. `resolveFileEntries()` probes a few endpoint shapes and
 then reuses whichever answered rather than probing per file.

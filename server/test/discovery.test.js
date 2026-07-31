@@ -51,7 +51,7 @@ describe('resolveFeedCandidates against the two-step data API', () => {
 
     const base = `http://127.0.0.1:${server.address().port}`;
     config.gtfs.catalogueUrl = `${base}/od2/6/`;
-    config.gtfs.downloadBase = `${base}/hdb/ft`;
+    config.gtfs.downloadBase = `${base}/hdb/download`;
     config.gtfs.ckanHosts = [];
     config.gtfs.mirrors = [];
     config.gtfs.overrideUrls = [];
@@ -94,6 +94,6 @@ describe('resolveFeedCandidates against the two-step data API', () => {
 
   it('builds a download url for metadata that carries none', async () => {
     const [first] = await resolveFeedCandidates({ now: Date.UTC(2026, 6, 31) });
-    assert.match(first.url, /\/hdb\/ft\/119\/$/);
+    assert.match(first.url, /\/hdb\/download\/119\/$/);
   });
 });

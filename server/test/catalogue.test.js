@@ -117,9 +117,9 @@ describe('pickZipResources', () => {
     // The shape that broke the old filter: no .zip anywhere in the path.
     assert.deepEqual(
       pickZipResources([
-        { url: 'https://open-data.cui.wroclaw.pl/hdb/ft/6/', format: 'ZIP', name: 'GTFS' },
+        { url: 'https://open-data.cui.wroclaw.pl/hdb/download/119/', format: 'ZIP', name: 'GTFS' },
       ]),
-      ['https://open-data.cui.wroclaw.pl/hdb/ft/6/'],
+      ['https://open-data.cui.wroclaw.pl/hdb/download/119/'],
     );
   });
 

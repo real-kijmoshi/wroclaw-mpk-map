@@ -133,7 +133,7 @@ const orderByEffectiveDate = (entries, now = Date.now()) => {
  * Pick GTFS archives out of a CKAN resource list.
  *
  * Does NOT require a `.zip` extension: portals increasingly serve archives from
- * extensionless endpoints such as `/hdb/ft/6/`, and an extension check silently
+ * extensionless endpoints such as `/hdb/download/119/`, and an extension check silently
  * drops those. The declared format is the signal here; the magic-byte check at
  * download time is the actual guarantee.
  */
