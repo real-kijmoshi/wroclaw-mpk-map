@@ -5,6 +5,7 @@ const { XMLParser } = require('fast-xml-parser');
 const config = require('./config');
 const logger = require('./logger');
 const { fetchWithTimeout } = require('./http');
+const { lineToType } = require('./lines');
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 
@@ -16,19 +17,25 @@ const stripHtml = (value) =>
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
     .replace(/&#39;/g, "'")
     .replace(/\s+/g, ' ')
     .trim();
 
 const asArray = (value) => (Array.isArray(value) ? value : value ? [value] : []);
 
+const toTimestamp = (value, fallback = Date.now()) => {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
 /**
  * Pull line numbers out of a disruption message.
  *
- * The previous implementation matched every number in the text, so dates,
- * times and street numbers all became "affected lines". Matching against the
- * set of lines that actually exist in the timetable removes almost all of that
- * noise.
+ * Matching against the set of lines that actually exist in the timetable is
+ * what keeps dates, times and street numbers from being reported as affected
+ * lines — the naive "every number in the text" version reported "22" and "00"
+ * from "od godz. 22:00".
  *
  * @param {string} text
  * @param {Set<string>} knownLines
@@ -38,14 +45,11 @@ const extractAffectedLines = (text, knownLines) => {
   if (!text || !knownLines?.size) return [];
 
   const found = new Set();
-  // Split on anything that cannot be part of a line name.
   const tokens = String(text).split(/[^0-9A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż]+/);
 
   for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i];
-    if (!token) continue;
-    const candidate = token.toUpperCase();
-    if (!knownLines.has(candidate)) continue;
+    const candidate = tokens[i]?.toUpperCase();
+    if (!candidate || !knownLines.has(candidate)) continue;
 
     // A bare single letter is only a line when a transport word is nearby;
     // otherwise "A" from ordinary prose would match the express line A.
@@ -60,18 +64,16 @@ const extractAffectedLines = (text, knownLines) => {
   return [...found];
 };
 
-const toTimestamp = (value) => {
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : Date.now();
-};
-
 /** Parse an RSS 2.0 or Atom document into alert records. */
 const parseFeed = (xml, sourceUrl) => {
-  const document = parser.parse(xml);
-  const channelItems = asArray(document?.rss?.channel?.item);
-  const atomEntries = asArray(document?.feed?.entry);
+  let document;
+  try {
+    document = parser.parse(xml);
+  } catch {
+    return [];
+  }
 
-  const items = channelItems.map((item) => ({
+  const items = asArray(document?.rss?.channel?.item).map((item) => ({
     id: String(item.guid?.['#text'] ?? item.guid ?? item.link ?? item.title ?? ''),
     title: stripHtml(item.title),
     content: stripHtml(item.description ?? item['content:encoded'] ?? item.title),
@@ -79,10 +81,12 @@ const parseFeed = (xml, sourceUrl) => {
     timestamp: toTimestamp(item.pubDate ?? item.date ?? item['dc:date']),
   }));
 
-  const entries = atomEntries.map((entry) => ({
+  const entries = asArray(document?.feed?.entry).map((entry) => ({
     id: String(entry.id ?? entry.title ?? ''),
     title: stripHtml(entry.title?.['#text'] ?? entry.title),
-    content: stripHtml(entry.summary?.['#text'] ?? entry.content?.['#text'] ?? entry.summary ?? entry.content ?? entry.title),
+    content: stripHtml(
+      entry.summary?.['#text'] ?? entry.content?.['#text'] ?? entry.summary ?? entry.content ?? entry.title,
+    ),
     url: asArray(entry.link).map((link) => link?.['@_href']).find(Boolean) ?? null,
     timestamp: toTimestamp(entry.updated ?? entry.published),
   }));
@@ -92,80 +96,128 @@ const parseFeed = (xml, sourceUrl) => {
     .map((item) => ({ ...item, source: sourceUrl }));
 };
 
-/** RSS/Atom provider — works without any API key. */
-class FeedProvider {
+/** Words that mark a link as a service notice rather than site furniture. */
+const NOTICE_WORDS =
+  /(lini[aei]|tramwaj|autobus|objazd|zmian|utrudnien|komunikat|awari|remont|wyłącz|zamknię|kursow|przystan)/i;
+
+/** Nav and footer links that would otherwise pass the keyword test. */
+const CHROME_WORDS = /^(menu|nawigacja|strona główna|kontakt|polityka|cookies|zobacz wszystkie)$/i;
+
+const DATE_PATTERN = /(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})/;
+
+const polishDate = (text) => {
+  const match = DATE_PATTERN.exec(text ?? '');
+  if (!match) return null;
+  const [, day, month, year] = match;
+  const ms = Date.UTC(Number(year), Number(month) - 1, Number(day));
+  return Number.isFinite(ms) ? ms : null;
+};
+
+/**
+ * Scrape service notices out of an HTML page.
+ *
+ * MPK publishes disruptions as web pages and nothing else — there is no API,
+ * and the X timeline the old code read has needed a paid tier since 2023, which
+ * is why `/alerts` quietly returned `[]` for a year.
+ *
+ * Deliberately shape-agnostic, for the same reason the feed listing parser is:
+ * it walks anchors and keeps the ones whose text reads like a notice, rather
+ * than depending on class names that will be renamed in the next redesign. It
+ * will still break eventually — this is the most fragile code in the server —
+ * so failures surface in /health under `alerts.providers[].lastError`.
+ *
+ * @param {string} html
+ * @param {string} pageUrl used to resolve relative links
+ */
+const parsePage = (html, pageUrl) => {
+  if (typeof html !== 'string' || !html.includes('<')) return [];
+
+  const results = [];
+  const seen = new Set();
+  const anchor = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+
+  let match;
+  while ((match = anchor.exec(html)) !== null) {
+    const href = match[1];
+    const title = stripHtml(match[2]);
+
+    if (!title || title.length < 12 || title.length > 220) continue;
+    if (CHROME_WORDS.test(title)) continue;
+    if (!NOTICE_WORDS.test(title)) continue;
+    if (/^(#|javascript:|mailto:)/i.test(href)) continue;
+
+    let url;
+    try {
+      url = new URL(href, pageUrl).toString();
+    } catch {
+      continue;
+    }
+    if (seen.has(url)) continue;
+    seen.add(url);
+
+    // Look just past the link for a date; these pages usually print one next
+    // to the headline. Falling back to "now" keeps undated notices visible.
+    const nearby = stripHtml(html.slice(match.index, match.index + match[0].length + 400));
+    const published = polishDate(nearby);
+
+    results.push({
+      id: url,
+      title,
+      content: title,
+      url,
+      timestamp: published ?? Date.now(),
+      source: pageUrl,
+    });
+  }
+
+  return results;
+};
+
+/**
+ * One upstream page of notices.
+ *
+ * Auto-detects the format: if the response parses as RSS or Atom with items it
+ * is read as a feed, otherwise it is scraped as HTML. That means a site can add
+ * or drop a feed without any change here.
+ */
+class NoticeProvider {
   constructor(url) {
     this.url = url;
-    this.name = `feed:${url}`;
+    this.name = url;
   }
 
   async fetch() {
     const response = await fetchWithTimeout(this.url, {
       timeoutMs: config.alerts.timeoutMs,
-      headers: { Accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8' },
+      headers: {
+        Accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/html;q=0.8',
+      },
     });
     if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
-    return parseFeed(await response.text(), this.url);
+
+    const body = await response.text();
+    const feedItems = parseFeed(body, this.url);
+    if (feedItems.length) return feedItems;
+
+    const scraped = parsePage(body, this.url);
+    if (!scraped.length) throw new Error('no notices found — page markup probably changed');
+    return scraped;
   }
 }
 
 /**
- * X/Twitter provider.
+ * Aggregates disruption notices from every configured page.
  *
- * Reading another account's timeline is not available on the free API tier any
- * more, which is why the old hardcoded fetch silently returned nothing. It is
- * kept as an opt-in provider for anyone who has a paid bearer token.
- */
-class TwitterProvider {
-  constructor({ bearerToken, userId, username }) {
-    this.bearerToken = bearerToken;
-    this.userId = userId;
-    this.username = username;
-    this.name = 'twitter';
-  }
-
-  async fetch() {
-    const url = `https://api.twitter.com/2/users/${this.userId}/tweets?max_results=50&tweet.fields=created_at`;
-    const response = await fetchWithTimeout(url, {
-      timeoutMs: config.alerts.timeoutMs,
-      headers: { Authorization: `Bearer ${this.bearerToken}` },
-    });
-
-    if (response.status === 403 || response.status === 401) {
-      throw new Error(
-        `HTTP ${response.status} — the token cannot read timelines (paid X API access required)`,
-      );
-    }
-    if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
-
-    const payload = await response.json();
-    return (payload.data ?? []).map((tweet) => ({
-      id: `tweet-${tweet.id}`,
-      title: null,
-      content: stripHtml(tweet.text),
-      url: `https://x.com/${this.username}/status/${tweet.id}`,
-      timestamp: toTimestamp(tweet.created_at),
-      source: 'x.com',
-    }));
-  }
-}
-
-/**
- * Aggregates disruption notices from every configured provider.
- *
- * A provider that fails is reported on /health and skipped; the rest still
- * produce alerts.
+ * Fails soft: a provider that throws keeps the previous alert list in place and
+ * records why in `status`. A stale list is better than an empty one, and
+ * `/health` says which it is.
  */
 class AlertsService {
   constructor(getKnownLines) {
     this.getKnownLines = getKnownLines ?? (() => new Set());
     this.alerts = [];
     this.timer = null;
-    this.providers = config.alerts.feeds.map((url) => new FeedProvider(url));
-
-    if (config.alerts.twitter.bearerToken) {
-      this.providers.push(new TwitterProvider(config.alerts.twitter));
-    }
+    this.providers = config.alerts.pages.map((url) => new NoticeProvider(url));
 
     this.status = {
       providers: this.providers.map((provider) => ({
@@ -175,6 +227,7 @@ class AlertsService {
         items: 0,
       })),
       lastRefreshAt: null,
+      lastError: null,
       count: 0,
     };
   }
@@ -199,10 +252,32 @@ class AlertsService {
       }),
     );
 
+    this.status.lastRefreshAt = new Date().toISOString();
+    this.status.lastError =
+      this.status.providers.find((provider) => provider.lastError)?.lastError ?? null;
+
+    // Every provider failed: keep whatever we last had rather than blanking the
+    // screen, and let /health explain the staleness.
+    if (!collected.length) {
+      if (this.alerts.length) {
+        logger.warn('No alert provider responded; keeping the previous list');
+      } else if (this.providers.length) {
+        logger.warn('No alerts available from any provider — check ALERT_PAGE_URLS');
+      }
+      return this.alerts;
+    }
+
     const byId = new Map();
     for (const item of collected) {
       const id = item.id || `${item.source}:${item.timestamp}:${item.title ?? item.content}`;
       if (byId.has(id)) continue;
+
+      const affected = extractAffectedLines(`${item.title ?? ''} ${item.content ?? ''}`, knownLines);
+      // Clients colour line badges by type; without this they would all have to
+      // re-implement the categorisation rules and drift out of sync with them.
+      const types = {};
+      for (const line of affected) types[line] = lineToType(line);
+
       byId.set(id, {
         id,
         title: item.title || null,
@@ -210,20 +285,15 @@ class AlertsService {
         url: item.url,
         timestamp: item.timestamp,
         source: item.source,
-        affected: extractAffectedLines(`${item.title ?? ''} ${item.content ?? ''}`, knownLines),
+        affected,
+        types,
       });
     }
 
     this.alerts = [...byId.values()]
       .sort((a, b) => b.timestamp - a.timestamp)
       .slice(0, config.alerts.maxItems);
-
-    this.status.lastRefreshAt = new Date().toISOString();
     this.status.count = this.alerts.length;
-
-    if (!this.alerts.length && this.providers.length) {
-      logger.warn('No alerts available from any provider — check ALERT_FEED_URLS');
-    }
 
     return this.alerts;
   }
@@ -253,4 +323,11 @@ class AlertsService {
   }
 }
 
-module.exports = { AlertsService, FeedProvider, TwitterProvider, extractAffectedLines, parseFeed, stripHtml };
+module.exports = {
+  AlertsService,
+  NoticeProvider,
+  extractAffectedLines,
+  parseFeed,
+  parsePage,
+  stripHtml,
+};

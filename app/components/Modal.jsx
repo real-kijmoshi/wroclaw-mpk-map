@@ -14,7 +14,7 @@ import {
   State,
 } from "react-native-gesture-handler";
 
-import { COLORS } from "../theme";
+import { color, radius } from "../theme";
 
 const { height: SCREEN_HEIGHT } = Dimensions.get("window");
 const DEFAULT_MODAL_HEIGHT = SCREEN_HEIGHT * 0.75;
@@ -138,9 +138,9 @@ const styles = StyleSheet.create({
   },
   backdrop: { ...StyleSheet.absoluteFillObject },
   sheet: {
-    backgroundColor: COLORS.surface,
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
+    backgroundColor: color.paper,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
     paddingHorizontal: 20,
     paddingBottom: Platform.OS === "ios" ? 30 : 20,
   },
@@ -148,7 +148,7 @@ const styles = StyleSheet.create({
   handle: {
     width: 44,
     height: 5,
-    backgroundColor: "rgba(255,255,255,0.35)",
+    backgroundColor: color.paperLine,
     borderRadius: 2.5,
   },
 });

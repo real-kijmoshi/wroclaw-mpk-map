@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 
 import SwipeableModal from "../components/Modal";
-import { CATEGORY_LABELS, COLORS, LINE_COLORS } from "../theme";
+import { color, colorForType, lineLabel } from "../theme";
 
 const HIDDEN_CATEGORIES = new Set(["allBuses", "allTrams"]);
 
@@ -67,7 +67,7 @@ export default function LinesSelection({
         value={query}
         onChangeText={setQuery}
         placeholder="Szukaj linii…"
-        placeholderTextColor={COLORS.textMuted}
+        placeholderTextColor={color.textMuted}
         autoCapitalize="characters"
         autoCorrect={false}
         inputMode="search"
@@ -94,11 +94,11 @@ export default function LinesSelection({
                   <View
                     style={[
                       styles.swatch,
-                      { backgroundColor: LINE_COLORS[category] ?? LINE_COLORS.unknown },
+                      { backgroundColor: colorForType(category) },
                     ]}
                   />
                   <Text style={styles.categoryTitle}>
-                    {CATEGORY_LABELS[category] ?? category}
+                    {lineLabel[category] ?? category}
                   </Text>
                 </View>
                 <TouchableOpacity onPress={() => toggleCategory(values)} hitSlop={8}>
@@ -118,7 +118,7 @@ export default function LinesSelection({
                       style={[
                         styles.lineButton,
                         isSelected && {
-                          backgroundColor: LINE_COLORS[category] ?? LINE_COLORS.unknown,
+                          backgroundColor: colorForType(category),
                           borderColor: "#fff",
                         },
                       ]}
@@ -148,23 +148,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 12,
   },
-  headerTitle: { fontSize: 20, fontWeight: "700", color: COLORS.text },
-  headerSubtitle: { fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
+  headerTitle: { fontSize: 20, fontWeight: "700", color: color.text },
+  headerSubtitle: { fontSize: 12, color: color.textMuted, marginTop: 2 },
   headerActions: { flexDirection: "row", alignItems: "center", gap: 4 },
   headerButton: { paddingVertical: 6, paddingHorizontal: 8 },
-  headerButtonText: { fontSize: 15, color: COLORS.textMuted, fontWeight: "600" },
-  headerButtonPrimary: { color: COLORS.accentText },
+  headerButtonText: { fontSize: 15, color: color.textMuted, fontWeight: "600" },
+  headerButtonPrimary: { color: color.rail },
   search: {
-    backgroundColor: COLORS.surfaceAlt,
+    backgroundColor: color.paperMuted,
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    color: COLORS.text,
+    color: color.text,
     fontSize: 15,
     marginBottom: 14,
   },
   scrollContent: { paddingBottom: 30 },
-  empty: { color: COLORS.textMuted, fontSize: 14, textAlign: "center", marginTop: 24 },
+  empty: { color: color.textMuted, fontSize: 14, textAlign: "center", marginTop: 24 },
   category: { marginBottom: 22 },
   categoryHeader: {
     flexDirection: "row",
@@ -174,8 +174,8 @@ const styles = StyleSheet.create({
   },
   categoryTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   swatch: { width: 10, height: 10, borderRadius: 5 },
-  categoryTitle: { fontSize: 16, fontWeight: "700", color: COLORS.text },
-  categoryAction: { fontSize: 12, color: COLORS.accentText, fontWeight: "600" },
+  categoryTitle: { fontSize: 16, fontWeight: "700", color: color.text },
+  categoryAction: { fontSize: 12, color: color.rail, fontWeight: "600" },
   linesRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   lineButton: {
     minWidth: 52,
@@ -183,10 +183,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 8,
     alignItems: "center",
-    backgroundColor: COLORS.surfaceAlt,
+    backgroundColor: color.paperMuted,
     borderWidth: 1.5,
     borderColor: "transparent",
   },
-  lineText: { fontSize: 15, color: COLORS.textMuted, fontWeight: "700" },
+  lineText: { fontSize: 15, color: color.textMuted, fontWeight: "700" },
   lineTextSelected: { color: "#fff" },
 });
