@@ -37,11 +37,17 @@ const VEHICLE_SOURCES = list(process.env.VEHICLE_POSITION_URLS, [
   'https://mpk.wroc.pl/bus_position',
 ]);
 
-// Verified to exist 2026-07-31. `mpk.wroc.pl/komunikaty` was a guess and 404s;
-// MPK publishes under /o-mpk/aktualnosci instead.
+/**
+ * Pages carrying live service disruptions.
+ *
+ * Deliberately just the one. `mpk.wroc.pl/komunikaty` was a guess and 404s, and
+ * `/o-mpk/aktualnosci` exists but is corporate news — adding it produced
+ * "MPK kupuje nowe tramwaje" as a service alert. Before adding a source, check
+ * that it carries dated disruptions rather than press releases; `npm run doctor`
+ * prints the headlines each one yields so that is easy to eyeball.
+ */
 const ALERT_PAGES = list(process.env.ALERT_PAGE_URLS, [
   'https://www.wroclaw.pl/komunikacja/zmiany-w-komunikacji',
-  'https://mpk.wroc.pl/o-mpk/aktualnosci',
 ]);
 
 module.exports = {

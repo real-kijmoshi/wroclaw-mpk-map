@@ -156,8 +156,8 @@ Before the first submission you still need to, outside this repo:
 - Timetables: [Otwarte Dane Wrocław](https://opendata.cui.wroclaw.pl/), resolved through
   the CUI data API at runtime
 - Vehicle positions: `POST https://mpk.wroc.pl/bus_position`
-- Disruptions: `wroclaw.pl/komunikacja/zmiany-w-komunikacji` and
-  `mpk.wroc.pl/o-mpk/aktualnosci`, scraped (configurable via `ALERT_PAGE_URLS`)
+- Disruptions: `wroclaw.pl/komunikacja/zmiany-w-komunikacji`, scraped
+  (configurable via `ALERT_PAGE_URLS`)
 
 Check the terms of use of each source before deploying publicly.
 
