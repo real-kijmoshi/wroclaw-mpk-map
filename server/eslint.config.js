@@ -14,6 +14,7 @@ module.exports = [
         fetch: 'readonly',
         AbortController: 'readonly',
         URLSearchParams: 'readonly',
+        URL: 'readonly',
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
         setInterval: 'readonly',

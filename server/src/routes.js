@@ -115,6 +115,7 @@ const createRouter = ({ gtfs, vehicles, alerts, startedAt }) => {
         { method: 'GET', path: '/shapes/:line', description: 'Route shape; ?lat=&lon= picks the closest variant, ?format=compact for the smaller payload' },
         { method: 'GET', path: '/shapes/:line/variants', description: 'Every variant of a route' },
         { method: 'GET', path: '/stops', description: 'Search stops with ?q=' },
+        { method: 'GET', path: '/stops/near', description: 'Stops near ?lat=&lon=; ?radius= (m) and ?limit=' },
         { method: 'GET', path: '/stops/:line', description: 'Stops served by a line' },
         { method: 'GET', path: '/stop/:id', description: 'Stop details' },
         { method: 'GET', path: '/stop/:id/departures', description: 'Next departures; ?limit= and ?within= (minutes)' },
@@ -187,6 +188,18 @@ const createRouter = ({ gtfs, vehicles, alerts, startedAt }) => {
     const payload = compact ? toCompact(variant) : toLegacy(variant);
     shapeCache.set(cacheKey, payload);
     return res.json(payload);
+  });
+
+  router.get('/stops/near', requireGtfs, cacheFor(60), (req, res) => {
+    const lat = parseCoordinate(req.query.lat);
+    const lon = parseCoordinate(req.query.lon);
+    if (lat === null || lon === null) {
+      return res.status(400).json({ error: 'Provide ?lat= and ?lon=' });
+    }
+
+    const radius = Math.min(Number.parseInt(req.query.radius, 10) || 500, 5000);
+    const limit = Math.min(Number.parseInt(req.query.limit, 10) || 20, 100);
+    return res.json({ stops: gtfs.findStopsNear(lat, lon, { radiusMeters: radius, limit }) });
   });
 
   router.get('/stops', requireGtfs, cacheFor(300), (req, res) => {

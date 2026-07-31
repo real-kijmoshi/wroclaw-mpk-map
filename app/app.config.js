@@ -21,15 +21,15 @@ export default {
     orientation: 'portrait',
     icon: './assets/icon.png',
     scheme: 'wromapa',
-    userInterfaceStyle: 'automatic',
-    primaryColor: '#0075FF',
+    userInterfaceStyle: 'light',
+    primaryColor: '#0B5FBF',
     platforms: ['ios', 'android', 'web'],
     owner: 'kijmoshi',
 
     splash: {
       image: './assets/splash.png',
       resizeMode: 'cover',
-      backgroundColor: '#0B1020',
+      backgroundColor: '#0E141B',
     },
 
     assetBundlePatterns: ['**/*'],
@@ -49,7 +49,7 @@ export default {
       versionCode: 2,
       adaptiveIcon: {
         foregroundImage: './assets/adaptive-icon.png',
-        backgroundColor: '#0B1020',
+        backgroundColor: '#0E141B',
       },
       // Location permissions come from the expo-location plugin below.
       // Everything talks to the API over HTTPS, so cleartext stays off.
@@ -63,6 +63,14 @@ export default {
     },
 
     plugins: [
+      [
+        'expo-splash-screen',
+        {
+          image: './assets/icon.png',
+          backgroundColor: '#0E141B',
+          imageWidth: 180,
+        },
+      ],
       [
         'expo-location',
         {
