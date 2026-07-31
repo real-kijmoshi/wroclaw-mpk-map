@@ -8,10 +8,13 @@ const AdmZip = require('adm-zip');
  *
  * Two variants of tram line 4 (one per direction) plus bus line 128.
  *
- * @param {{ omit?: string[] }} options tables to leave out, for testing the
- *   completeness check against the short snapshots the city's archive contains
+ * @param {{ omit?: string[], prefix?: string }} options
+ *   `omit` leaves tables out, for testing the completeness check against the
+ *   short snapshots the city's archive contains. `prefix` nests every table in
+ *   a directory, which is how some publishers ship the archive. `feedDates`
+ *   writes feed_info.txt, which is how an archive states when it takes effect.
  */
-const buildFixtureZip = ({ omit = [] } = {}) => {
+const buildFixtureZip = ({ omit = [], prefix = '', feedDates = null } = {}) => {
   const files = {
     'routes.txt': [
       'route_id,route_short_name,route_long_name,route_type,route_color',
@@ -83,10 +86,17 @@ const buildFixtureZip = ({ omit = [] } = {}) => {
     ].join('\n'),
   };
 
+  if (feedDates) {
+    files['feed_info.txt'] = [
+      'feed_publisher_name,feed_publisher_url,feed_lang,feed_start_date,feed_end_date',
+      `MPK,https://mpk.wroc.pl,pl,${feedDates.start},${feedDates.end}`,
+    ].join('\n');
+  }
+
   const zip = new AdmZip();
   for (const [name, content] of Object.entries(files)) {
     if (omit.includes(name.replace('.txt', ''))) continue;
-    zip.addFile(name, Buffer.from(content, 'utf8'));
+    zip.addFile(`${prefix}${name}`, Buffer.from(content, 'utf8'));
   }
   return zip.toBuffer();
 };

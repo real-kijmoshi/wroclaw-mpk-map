@@ -6,7 +6,7 @@ Context for Claude Code working in this repo. Read this before changing anything
 
 Live map of Wrocław's trams and buses. Two halves:
 
-- `server/` — Express (CommonJS, Node ≥ 20). Discovers and ingests the city's
+- `server/` — Express (CommonJS, Node ≥ 22). Discovers and ingests the city's
   GTFS feed, polls MPK for vehicle positions, scrapes service notices.
 - `app/` — Expo SDK 57 (React Native 0.86, React 19.2). iOS + Android.
 
@@ -44,22 +44,48 @@ in April 2026. `GTFS_URLS` exists as a debugging escape hatch; setting it in
 production re-creates the original failure, and the server logs a warning when
 it is set.
 
-**2. The feed archive contains future-dated timetables.**
-`/od2/6/` returns every dated snapshot, not the current one. On 2026-07-30 the
+**2. `/od2/6/` returns file ids, not files.**
+The dataset payload is `{id: 6, active: true, pliki: [119, 117, 121, …]}` —
+about 66 bare integers, ordered newest upload first. Each one has to be
+resolved separately, and no metadata endpoint has been found — `/od2/6/<id>/`
+is a 404. The download URL is `https://open-data.cui.wroclaw.pl/hdb/download/<id>/`
+(`GTFS_DOWNLOAD_BASE`), which is what the portal's "Pobierz" buttons point at.
+Only the first `GTFS_MAX_FILE_LOOKUPS` ids are resolved; nothing older can be
+the timetable in force. `resolveFileEntries()` probes a few endpoint shapes and
+then reuses whichever answered rather than probing per file.
+
+**3. The archive is the authority on its own dates.**
+Filenames are a convention and the metadata endpoint may not answer at all —
+`/od2/6/<id>/` is a 404 in production. `readEffectiveWindow()` reads
+`feed_info.txt` (or the span of `calendar.txt`) out of the downloaded zip, and
+`isInForce()` is what the download loop uses to skip a future-dated snapshot
+when the candidates arrive without names. If nothing is in force, the first
+valid archive is used anyway — a stale timetable beats none.
+
+**4. The feed archive contains future-dated timetables.**
+The archive holds every dated snapshot, not just the current one. On 2026-07-30 the
 listing already carried `GTFS_01082026`, effective two days later. Taking the
 newest entry serves a schedule that is not in force and shows wrong departure
 times with no error anywhere. Selection is *latest effective date ≤ today* —
-`orderByEffectiveDate()`. Tests are pinned to both 2026-07-30 and 2026-08-01; if
-you change selection logic and those fail, you have reintroduced the bug.
+`orderByEffectiveDate()`. Observed live on 2026-07-31: the portal listed
+`GTFS_01082026` alongside `GTFS_25072026`, and only the latter was in force.
+Tests are pinned to that date and to 2026-08-01; if you change selection logic
+and those fail, you have reintroduced the bug.
 
-**3. Snapshots are not uniformly complete.**
+**5. Look tables up by file name, not by path.**
+Some publishers ship `shapes.txt` at the root and others nest it in a folder
+(`GTFS/shapes.txt`). `zip.getEntry('shapes.txt')` silently misses the nested
+layout, which then reads as a feed with no route geometry — the dane.gov.pl
+mirror was rejected in production for exactly this. Go through `findEntry()`.
+
+**6. Snapshots are not uniformly complete.**
 The archive interleaves ~11 MB feeds with ~6 MB ones, and a short snapshot can
 be missing `shapes.txt`, which leaves the map with no route geometry at all —
 looking like a rendering bug rather than a data problem. `assertComplete()` runs
 per candidate inside the download loop and falls through to the next. Keep the
 validation inside that loop.
 
-**4. The server answers 503 while ingesting.**
+**7. The server answers 503 while ingesting.**
 For up to a minute after boot, `/lines` and friends return `{error, state}` with
 status 503 and a `Retry-After` header. The app once parsed that as data and set
 it as the line list, which crashed the picker on every cold start. **Every** app
@@ -67,43 +93,43 @@ request goes through `apiGet()` in `app/api.js`, which retries 503 with backoff;
 `normaliseLines()` validates the payload before it reaches state. Do not call
 `fetch` directly in a component.
 
-**5. Shape points have changed format twice.**
+**8. Shape points have changed format twice.**
 GTFS column names (`shape_pt_lat`) → `{lat, lon}` → compact `[lat, lon]` pairs.
 When the server switched the first time, the map kept reading the old names,
 every coordinate parsed as `NaN`, the filter dropped them all, and `<Polyline>`
 silently rendered nothing. `toCoordinates()` accepts all three — if you change
 the wire format again, change it there and nowhere else.
 
-**6. `/shapes/:line` stays backwards compatible.**
+**9. `/shapes/:line` stays backwards compatible.**
 It returns the verbose legacy payload by default and the compact one only for
 `?format=compact`, so app builds already on people's phones keep working after
 a server deploy.
 
-**7. Amber is for countdowns.**
+**10. Amber is for countdowns.**
 `color.amber` in `app/theme.js` is reserved for departure minutes. It is the one
 loud colour in the app and it works because nothing else competes for it. If you
 need emphasis elsewhere, use weight or spacing.
 
-**8. Line colours must clear 4.5:1 on white.**
+**11. Line colours must clear 4.5:1 on white.**
 The original palette put white text on `#F8E71C` at roughly 1.4:1 — illegible in
 the sunlight you are standing in at a stop. Check any new value before adding it
 to `lineColor`.
 
-**9. `npm test` uses an unquoted glob on purpose.**
+**12. `npm test` uses an unquoted glob on purpose.**
 `node --test test/*.test.js`. The runner only expands globs itself from Node 22;
 quoting the pattern passes it through literally and the job fails in 0s on
 anything older. Let the shell expand it.
 
-**10. Anything the server schedules must be stoppable.**
+**13. Anything the server schedules must be stoppable.**
 `stopBackgroundWork()` exists because the cron task keeps the event loop alive,
 so `test/boot.test.js` hung forever without it.
 
-**11. Do not reintroduce `react-native-map-clustering`.**
+**14. Do not reintroduce `react-native-map-clustering`.**
 It was imported nowhere, has not been published since 2021, and pins an old
 `react-native-maps`. It would block the next SDK upgrade the same way it blocked
 this one.
 
-**12. Do not declare capabilities the app does not use.**
+**15. Do not declare capabilities the app does not use.**
 `expo-notifications` was in the config with an iOS usage string and no code
 behind it. An unused permission is an App Review question you cannot answer.
 
@@ -129,8 +155,9 @@ catalogue lists 18 snapshot(s); using OtwartyWroclaw_rozklad_jazdy_GTFS_25072026
 ```
 
 If that count is 0 or the name looks wrong, the parser needs adjusting to the
-real payload — that is the first thing to check when the feed goes stale. Capture
-it with `curl -s https://api.open-data.cui.wroclaw.pl/od2/6/ | head -c 2000`.
+real payload — that is the first thing to check when the feed goes stale. The
+warning prints the payload's keys and a sample; capture the whole thing with
+`curl -s https://api.open-data.cui.wroclaw.pl/od2/6/ | head -c 2000`.
 
 ## How to work here
 
