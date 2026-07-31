@@ -171,7 +171,14 @@ const checkAlerts = async () => {
 
       const { how, items } = value;
       if (!items.length) throw new Error('no notices found — markup or feed shape changed');
-      report('alerts', url, true, `${items.length} ${how} items in ${ms} ms — latest: ${items[0].title ?? items[0].content?.slice(0, 60)}`);
+
+      report('alerts', url, true, `${items.length} ${how} items in ${ms} ms`);
+      // Print a few headlines: the failure mode that matters here is a source
+      // that answers happily with the wrong kind of content.
+      for (const item of items.slice(0, 4)) {
+        console.log(DIM(`        · ${(item.title ?? item.content ?? '').slice(0, 90)}`));
+      }
+      console.log(DIM('        (these should read as disruptions, not announcements)'));
     } catch (error) {
       report('alerts', url, false, error.message);
     }

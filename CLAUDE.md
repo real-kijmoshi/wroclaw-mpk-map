@@ -135,7 +135,10 @@ behind it. An unused permission is an App Review question you cannot answer.
 
 ## Fragile by nature
 
-`parsePage()` in `server/src/alerts.js` scrapes MPK's service-notice pages.
+`parsePage()` in `server/src/alerts.js` scrapes
+`wroclaw.pl/komunikacja/zmiany-w-komunikacji`, which is the only source verified
+to carry live disruptions. `mpk.wroc.pl/komunikaty` was a guess and 404s;
+`/o-mpk/aktualnosci` exists but is corporate news.
 There is no API — the X/Twitter timeline it used to read has needed a paid tier
 since 2023, which is why `/alerts` silently returned `[]` for a year. HTML
 scraping is the most likely thing here to break.
@@ -144,6 +147,23 @@ It fails soft: when every provider fails the previous list stays in place, and
 the reason shows up in `/health` under `alerts.providers[].lastError`. If alerts
 go stale, check that field first, then the keyword lists in `parsePage()`. A page
 that serves RSS is auto-detected and parsed as a feed instead.
+
+A notice's body is the text between its headline link and the next link on the
+page. A fixed-size lookahead instead runs into the following notice and appends
+its body to this one, which reads as one alert describing two disruptions.
+
+A headline only becomes an alert when it names something going wrong
+(`DISRUPTION_WORDS`) *and* transport appears in the headline or its lead
+(`TRANSPORT_WORDS`). Accepting a bare `tramwaj`/`autobus`/`linia` matches every
+press release, so pointing the scraper at a news page produced "MPK kupuje nowe
+tramwaje" as a service alert. A fake disruption is worse than a missing one —
+it sends people looking for a replacement bus that does not exist. Transport is
+checked across headline *and* lead because real notices often say "Zmiana
+organizacji ruchu na ulicy X" and only list the affected lines in the body.
+
+X/@AlertMPK is not usable as a source: reading someone else's timeline needs a
+paid API tier, which is what silently emptied `/alerts` in the first place.
+`TWITTER_BEARER_TOKEN` enables it for anyone who has that access.
 
 `parseFileListing()` is deliberately shape-agnostic — it walks the JSON looking
 for url-ish and name-ish fields rather than hardcoding a schema, because the CUI
