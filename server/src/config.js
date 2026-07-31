@@ -37,9 +37,11 @@ const VEHICLE_SOURCES = list(process.env.VEHICLE_POSITION_URLS, [
   'https://mpk.wroc.pl/bus_position',
 ]);
 
+// Verified to exist 2026-07-31. `mpk.wroc.pl/komunikaty` was a guess and 404s;
+// MPK publishes under /o-mpk/aktualnosci instead.
 const ALERT_PAGES = list(process.env.ALERT_PAGE_URLS, [
   'https://www.wroclaw.pl/komunikacja/zmiany-w-komunikacji',
-  'https://www.mpk.wroc.pl/komunikaty',
+  'https://mpk.wroc.pl/o-mpk/aktualnosci',
 ]);
 
 module.exports = {
