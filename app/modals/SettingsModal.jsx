@@ -1,11 +1,12 @@
-import { Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Constants from "expo-constants";
 
 import SwipeableModal from "../components/Modal";
 import { API_URL } from "../api";
-import { COLORS } from "../theme";
+import { color, font, radius, space, type } from "../theme";
 
 const REPO_URL = "https://github.com/real-kijmoshi/wroclaw-mpk-map";
+const DATA_URL = "https://opendata.cui.wroclaw.pl/";
 
 function Row({ label, value }) {
   return (
@@ -18,40 +19,52 @@ function Row({ label, value }) {
   );
 }
 
+/**
+ * The old settings screen was `#000` text on a `#121212` background — invisible
+ * — and had nothing in it besides a sentence saying settings could go here.
+ */
 export default function SettingsModal({ visible, onClose, selectedCount = 0, onClearLines }) {
   return (
-    <SwipeableModal visible={visible} onClose={onClose} modalHeight={520}>
+    <SwipeableModal visible={visible} onClose={onClose} modalHeight={540}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Ustawienia</Text>
-        <TouchableOpacity onPress={onClose} style={styles.closeButton} hitSlop={12}>
-          <Text style={styles.closeButtonText}>Gotowe</Text>
-        </TouchableOpacity>
+        <Pressable onPress={onClose} style={styles.close} hitSlop={12}>
+          <Text style={styles.closeText}>Gotowe</Text>
+        </Pressable>
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.sectionTitle}>Twoje linie</Text>
+        <Text style={styles.section}>Twoje linie</Text>
         <Row label="Zaznaczone linie" value={String(selectedCount)} />
-        <TouchableOpacity
+        <Pressable
           style={[styles.button, selectedCount === 0 && styles.buttonDisabled]}
           onPress={onClearLines}
           disabled={selectedCount === 0}
         >
           <Text style={styles.buttonText}>Wyczyść wybór linii</Text>
-        </TouchableOpacity>
+        </Pressable>
 
-        <Text style={styles.sectionTitle}>Aplikacja</Text>
+        <Text style={styles.section}>Aplikacja</Text>
         <Row label="Wersja" value={Constants.expoConfig?.version ?? "—"} />
         <Row label="Serwer API" value={API_URL} />
 
-        <Text style={styles.sectionTitle}>Dane</Text>
+        <Text style={styles.section}>Skąd są dane</Text>
         <Text style={styles.paragraph}>
-          Rozkłady jazdy pochodzą z serwisu Otwarte Dane Wrocław (GTFS), a pozycje pojazdów
-          z publicznego API MPK Wrocław. Aplikacja nie jest oficjalnym produktem MPK.
+          Rozkłady jazdy pochodzą z serwisu Otwarte Dane Wrocław (format GTFS), a pozycje
+          pojazdów z publicznego API MPK Wrocław. Komunikaty są zbierane ze stron miejskich.
+          Aplikacja nie jest oficjalnym produktem MPK.
+        </Text>
+        <Text style={styles.paragraph}>
+          Lokalizacja jest używana wyłącznie do pokazania Cię na mapie i nie opuszcza
+          urządzenia.
         </Text>
 
-        <TouchableOpacity style={styles.button} onPress={() => Linking.openURL(REPO_URL)}>
+        <Pressable style={styles.button} onPress={() => Linking.openURL(DATA_URL)}>
+          <Text style={styles.buttonText}>Otwarte Dane Wrocław</Text>
+        </Pressable>
+        <Pressable style={styles.button} onPress={() => Linking.openURL(REPO_URL)}>
           <Text style={styles.buttonText}>Kod źródłowy na GitHubie</Text>
-        </TouchableOpacity>
+        </Pressable>
       </ScrollView>
     </SwipeableModal>
   );
@@ -62,40 +75,44 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
+    marginBottom: space.md,
   },
-  headerTitle: { fontSize: 22, fontWeight: "700", color: COLORS.text },
-  closeButton: { paddingVertical: 6, paddingHorizontal: 8 },
-  closeButtonText: { fontSize: 15, color: COLORS.accentText, fontWeight: "600" },
-  content: { paddingBottom: 30 },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: COLORS.textMuted,
+  headerTitle: { ...type.title, color: color.text },
+  close: { paddingVertical: space.xs, paddingHorizontal: space.sm },
+  closeText: { ...type.body, color: color.rail, fontWeight: "600" },
+  content: { paddingBottom: space.xxl },
+  section: {
+    ...type.caption,
+    color: color.textMuted,
     textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginTop: 18,
-    marginBottom: 8,
+    marginTop: space.xl,
+    marginBottom: space.sm,
   },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    gap: 12,
-    paddingVertical: 10,
+    gap: space.md,
+    paddingVertical: space.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "rgba(255,255,255,0.12)",
+    borderBottomColor: color.paperLine,
   },
-  rowLabel: { fontSize: 15, color: COLORS.text },
-  rowValue: { fontSize: 13, color: COLORS.textMuted, flexShrink: 1, textAlign: "right" },
-  paragraph: { fontSize: 13, color: COLORS.textMuted, lineHeight: 19 },
+  rowLabel: { ...type.body, color: color.text },
+  rowValue: {
+    ...type.small,
+    fontFamily: font.dataMedium,
+    color: color.textMuted,
+    flexShrink: 1,
+    textAlign: "right",
+  },
+  paragraph: { ...type.small, color: color.textMuted, lineHeight: 20, marginBottom: space.sm },
   button: {
-    marginTop: 14,
-    backgroundColor: COLORS.surfaceAlt,
-    borderRadius: 10,
-    paddingVertical: 12,
+    marginTop: space.md,
+    backgroundColor: color.paperMuted,
+    borderRadius: radius.md,
+    paddingVertical: space.md,
     alignItems: "center",
   },
   buttonDisabled: { opacity: 0.4 },
-  buttonText: { color: COLORS.text, fontSize: 15, fontWeight: "600" },
+  buttonText: { ...type.body, color: color.text, fontWeight: "600" },
 });

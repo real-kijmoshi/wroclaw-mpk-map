@@ -1,15 +1,16 @@
 import {
   ActivityIndicator,
   Linking,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from "react-native";
 
 import SwipeableModal from "../components/Modal";
-import { COLORS } from "../theme";
+import LineBadge from "../components/LineBadge";
+import { color, font, radius, space, type } from "../theme";
 
 const formatAge = (timestamp) => {
   const minutes = Math.floor((Date.now() - timestamp) / 60_000);
@@ -20,42 +21,51 @@ const formatAge = (timestamp) => {
   return `${Math.floor(minutes / 1440)} dni`;
 };
 
-/** "https://www.wroclaw.pl/komunikacja/rss" -> "wroclaw.pl" */
+/** "https://www.wroclaw.pl/komunikacja/..." -> "wroclaw.pl" */
 const sourceLabel = (source) => {
   if (!source) return "";
   const match = /^https?:\/\/(?:www\.)?([^/]+)/i.exec(source);
   return match ? match[1] : source;
 };
 
-export default function AlertsModal({ visible, onClose, alerts = [], loading, error }) {
+export default function AlertsModal({
+  visible,
+  onClose,
+  alerts = [],
+  followedLines,
+  loading,
+  error,
+}) {
   const open = (url) => {
     if (url) Linking.openURL(url).catch(() => {});
   };
+
+  const followed = (alert) => alert.affected?.some((line) => followedLines?.has(line));
 
   return (
     <SwipeableModal visible={visible} onClose={onClose}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Komunikaty</Text>
-        <TouchableOpacity onPress={onClose} style={styles.closeButton} hitSlop={12}>
-          <Text style={styles.closeButtonText}>Zamknij</Text>
-        </TouchableOpacity>
+        <Pressable onPress={onClose} style={styles.close} hitSlop={12}>
+          <Text style={styles.closeText}>Zamknij</Text>
+        </Pressable>
       </View>
 
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
         {loading && (
-          <View style={styles.center}>
-            <ActivityIndicator size="large" color={COLORS.accent} />
+          <View style={styles.centre}>
+            <ActivityIndicator size="large" color={color.rail} />
           </View>
         )}
 
         {!loading && error && (
-          <View style={styles.center}>
+          <View style={styles.centre}>
             <Text style={styles.errorText}>{error}</Text>
           </View>
         )}
 
         {!loading && !error && alerts.length === 0 && (
-          <View style={styles.center}>
+          <View style={styles.centre}>
             <Text style={styles.emptyText}>Brak aktualnych utrudnień.</Text>
           </View>
         )}
@@ -63,10 +73,9 @@ export default function AlertsModal({ visible, onClose, alerts = [], loading, er
         {!loading &&
           !error &&
           alerts.map((alert) => (
-            <TouchableOpacity
+            <Pressable
               key={alert.id}
-              style={styles.card}
-              activeOpacity={alert.url ? 0.7 : 1}
+              style={[styles.card, followed(alert) && styles.cardFollowed]}
               onPress={() => open(alert.url)}
               accessibilityRole={alert.url ? "link" : "text"}
             >
@@ -76,22 +85,20 @@ export default function AlertsModal({ visible, onClose, alerts = [], loading, er
               </View>
 
               {alert.title ? <Text style={styles.title}>{alert.title}</Text> : null}
-              {alert.content ? (
+              {alert.content && alert.content !== alert.title ? (
                 <Text style={styles.body} numberOfLines={6}>
                   {alert.content}
                 </Text>
               ) : null}
 
               {alert.affected?.length > 0 && (
-                <View style={styles.chips}>
-                  {alert.affected.map((line) => (
-                    <View key={line} style={styles.chip}>
-                      <Text style={styles.chipText}>{line}</Text>
-                    </View>
+                <View style={styles.badges}>
+                  {alert.affected.slice(0, 12).map((line) => (
+                    <LineBadge key={line} line={line} type={alert.types?.[line]} size="sm" />
                   ))}
                 </View>
               )}
-            </TouchableOpacity>
+            </Pressable>
           ))}
       </ScrollView>
     </SwipeableModal>
@@ -103,32 +110,29 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
+    marginBottom: space.md,
   },
-  headerTitle: { fontSize: 22, fontWeight: "700", color: COLORS.text },
-  closeButton: { paddingVertical: 6, paddingHorizontal: 8 },
-  closeButtonText: { fontSize: 15, color: COLORS.accentText, fontWeight: "600" },
+  headerTitle: { ...type.title, color: color.text },
+  close: { paddingVertical: space.xs, paddingHorizontal: space.sm },
+  closeText: { ...type.body, color: color.rail, fontWeight: "600" },
   scroll: { flex: 1 },
-  center: { alignItems: "center", justifyContent: "center", paddingVertical: 60 },
-  errorText: { fontSize: 15, color: COLORS.danger, textAlign: "center" },
-  emptyText: { fontSize: 15, color: COLORS.textMuted, textAlign: "center" },
+  centre: { alignItems: "center", justifyContent: "center", paddingVertical: 60 },
+  errorText: { ...type.body, color: color.disruption, textAlign: "center" },
+  emptyText: { ...type.body, color: color.textMuted, textAlign: "center" },
   card: {
-    backgroundColor: COLORS.surfaceAlt,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 10,
+    backgroundColor: color.paperMuted,
+    borderRadius: radius.md,
+    padding: space.lg,
+    marginBottom: space.sm,
+    borderLeftWidth: 3,
+    borderLeftColor: "transparent",
   },
-  cardHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 6 },
-  source: { fontSize: 12, color: COLORS.textMuted, fontWeight: "600" },
-  age: { fontSize: 12, color: COLORS.textMuted },
-  title: { fontSize: 15, fontWeight: "700", color: COLORS.text, marginBottom: 4 },
-  body: { fontSize: 14, color: "rgba(255,255,255,0.85)", lineHeight: 20 },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 },
-  chip: {
-    backgroundColor: COLORS.accent,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  chipText: { color: "#fff", fontSize: 12, fontWeight: "700" },
+  // Something touching a line you follow is the reason you opened this.
+  cardFollowed: { borderLeftColor: color.disruption },
+  cardHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: space.xs },
+  source: { ...type.caption, color: color.textMuted, textTransform: "none" },
+  age: { ...type.caption, color: color.textMuted, fontFamily: font.dataMedium },
+  title: { ...type.body, fontWeight: "700", color: color.text, marginBottom: space.xs },
+  body: { ...type.small, color: color.textMuted, lineHeight: 20 },
+  badges: { flexDirection: "row", flexWrap: "wrap", gap: space.xs, marginTop: space.md },
 });

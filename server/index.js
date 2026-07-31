@@ -22,6 +22,22 @@ const alerts = new AlertsService(
 
 const RETRY_DELAYS_MS = [5_000, 15_000, 60_000, 300_000];
 
+/** Held so tests (and the shutdown path) can stop the timers they schedule. */
+let scheduledRefresh = null;
+
+/**
+ * Stop every recurring timer.
+ *
+ * Without this the cron task keeps the event loop alive forever, so a test that
+ * boots the server never exits.
+ */
+const stopBackgroundWork = () => {
+  scheduledRefresh?.stop();
+  scheduledRefresh = null;
+  vehicles.stop();
+  alerts.stop();
+};
+
 /**
  * Load the timetable, retrying with backoff. The HTTP server is already
  * listening while this runs, so /health can report progress instead of the
@@ -45,13 +61,17 @@ const start = () => {
 
   const server = app.listen(config.port, config.host, () => {
     logger.info(`Listening on http://${config.host}:${config.port}`);
-    logger.info(`GTFS sources: ${config.gtfs.sources.join(', ')}`);
+    logger.info(
+      config.gtfs.overrideUrls.length
+        ? `GTFS pinned to ${config.gtfs.overrideUrls.join(', ')} (discovery disabled)`
+        : `GTFS catalogue: ${config.gtfs.catalogueUrl}`,
+    );
     logger.info(`Vehicle sources: ${config.vehicles.sources.join(', ')}`);
   });
 
   loadGtfs();
 
-  const task = cron.schedule(
+  scheduledRefresh = cron.schedule(
     config.gtfs.refreshCron,
     () => {
       logger.info('Scheduled GTFS refresh');
@@ -65,9 +85,7 @@ const start = () => {
 
   const shutdown = (signal) => {
     logger.info(`${signal} received, shutting down`);
-    task.stop();
-    vehicles.stop();
-    alerts.stop();
+    stopBackgroundWork();
     server.close(() => process.exit(0));
     // Do not hang forever on a stuck connection.
     setTimeout(() => process.exit(0), 10_000).unref();
@@ -82,4 +100,4 @@ const start = () => {
 
 if (require.main === module) start();
 
-module.exports = { alerts, createApp, gtfs, start, vehicles };
+module.exports = { alerts, createApp, gtfs, start, stopBackgroundWork, vehicles };
