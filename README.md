@@ -76,7 +76,7 @@ Base URL: your deployment, or `http://localhost:3000`.
 | `GET /stop/:id/departures` | Next departures, filtered to services running today. `?limit=` `?within=` (minutes) |
 | `GET /alerts` | Disruption notices. `?since=` (ms epoch) `?line=` |
 | `GET /health` | Status of every upstream source and index |
-| `GET /map`, `GET /status` | Browser map and status dashboard |
+| `GET /map`, `GET /status` | Browser map (with a service-alert panel) and status dashboard |
 
 `/shapes/:line` returns the verbose legacy payload by default so app builds already on
 people's phones keep working; `?format=compact` is what the current app requests.
@@ -156,7 +156,8 @@ Before the first submission you still need to, outside this repo:
 - Timetables: [Otwarte Dane Wrocław](https://opendata.cui.wroclaw.pl/), resolved through
   the CUI data API at runtime
 - Vehicle positions: `POST https://mpk.wroc.pl/bus_position`
-- Disruptions: public city and MPK notice pages (configurable)
+- Disruptions: `wroclaw.pl/komunikacja/zmiany-w-komunikacji`, scraped
+  (configurable via `ALERT_PAGE_URLS`)
 
 Check the terms of use of each source before deploying publicly.
 

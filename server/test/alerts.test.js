@@ -118,6 +118,87 @@ describe('parsePage', () => {
     assert.ok(!titles.includes('Krótko'));
   });
 
+  it('picks up the lead paragraph as the body', () => {
+    // Shaped like the wroclaw.pl notice list: headline link, then a lead.
+    const withLead = `
+      <article>
+        <a href="/komunikacja/trzebnicka">Zmiana organizacji ruchu na Trzebnickiej</a>
+        <p>Od 25.07.2026 ulica Trzebnicka jest jednokierunkowa. Dotyczy linii 108, 111 i 132.</p>
+      </article>`;
+
+    const [item] = parsePage(withLead, 'https://www.wroclaw.pl/');
+    assert.equal(item.title, 'Zmiana organizacji ruchu na Trzebnickiej');
+    assert.match(item.content, /jednokierunkowa/);
+    assert.equal(new Date(item.timestamp).toISOString().slice(0, 10), '2026-07-25');
+  });
+
+  it('does not use the next headline as this one\'s description', () => {
+    // Long enough to pass a naive length check, so the link stripping is what
+    // has to catch it.
+    const list = `
+      <ul>
+        <li><a href="/a">Objazd linii 4 od poniedziałku</a></li>
+        <li><a href="/b">Awaria tramwaju na Świdnickiej wstrzymuje ruch w obu kierunkach</a></li>
+      </ul>`;
+    const [first] = parsePage(list, 'https://x.pl/');
+    assert.equal(first.content, first.title, 'the next headline is not a description');
+  });
+
+  it('stops a notice body at the start of the next notice', () => {
+    const two = `
+      <article>
+        <a href="/a">Zmiana organizacji ruchu na ulicy Trzebnickiej</a>
+        <p>Od 25.07.2026 ulica Trzebnicka jest jednokierunkowa. Dotyczy linii 128.</p>
+      </article>
+      <article>
+        <a href="/b">Od 1 sierpnia zmiana tras tramwajów</a>
+        <p>Tramwaje linii 4 pojadą objazdem przez Świdnicką.</p>
+      </article>`;
+
+    const [first] = parsePage(two, 'https://x.pl/');
+    assert.match(first.content, /Trzebnicka jest jednokierunkowa/);
+    assert.doesNotMatch(first.content, /Świdnick/, 'the next notice must not bleed in');
+  });
+
+  it('rejects corporate news, which is what a company news page is full of', () => {
+    // mpk.wroc.pl/o-mpk/aktualnosci is press releases, not disruptions. Every
+    // one of these mentions trams or buses; none of them is an alert.
+    const news = `
+      <ul>
+        <li><a href="/1">MPK Wrocław kupuje nowe tramwaje Moderus Gamma</a></li>
+        <li><a href="/2">Autobusy elektryczne wyjadą na ulice Wrocławia</a></li>
+        <li><a href="/3">Dzień otwarty w zajezdni tramwajowej Borek</a></li>
+        <li><a href="/4">Nowa linia autobusowa połączy Psie Pole z centrum</a></li>
+      </ul>`;
+    assert.deepEqual(parsePage(news, 'https://mpk.wroc.pl/o-mpk/aktualnosci'), []);
+  });
+
+  it('still accepts real disruption headlines', () => {
+    const real = `
+      <ul>
+        <li><a href="/a">Objazd linii 4 i 10 od poniedziałku</a></li>
+        <li><a href="/b">Zmiana trasy autobusów 128 i 240</a></li>
+        <li><a href="/c">Awaria tramwaju wstrzymała ruch na Świdnickiej</a></li>
+        <li><a href="/d">Linia 17 nie kursuje do odwołania</a></li>
+      </ul>`;
+    assert.equal(parsePage(real, 'https://www.wroclaw.pl/').length, 4);
+  });
+
+  it('ignores roadworks that mention no transport anywhere', () => {
+    const roadworks =
+      '<a href="/x">Remont nawierzchni na ulicy Legnickiej</a><p>Prace potrwają do jesieni.</p>';
+    assert.deepEqual(parsePage(roadworks, 'https://x.pl/'), []);
+  });
+
+  it('keeps a disruption whose lines are only named in the body', () => {
+    // The headline says nothing about transport; the lead does.
+    const notice = `
+      <a href="/x">Zmiana organizacji ruchu na ulicy Trzebnickiej</a>
+      <p>Od 25.07.2026 zmiany obejmą linie 128 oraz 240 w obu kierunkach.</p>`;
+    const [item] = parsePage(notice, 'https://www.wroclaw.pl/');
+    assert.equal(item.title, 'Zmiana organizacji ruchu na ulicy Trzebnickiej');
+  });
+
   it('returns nothing rather than guessing on unrelated markup', () => {
     assert.deepEqual(parsePage('<html><body><a href="/x">Sklep firmowy</a></body></html>', 'https://x.pl'), []);
     assert.deepEqual(parsePage('', 'https://x.pl'), []);

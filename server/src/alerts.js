@@ -96,9 +96,20 @@ const parseFeed = (xml, sourceUrl) => {
     .map((item) => ({ ...item, source: sourceUrl }));
 };
 
-/** Words that mark a link as a service notice rather than site furniture. */
-const NOTICE_WORDS =
-  /(lini[aei]|tramwaj|autobus|objazd|zmian|utrudnien|komunikat|awari|remont|wyłącz|zamknię|kursow|przystan)/i;
+/**
+ * Something has to be *disrupted* for a headline to be an alert.
+ *
+ * The earlier list also accepted bare `tramwaj`, `autobus`, `linia` and
+ * `komunikat`, which every corporate press release contains — point this at a
+ * news page and "MPK kupuje nowe tramwaje" becomes a service alert. A fake
+ * disruption is worse than a missing one: it sends people looking for a
+ * replacement bus that does not exist.
+ */
+const DISRUPTION_WORDS =
+  /(objazd|utrudnien|awari|zmian[ay]|zmiany w|remont|wyłącz|zamknię|nie kursu|nie jeźdz|nie pojad|zastępcz|wstrzyman|skrócon|opóźnien|przeniesion|zawiesz)/i;
+
+/** …and it has to be about transport, not roadworks in general. */
+const TRANSPORT_WORDS = /(lini[aei]|tramwaj|autobus|kurs|przystan|komunikacj|trasa|tras[yie])/i;
 
 /** Nav and footer links that would otherwise pass the keyword test. */
 const CHROME_WORDS = /^(menu|nawigacja|strona główna|kontakt|polityka|cookies|zobacz wszystkie)$/i;
@@ -143,8 +154,10 @@ const parsePage = (html, pageUrl) => {
 
     if (!title || title.length < 12 || title.length > 220) continue;
     if (CHROME_WORDS.test(title)) continue;
-    if (!NOTICE_WORDS.test(title)) continue;
     if (/^(#|javascript:|mailto:)/i.test(href)) continue;
+    // The headline has to describe something going wrong. This is the test
+    // that keeps a company news page from producing alerts.
+    if (!DISRUPTION_WORDS.test(title)) continue;
 
     let url;
     try {
@@ -155,15 +168,32 @@ const parsePage = (html, pageUrl) => {
     if (seen.has(url)) continue;
     seen.add(url);
 
-    // Look just past the link for a date; these pages usually print one next
-    // to the headline. Falling back to "now" keeps undated notices visible.
-    const nearby = stripHtml(html.slice(match.index, match.index + match[0].length + 400));
-    const published = polishDate(nearby);
+    // Look just past the link for a date and a lead paragraph; these pages
+    // print both next to the headline. Falling back to "now" for the date keeps
+    // undated notices visible rather than dropping them.
+    // Stop at the next link. Each notice on these pages begins with its own
+    // headline link, so that is where this one's text ends — a fixed-size
+    // window instead runs into the following notice and appends its body to
+    // this one.
+    const rest = html.slice(match.index + match[0].length);
+    const nextLink = rest.search(/<a\b/i);
+    const after = rest.slice(0, nextLink === -1 ? 600 : Math.min(nextLink, 600));
+    const trailing = stripHtml(after);
+    const published = polishDate(`${title} ${trailing}`);
+
+    // Only keep the trailing text when it adds something; on a bare link list
+    // it is the next headline, which would read as this one's description.
+    const lead = trailing.length > 40 ? trailing.slice(0, 240).trim() : null;
+
+    // Transport can be named in the headline or in the lead — real notices
+    // often say "Zmiana organizacji ruchu na ulicy X" and only list the
+    // affected lines in the body. Without it anywhere, this is roadworks.
+    if (!TRANSPORT_WORDS.test(`${title} ${lead ?? ''}`)) continue;
 
     results.push({
       id: url,
       title,
-      content: title,
+      content: lead ?? title,
       url,
       timestamp: published ?? Date.now(),
       source: pageUrl,

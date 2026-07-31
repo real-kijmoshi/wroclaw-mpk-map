@@ -192,6 +192,85 @@
             }
         }
 
+        .alerts {
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            max-height: 42vh;
+            overflow-y: auto;
+            padding: 14px 20px 4px;
+        }
+
+        .alerts-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.55);
+            margin-bottom: 10px;
+        }
+
+        .alerts-count {
+            background: #C2410C;
+            color: #fff;
+            border-radius: 999px;
+            padding: 1px 8px;
+            font-size: 0.72rem;
+        }
+
+        .alerts-count.zero { background: rgba(255, 255, 255, 0.12); }
+
+        .alert-item {
+            display: block;
+            text-decoration: none;
+            color: inherit;
+            background: rgba(255, 255, 255, 0.05);
+            border-left: 3px solid transparent;
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+        }
+
+        .alert-item:hover { background: rgba(255, 255, 255, 0.09); }
+
+        /* Anything touching a line you have on screen is why you looked. */
+        .alert-item.relevant { border-left-color: #C2410C; }
+
+        .alert-title {
+            font-size: 0.86rem;
+            font-weight: 600;
+            color: #fff;
+            line-height: 1.35;
+        }
+
+        .alert-meta {
+            font-size: 0.7rem;
+            color: rgba(255, 255, 255, 0.45);
+            margin-top: 4px;
+        }
+
+        .alert-lines {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 8px;
+        }
+
+        .alert-line {
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: #fff;
+            border-radius: 4px;
+            padding: 1px 6px;
+        }
+
+        .alerts-empty {
+            font-size: 0.8rem;
+            color: rgba(255, 255, 255, 0.45);
+            padding-bottom: 10px;
+        }
+
         .last-update {
             padding: 20px;
             background: linear-gradient(145deg, #1a1a1a 0%, #0d0d0d 100%);
@@ -371,6 +450,14 @@
 
             <div class="filters" id="filtersContainer">
                 <!-- Categories will be populated dynamically -->
+            </div>
+
+            <div class="alerts" id="alertsPanel">
+                <div class="alerts-header">
+                    <span>Komunikaty</span>
+                    <span class="alerts-count zero" id="alertsCount">0</span>
+                </div>
+                <div id="alertsList"></div>
             </div>
 
             <div class="last-update">
@@ -617,6 +704,7 @@
                 buttonElement.classList.add('selected');
             }
             filterVehicles();
+            renderAlerts();
         }
 
         // Filter vehicles based on selected lines
@@ -689,11 +777,87 @@
             }
         }
 
+        // Service alerts
+        let alertsData = [];
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[<>&"]/g, (c) =>
+                ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+        }
+
+        function alertAge(timestamp) {
+            const minutes = Math.floor((Date.now() - timestamp) / 60000);
+            if (!Number.isFinite(minutes)) return '';
+            if (minutes < 1) return 'teraz';
+            if (minutes < 60) return minutes + ' min temu';
+            if (minutes < 1440) return Math.floor(minutes / 60) + ' godz. temu';
+            return Math.floor(minutes / 1440) + ' dni temu';
+        }
+
+        function renderAlerts() {
+            const list = document.getElementById('alertsList');
+            const count = document.getElementById('alertsCount');
+
+            // An alert about a line you are not watching is noise; one about a
+            // line on screen is the reason you looked at the panel.
+            // With nothing selected the map shows every line, so every alert
+            // is relevant; otherwise only the ones you are watching.
+            const relevant = (alert) =>
+                selectedLines.length === 0 ||
+                (alert.affected || []).some((line) => selectedLines.includes(line));
+
+            const sorted = [...alertsData].sort(
+                (a, b) => (relevant(b) - relevant(a)) || (b.timestamp - a.timestamp));
+
+            count.textContent = sorted.length;
+            count.classList.toggle('zero', sorted.length === 0);
+
+            if (!sorted.length) {
+                list.innerHTML = '<div class="alerts-empty">Brak aktualnych utrudnień.</div>';
+                return;
+            }
+
+            list.innerHTML = sorted.map((alert) => {
+                const badges = (alert.affected || []).slice(0, 10).map((line) => {
+                    const colour = Colors[(alert.types || {})[line]] || Colors.unknown;
+                    return '<span class="alert-line" style="background:' + colour + '">' +
+                        escapeHtml(line) + '</span>';
+                }).join('');
+
+                const body = [escapeHtml(alertAge(alert.timestamp))]
+                    .concat(alert.content && alert.content !== alert.title
+                        ? [escapeHtml(alert.content.slice(0, 140))] : [])
+                    .join(' · ');
+
+                return '<a class="alert-item' + (relevant(alert) ? ' relevant' : '') + '"' +
+                    (alert.url ? ' href="' + escapeHtml(alert.url) + '" target="_blank" rel="noopener"' : '') +
+                    '><div class="alert-title">' + escapeHtml(alert.title || alert.content) + '</div>' +
+                    '<div class="alert-meta">' + body + '</div>' +
+                    (badges ? '<div class="alert-lines">' + badges + '</div>' : '') +
+                    '</a>';
+            }).join('');
+        }
+
+        async function fetchAlerts() {
+            try {
+                const response = await fetch('/alerts');
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const data = await response.json();
+                alertsData = Array.isArray(data.alerts) ? data.alerts : [];
+            } catch (error) {
+                console.error('Error fetching alerts:', error);
+                // Keep whatever was already on screen rather than blanking it.
+            }
+            renderAlerts();
+        }
+
         // Initialize app
         async function initApp() {
             await fetchLines();
             await fetchVehicles();
+            await fetchAlerts();
             setInterval(fetchVehicles, 10000); // Refresh every 10 seconds
+            setInterval(fetchAlerts, 5 * 60000);
         }
 
         // Start the application
