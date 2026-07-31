@@ -58,7 +58,10 @@ module.exports = {
     // and returns the whole archive of dated snapshots, not one current file.
     catalogueUrl: process.env.GTFS_CATALOGUE_URL || 'https://api.open-data.cui.wroclaw.pl/od2/6/',
     // Legacy CKAN instance, tried after the data API.
-    ckanHosts: list(process.env.GTFS_CKAN_HOSTS, ['https://opendata.cui.wroclaw.pl']),
+    ckanHosts: list(process.env.GTFS_CKAN_HOSTS, [
+      'https://opendata.cui.wroclaw.pl',
+      'https://open-data.cui.wroclaw.pl',
+    ]),
     ckanDataset: process.env.GTFS_CKAN_DATASET || 'rozkladjazdytransportupublicznegoplik_data',
     // Static mirrors, tried last.
     mirrors: list(process.env.GTFS_MIRROR_URLS, [
@@ -68,6 +71,14 @@ module.exports = {
     // snapshot, which then goes stale without any error — the exact failure
     // that killed the original version of this project.
     overrideUrls: list(process.env.GTFS_URLS, []),
+    // Where a file id is downloaded from when its metadata carries no URL.
+    downloadBase: process.env.GTFS_DOWNLOAD_BASE || 'https://open-data.cui.wroclaw.pl/hdb/download',
+    // Dataset 6 lists ~66 file ids, ordered newest first. Only the recent ones
+    // can be the timetable in force, so there is no point resolving all of them.
+    maxFileLookups: num(process.env.GTFS_MAX_FILE_LOOKUPS, 24),
+    // Blind downloads to attempt when no metadata endpoint answers. Each is a
+    // ~11 MB fetch, so this stays small; the ids are newest first.
+    maxIdDownloads: num(process.env.GTFS_MAX_ID_DOWNLOADS, 4),
     // How many discovered candidates to try before giving up.
     maxCandidates: num(process.env.GTFS_MAX_CANDIDATES, 6),
     // Where the last successfully downloaded archive is kept so a restart (or a

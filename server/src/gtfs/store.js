@@ -6,40 +6,12 @@ const config = require('../config');
 const logger = require('../logger');
 const { categorizeLines, lineToType } = require('../lines');
 const { downloadGtfs } = require('./download');
-const { REQUIRED_TABLES } = require('./catalogue');
+const { assertComplete, entryBuffer, findEntry, isInForce } = require('./archive');
 const { boundsOf, distanceMeters, distanceToPolyline, simplify } = require('./geo');
 const { parseTable, secondsToTime, streamTable, timeToSeconds } = require('./parse');
 
 const SHAPE_SIMPLIFY_METERS = 4;
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-
-const entryBuffer = (zip, name) => {
-  const entry = zip.getEntry(name);
-  return entry ? entry.getData() : null;
-};
-
-/**
- * Reject an archive that is missing tables the map needs.
- *
- * The city's archive interleaves complete snapshots with short ones, and a
- * snapshot without `shapes.txt` produces a map with vehicles but no routes —
- * which looks like a rendering bug, not a data problem. Checked before the
- * expensive indexing so a bad candidate costs one download, not a full build.
- *
- * @throws when a required table is absent or empty
- */
-const assertComplete = (buffer) => {
-  const zip = new AdmZip(buffer);
-  const missing = REQUIRED_TABLES.filter((table) => {
-    const entry = zip.getEntry(`${table}.txt`);
-    // A header-only table is as useless as an absent one.
-    return !entry || entry.header.size < 64;
-  });
-
-  if (missing.length) {
-    throw new Error(`incomplete feed, missing ${missing.map((t) => `${t}.txt`).join(', ')}`);
-  }
-};
 
 /**
  * Parsed and indexed GTFS feed.
@@ -93,7 +65,7 @@ class GtfsStore {
     this.status.state = previousState === 'ready' ? 'refreshing' : 'loading';
 
     try {
-      const archive = await downloadGtfs({ validate: assertComplete });
+      const archive = await downloadGtfs({ validate: assertComplete, prefer: isInForce });
       const startedAt = Date.now();
       await this.build(archive.buffer);
 
@@ -571,4 +543,4 @@ class GtfsStore {
   }
 }
 
-module.exports = { GtfsStore, SHAPE_SIMPLIFY_METERS, assertComplete };
+module.exports = { GtfsStore, SHAPE_SIMPLIFY_METERS, assertComplete, findEntry };
