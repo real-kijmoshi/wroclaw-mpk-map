@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
-const { extractAffectedLines, parseFeed, stripHtml } = require('../src/alerts');
+const { extractAffectedLines, parseFeed, parsePage, stripHtml } = require('../src/alerts');
 
 const KNOWN = new Set(['4', '10', '17', '128', '240', 'A', 'N']);
 
@@ -76,6 +76,52 @@ describe('parseFeed', () => {
 
   it('returns an empty list for documents that are not feeds', () => {
     assert.deepEqual(parseFeed('<html><body>nope</body></html>', 'x'), []);
+  });
+});
+
+describe('parsePage', () => {
+  // MPK publishes disruptions as web pages only; there is no API.
+  const html = `
+    <html><body>
+      <nav><a href="/">Strona główna</a><a href="/kontakt">Kontakt</a></nav>
+      <main>
+        <ul>
+          <li>
+            <a href="/komunikacja/objazd-linii-4">Objazd linii 4 i 10 od 15.06.2026</a>
+            <span>15.06.2026</span>
+          </li>
+          <li><a href="/komunikacja/awaria">Awaria tramwaju na Świdnickiej</a></li>
+          <li><a href="#">Zobacz wszystkie</a></li>
+          <li><a href="/o-nas">Krótko</a></li>
+        </ul>
+      </main>
+    </body></html>`;
+
+  it('finds notices and resolves relative links', () => {
+    const items = parsePage(html, 'https://www.wroclaw.pl/komunikacja/zmiany-w-komunikacji');
+    assert.deepEqual(
+      items.map((item) => item.title),
+      ['Objazd linii 4 i 10 od 15.06.2026', 'Awaria tramwaju na Świdnickiej'],
+    );
+    assert.equal(items[0].url, 'https://www.wroclaw.pl/komunikacja/objazd-linii-4');
+  });
+
+  it('reads the publication date printed next to the headline', () => {
+    const [first] = parsePage(html, 'https://www.wroclaw.pl/');
+    assert.equal(new Date(first.timestamp).toISOString().slice(0, 10), '2026-06-15');
+  });
+
+  it('skips navigation, anchors and text too short to be a headline', () => {
+    const titles = parsePage(html, 'https://www.wroclaw.pl/').map((item) => item.title);
+    assert.ok(!titles.includes('Strona główna'));
+    assert.ok(!titles.includes('Zobacz wszystkie'));
+    assert.ok(!titles.includes('Krótko'));
+  });
+
+  it('returns nothing rather than guessing on unrelated markup', () => {
+    assert.deepEqual(parsePage('<html><body><a href="/x">Sklep firmowy</a></body></html>', 'https://x.pl'), []);
+    assert.deepEqual(parsePage('', 'https://x.pl'), []);
+    assert.deepEqual(parsePage(null, 'https://x.pl'), []);
   });
 });
 

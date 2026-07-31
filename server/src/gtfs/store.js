@@ -6,6 +6,7 @@ const config = require('../config');
 const logger = require('../logger');
 const { categorizeLines, lineToType } = require('../lines');
 const { downloadGtfs } = require('./download');
+const { REQUIRED_TABLES } = require('./catalogue');
 const { boundsOf, distanceMeters, distanceToPolyline, simplify } = require('./geo');
 const { parseTable, secondsToTime, streamTable, timeToSeconds } = require('./parse');
 
@@ -15,6 +16,29 @@ const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'frida
 const entryBuffer = (zip, name) => {
   const entry = zip.getEntry(name);
   return entry ? entry.getData() : null;
+};
+
+/**
+ * Reject an archive that is missing tables the map needs.
+ *
+ * The city's archive interleaves complete snapshots with short ones, and a
+ * snapshot without `shapes.txt` produces a map with vehicles but no routes —
+ * which looks like a rendering bug, not a data problem. Checked before the
+ * expensive indexing so a bad candidate costs one download, not a full build.
+ *
+ * @throws when a required table is absent or empty
+ */
+const assertComplete = (buffer) => {
+  const zip = new AdmZip(buffer);
+  const missing = REQUIRED_TABLES.filter((table) => {
+    const entry = zip.getEntry(`${table}.txt`);
+    // A header-only table is as useless as an absent one.
+    return !entry || entry.header.size < 64;
+  });
+
+  if (missing.length) {
+    throw new Error(`incomplete feed, missing ${missing.map((t) => `${t}.txt`).join(', ')}`);
+  }
 };
 
 /**
@@ -31,6 +55,7 @@ class GtfsStore {
     this.status = {
       state: 'empty',
       source: null,
+      snapshot: null,
       fetchedAt: null,
       builtAt: null,
       fromCache: false,
@@ -68,7 +93,7 @@ class GtfsStore {
     this.status.state = previousState === 'ready' ? 'refreshing' : 'loading';
 
     try {
-      const archive = await downloadGtfs();
+      const archive = await downloadGtfs({ validate: assertComplete });
       const startedAt = Date.now();
       await this.build(archive.buffer);
 
@@ -76,6 +101,7 @@ class GtfsStore {
         ...this.status,
         state: 'ready',
         source: archive.source,
+        snapshot: archive.snapshot ?? null,
         fetchedAt: archive.fetchedAt,
         fromCache: archive.fromCache,
         builtAt: new Date().toISOString(),
@@ -427,6 +453,27 @@ class GtfsStore {
     return this.stopsById.get(stopId) ?? null;
   }
 
+  /**
+   * Stops within `radiusMeters` of a point, nearest first.
+   *
+   * A linear scan with real haversine distances, not a lat/lon grid. Wrocław
+   * has a few thousand stops, so the scan costs microseconds — and a grid is
+   * where the easy bug lives: a degree of longitude is about 0.63 of a degree
+   * of latitude at this latitude, so a grid built on 111 km/degree for both
+   * axes under-searches east and west.
+   */
+  findStopsNear(lat, lon, { radiusMeters = 500, limit = 20 } = {}) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return [];
+
+    const found = [];
+    for (const stop of this.stopsById.values()) {
+      const distance = distanceMeters(lat, lon, stop.lat, stop.lon);
+      if (distance <= radiusMeters) found.push({ ...stop, distance: Math.round(distance) });
+    }
+
+    return found.sort((a, b) => a.distance - b.distance).slice(0, limit);
+  }
+
   /** Case/diacritic-insensitive stop search, ranked by prefix match. */
   searchStops(query, limit = 20) {
     const needle = query.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
@@ -524,4 +571,4 @@ class GtfsStore {
   }
 }
 
-module.exports = { GtfsStore, SHAPE_SIMPLIFY_METERS };
+module.exports = { GtfsStore, SHAPE_SIMPLIFY_METERS, assertComplete };

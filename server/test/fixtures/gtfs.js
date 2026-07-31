@@ -7,8 +7,11 @@ const AdmZip = require('adm-zip');
  * can be tested without downloading 40 MB from the city portal.
  *
  * Two variants of tram line 4 (one per direction) plus bus line 128.
+ *
+ * @param {{ omit?: string[] }} options tables to leave out, for testing the
+ *   completeness check against the short snapshots the city's archive contains
  */
-const buildFixtureZip = () => {
+const buildFixtureZip = ({ omit = [] } = {}) => {
   const files = {
     'routes.txt': [
       'route_id,route_short_name,route_long_name,route_type,route_color',
@@ -82,6 +85,7 @@ const buildFixtureZip = () => {
 
   const zip = new AdmZip();
   for (const [name, content] of Object.entries(files)) {
+    if (omit.includes(name.replace('.txt', ''))) continue;
     zip.addFile(name, Buffer.from(content, 'utf8'));
   }
   return zip.toBuffer();

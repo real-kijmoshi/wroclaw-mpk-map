@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { before, describe, it } = require('node:test');
 
-const { GtfsStore } = require('../src/gtfs/store');
+const { GtfsStore, assertComplete } = require('../src/gtfs/store');
 const { simplify, distanceMeters } = require('../src/gtfs/geo');
 const { secondsToTime, timeToSeconds } = require('../src/gtfs/parse');
 const { buildFixtureZip } = require('./fixtures/gtfs');
@@ -74,6 +74,19 @@ describe('GtfsStore', () => {
     );
   });
 
+  it('finds nearby stops with real distances on both axes', () => {
+    // Rynek is at 51.11 / 17.032. A degree of longitude is ~0.63 of a degree of
+    // latitude here, so a grid built on 111 km/degree for both under-searches
+    // east-west; these assertions pin the real geometry.
+    const near = store.findStopsNear(51.11, 17.032, { radiusMeters: 800 });
+    assert.deepEqual(near.map((stop) => stop.name), ['Rynek', 'Świdnicka']);
+    assert.equal(near[0].distance, 0);
+    assert.ok(near[1].distance > 500 && near[1].distance < 600, `got ${near[1].distance} m`);
+
+    assert.deepEqual(store.findStopsNear(51.11, 17.032, { radiusMeters: 100 }).length, 1);
+    assert.deepEqual(store.findStopsNear(Number.NaN, 17.032), []);
+  });
+
   it('honours calendar days when listing departures', () => {
     // 2026-06-15 is a Monday, so WEEKDAY services run.
     const monday = new Date('2026-06-15T05:00:00Z');
@@ -109,6 +122,28 @@ describe('GtfsStore', () => {
     assert.equal(store.status.counts.routes, 3);
     assert.equal(store.status.counts.variants, 4);
     assert.equal(store.status.counts.stops, 5);
+  });
+});
+
+describe('assertComplete', () => {
+  it('accepts a full archive', () => {
+    assert.doesNotThrow(() => assertComplete(buildFixtureZip()));
+  });
+
+  it('rejects a snapshot with no route geometry', () => {
+    // The city's archive interleaves ~11 MB snapshots with ~6 MB ones; a short
+    // one can be missing shapes.txt, which leaves the map with no routes.
+    assert.throws(
+      () => assertComplete(buildFixtureZip({ omit: ['shapes'] })),
+      /missing shapes\.txt/,
+    );
+  });
+
+  it('names every missing table', () => {
+    assert.throws(
+      () => assertComplete(buildFixtureZip({ omit: ['shapes', 'stop_times'] })),
+      /stop_times\.txt/,
+    );
   });
 });
 

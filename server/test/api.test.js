@@ -141,6 +141,15 @@ describe('HTTP API', () => {
     assert.equal((await get('/stops?q=')).status, 400);
   });
 
+  it('serves nearby stops', async () => {
+    const { status, body } = await get('/stops/near?lat=51.11&lon=17.032&radius=800');
+    assert.equal(status, 200);
+    assert.equal(body.stops[0].name, 'Rynek');
+    assert.equal(body.stops[0].distance, 0);
+
+    assert.equal((await get('/stops/near')).status, 400, 'lat and lon are required');
+  });
+
   it('serves stop details and departures', async () => {
     assert.equal((await get('/stop/1')).body.name, 'Rynek');
     assert.equal((await get('/stop/nope')).status, 404);

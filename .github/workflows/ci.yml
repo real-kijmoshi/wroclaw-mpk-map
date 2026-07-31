@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['20', '22']
+        node: ['22', '24']
     defaults:
       run:
         working-directory: server
@@ -62,22 +62,3 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build image
         run: docker build -t wroclaw-mpk-api ./server
-
-  upstream:
-    name: Upstream sources reachable
-    runs-on: ubuntu-latest
-    # Informational: MPK and the city portal go down on their own schedule, and
-    # a red X here should not block a pull request.
-    continue-on-error: true
-    defaults:
-      run:
-        working-directory: server
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: server/package-lock.json
-      - run: npm ci
-      - run: npm run doctor

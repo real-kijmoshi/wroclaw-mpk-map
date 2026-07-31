@@ -6,15 +6,20 @@
  *
  * Wrocław's open-data portal and MPK's live-position endpoint have both moved
  * in the past, and when they move the server just goes quiet. Run
- * `npm run doctor` to see exactly which sources answer today, then put the
- * winners in .env (GTFS_URLS / VEHICLE_POSITION_URLS / ALERT_FEED_URLS).
+ * `npm run doctor` to see exactly which sources answer today.
+ *
+ * The GTFS download URL is not configured anywhere — it is resolved at runtime
+ * from the city's data API, so this reports which snapshot discovery picked as
+ * well as whether it downloads.
  */
 
 const AdmZip = require('adm-zip');
 
 const config = require('../src/config');
 const { fetchWithTimeout } = require('../src/http');
-const { parseFeed } = require('../src/alerts');
+const { parseFeed, parsePage } = require('../src/alerts');
+const { resolveFeedCandidates } = require('../src/gtfs/catalogue');
+const { assertComplete } = require('../src/gtfs/store');
 
 const PASS = '[32m✔[0m';
 const FAIL = '[31m✘[0m';
@@ -36,7 +41,24 @@ const timed = async (task) => {
 
 const checkGtfs = async () => {
   console.log('\nGTFS timetable archives');
-  for (const url of config.gtfs.sources) {
+
+  // Discovery first: the download URL is resolved at runtime from the city's
+  // data API, so "which URL" is itself part of what this checks.
+  let candidates = [];
+  try {
+    candidates = await resolveFeedCandidates();
+    console.log(DIM(`  catalogue resolved ${candidates.length} candidate(s)`));
+    if (candidates[0]?.name) console.log(DIM(`  snapshot in force: ${candidates[0].name}`));
+  } catch (error) {
+    report('gtfs', config.gtfs.catalogueUrl, false, `discovery failed: ${error.message}`);
+  }
+
+  if (!candidates.length) {
+    report('gtfs', config.gtfs.catalogueUrl, false, 'no candidates resolved');
+    return;
+  }
+
+  for (const { url } of candidates.slice(0, config.gtfs.maxCandidates)) {
     try {
       const { value: buffer, ms } = await timed(async () => {
         const response = await fetchWithTimeout(url, {
@@ -47,14 +69,12 @@ const checkGtfs = async () => {
         return Buffer.from(await response.arrayBuffer());
       });
 
+      // Same completeness check the server applies before accepting a feed.
+      assertComplete(buffer);
       const names = new AdmZip(buffer)
         .getEntries()
         .map((entry) => entry.entryName)
         .filter((name) => name.endsWith('.txt'));
-
-      if (!names.includes('routes.txt') || !names.includes('trips.txt')) {
-        throw new Error(`zip is missing core GTFS tables (has: ${names.join(', ') || 'nothing'})`);
-      }
 
       report(
         'gtfs',
@@ -138,17 +158,20 @@ const checkVehicles = async () => {
 };
 
 const checkAlerts = async () => {
-  console.log('\nService alert feeds');
-  for (const url of config.alerts.feeds) {
+  console.log('\nService notice pages');
+  for (const url of config.alerts.pages) {
     try {
-      const { value: items, ms } = await timed(async () => {
+      const { value, ms } = await timed(async () => {
         const response = await fetchWithTimeout(url, { timeoutMs: config.alerts.timeoutMs });
         if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
-        return parseFeed(await response.text(), url);
+        const body = await response.text();
+        const feed = parseFeed(body, url);
+        return feed.length ? { how: 'rss', items: feed } : { how: 'scraped', items: parsePage(body, url) };
       });
 
-      if (!items.length) throw new Error('parsed as a feed but contained no items');
-      report('alerts', url, true, `${items.length} items in ${ms} ms — latest: ${items[0].title ?? items[0].content?.slice(0, 60)}`);
+      const { how, items } = value;
+      if (!items.length) throw new Error('no notices found — markup or feed shape changed');
+      report('alerts', url, true, `${items.length} ${how} items in ${ms} ms — latest: ${items[0].title ?? items[0].content?.slice(0, 60)}`);
     } catch (error) {
       report('alerts', url, false, error.message);
     }
@@ -163,7 +186,10 @@ const checkAlerts = async () => {
 
 const main = async () => {
   console.log('Checking every upstream source this server depends on.\n');
-  console.log(DIM('Override any of them with GTFS_URLS, VEHICLE_POSITION_URLS or ALERT_FEED_URLS.'));
+  console.log(
+    DIM('Vehicle and alert sources come from VEHICLE_POSITION_URLS / ALERT_PAGE_URLS;'),
+  );
+  console.log(DIM('the GTFS archive is discovered at runtime — see src/gtfs/catalogue.js.'));
 
   await checkGtfs();
   await checkVehicles();
@@ -189,9 +215,10 @@ const main = async () => {
 
   if (fatal) {
     console.log(
-      '\nNo working source for required data. If MPK or the city portal changed URLs again,\n' +
-        'add the new one to .env, for example:\n' +
-        '  GTFS_URLS=https://new-host/gtfs.zip,https://www.wroclaw.pl/open-data/…/GTFS.zip',
+      '\nNo working source for required data.\n' +
+        'If GTFS discovery found nothing, capture the real payload and fix the parser —\n' +
+        'do not paper over it with GTFS_URLS, which pins you to one snapshot forever:\n' +
+        `  curl -s ${config.gtfs.catalogueUrl} | head -c 2000`,
     );
     process.exitCode = 1;
   }

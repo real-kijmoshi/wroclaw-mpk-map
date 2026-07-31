@@ -1,18 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
+import * as SplashScreen from "expo-splash-screen";
+import {
+  BarlowSemiCondensed_600SemiBold,
+  BarlowSemiCondensed_700Bold,
+  useFonts,
+} from "@expo-google-fonts/barlow-semi-condensed";
 import { Bell, Settings, TramFront } from "lucide-react-native";
 
 import MapView from "./components/MapView";
-import InfoBox from "./components/InfoBox";
+import StatusPill from "./components/StatusPill";
+import DeparturesSheet from "./components/DeparturesSheet";
 import LinesSelection from "./modals/LinesSelection";
 import SettingsModal from "./modals/SettingsModal";
 import AlertsModal from "./modals/AlertsModal";
-import { fetchAlerts, fetchLines, fetchVehicles } from "./api";
+import { fetchAlerts, fetchLines, fetchVehicles, normaliseLines } from "./api";
+import { color, radius, shadow, space, type } from "./theme";
 
 const VEHICLE_REFRESH_MS = 10_000;
 const ALERT_REFRESH_MS = 5 * 60_000;
@@ -25,16 +33,23 @@ const INITIAL_REGION = {
   longitudeDelta: 0.12,
 };
 
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
 export default function App() {
+  const [fontsLoaded] = useFonts({
+    BarlowSemiCondensed_600SemiBold,
+    BarlowSemiCondensed_700Bold,
+  });
+
   const [lines, setLines] = useState(null);
   const [linesError, setLinesError] = useState(null);
   const [vehicles, setVehicles] = useState([]);
-  const [vehiclesError, setVehiclesError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
 
   const [selectedLines, setSelectedLines] = useState([]);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [followUser, setFollowUser] = useState(false);
+  const [selectedStop, setSelectedStop] = useState(null);
 
   const [linesSelectionVisible, setLinesSelectionVisible] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
@@ -46,7 +61,7 @@ export default function App() {
   const seenAlertsRef = useRef(new Set());
   const [unreadAlerts, setUnreadAlerts] = useState(0);
 
-  // Restore the user's lines before the first render that could overwrite them.
+  // Restore the user's lines before anything can overwrite them.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -66,8 +81,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // Skip the very first run, otherwise an empty array overwrites the
-    // preferences that are still being read from storage.
+    // Skip the first run, otherwise an empty array overwrites the preferences
+    // that are still being read from storage.
     if (!preferencesLoaded) return;
     AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(selectedLines)).catch(() => {});
   }, [selectedLines, preferencesLoaded]);
@@ -75,9 +90,13 @@ export default function App() {
   const loadLines = useCallback(async () => {
     try {
       setLinesError(null);
-      setLines(await fetchLines());
+      // apiGet already waits out the 503 the server returns while it ingests
+      // the feed; this guards against a payload that is not the line index.
+      const payload = normaliseLines(await fetchLines());
+      if (!payload) throw new Error("Nieoczekiwana odpowiedź serwera.");
+      setLines(payload);
     } catch (error) {
-      setLinesError(error.message);
+      setLinesError(error.message ?? "Nie udało się wczytać linii.");
     }
   }, []);
 
@@ -85,10 +104,9 @@ export default function App() {
     loadLines();
   }, [loadLines]);
 
-  // Retry line loading while the server is still building its indexes.
   useEffect(() => {
     if (!linesError) return undefined;
-    const timer = setTimeout(loadLines, 10_000);
+    const timer = setTimeout(loadLines, 15_000);
     return () => clearTimeout(timer);
   }, [linesError, loadLines]);
 
@@ -97,13 +115,12 @@ export default function App() {
 
     const load = async () => {
       try {
-        const data = await fetchVehicles();
+        const data = await fetchVehicles({ retries: 1 });
         if (cancelled) return;
         setVehicles(Array.isArray(data?.locations) ? data.locations : []);
-        setLastUpdated(data?.lastUpdated ?? null);
-        setVehiclesError(null);
-      } catch (error) {
-        if (!cancelled) setVehiclesError(error.message);
+        setLastUpdated(data?.lastUpdated ? Date.parse(data.lastUpdated) : null);
+      } catch {
+        // Keep the last snapshot; StatusPill shows that it has gone stale.
       }
     };
 
@@ -120,19 +137,16 @@ export default function App() {
 
     const load = async () => {
       try {
-        // Always ask for the full list: the server returns the current set of
-        // alerts, and asking for "everything newer than now" (as this used to)
-        // simply returns nothing.
-        const data = await fetchAlerts();
+        // Always ask for the full list: asking for "everything newer than now",
+        // as this once did, returns nothing every time.
+        const data = await fetchAlerts({ retries: 1 });
         if (cancelled) return;
         const items = Array.isArray(data?.alerts) ? data.alerts : [];
         setAlerts(items);
         setAlertsError(null);
-
-        const seen = seenAlertsRef.current;
-        setUnreadAlerts(items.filter((alert) => !seen.has(alert.id)).length);
+        setUnreadAlerts(items.filter((alert) => !seenAlertsRef.current.has(alert.id)).length);
       } catch (error) {
-        if (!cancelled) setAlertsError(error.message);
+        if (!cancelled) setAlertsError(error.message ?? "Nie udało się pobrać komunikatów.");
       } finally {
         if (!cancelled) setAlertsLoading(false);
       }
@@ -147,12 +161,16 @@ export default function App() {
   }, []);
 
   // The map only shows the blue "you are here" dot once permission is granted;
-  // previously it was switched on without ever asking, so it never appeared.
+  // it used to be switched on without ever asking, so it never appeared.
   useEffect(() => {
     Location.requestForegroundPermissionsAsync()
       .then(({ status }) => setFollowUser(status === "granted"))
       .catch(() => setFollowUser(false));
   }, []);
+
+  useEffect(() => {
+    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
+  }, [fontsLoaded]);
 
   const openAlerts = () => {
     alerts.forEach((alert) => seenAlertsRef.current.add(alert.id));
@@ -166,48 +184,64 @@ export default function App() {
     [vehicles, selectedSet],
   );
 
-  const status = linesError ?? vehiclesError;
+  // Alerts touching a line you follow matter more than the rest.
+  const rankedAlerts = useMemo(() => {
+    const relevant = (alert) => alert.affected?.some((line) => selectedSet.has(line));
+    return [...alerts].sort((a, b) => Number(relevant(b)) - Number(relevant(a)));
+  }, [alerts, selectedSet]);
+
+  if (!fontsLoaded) return null;
 
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
-        <StatusBar style="light" />
+        <StatusBar style="dark" />
         <View style={styles.container}>
           <MapView
             style={styles.map}
             initialRegion={INITIAL_REGION}
             vehicles={visibleVehicles}
             showsUserLocation={followUser}
+            onSelectStop={setSelectedStop}
+            selectedStopId={selectedStop?.id}
           />
 
-          <SafeAreaView style={styles.overlay} pointerEvents="box-none" edges={["top"]}>
-            <InfoBox
+          <SafeAreaView style={styles.top} pointerEvents="box-none" edges={["top"]}>
+            <StatusPill
               lastUpdated={lastUpdated}
               vehicleCount={visibleVehicles.length}
-              totalCount={vehicles.length}
-              error={status}
+              lineCount={selectedLines.length}
+              onPress={() => setLinesSelectionVisible(true)}
+              style={styles.statusPill}
             />
           </SafeAreaView>
 
           {lines === null && !linesError && (
-            <View style={styles.centerCard} pointerEvents="none">
-              <ActivityIndicator color="#fff" />
-              <Text style={styles.centerText}>Wczytywanie linii…</Text>
+            <View style={styles.centreCard} pointerEvents="none">
+              <ActivityIndicator color={color.rail} />
+              <Text style={styles.centreText}>Wczytywanie rozkładów…</Text>
             </View>
           )}
 
-          {preferencesLoaded && selectedLines.length === 0 && lines !== null && (
-            <TouchableOpacity
+          {linesError && (
+            <Pressable style={styles.errorCard} onPress={loadLines}>
+              <Text style={styles.errorText}>{linesError}</Text>
+              <Text style={styles.errorHint}>Dotknij, aby spróbować ponownie</Text>
+            </Pressable>
+          )}
+
+          {preferencesLoaded && lines !== null && selectedLines.length === 0 && (
+            <Pressable
               style={styles.emptyCard}
               onPress={() => setLinesSelectionVisible(true)}
-              activeOpacity={0.85}
+              accessibilityRole="button"
             >
-              <TramFront size={22} color="#fff" />
-              <Text style={styles.emptyText}>
-                Wybierz linie, które chcesz śledzić na mapie
-              </Text>
-            </TouchableOpacity>
+              <TramFront size={20} color={color.paper} />
+              <Text style={styles.emptyText}>Wybierz linie, które chcesz śledzić</Text>
+            </Pressable>
           )}
+
+          <DeparturesSheet stop={selectedStop} onClose={() => setSelectedStop(null)} />
 
           <LinesSelection
             lines={lines ?? {}}
@@ -227,49 +261,30 @@ export default function App() {
           <AlertsModal
             visible={alertsVisible}
             onClose={() => setAlertsVisible(false)}
-            alerts={alerts}
+            alerts={rankedAlerts}
+            followedLines={selectedSet}
             loading={alertsLoading}
             error={alertsError}
           />
 
-          <SafeAreaView style={styles.navigationWrapper} pointerEvents="box-none" edges={["bottom"]}>
-            <View style={styles.navigationBar}>
-              <TouchableOpacity
+          <SafeAreaView style={styles.bottom} pointerEvents="box-none" edges={["bottom"]}>
+            <View style={styles.tabBar}>
+              <TabButton
+                label="Linie"
                 onPress={() => setLinesSelectionVisible(true)}
-                style={styles.button}
-                activeOpacity={0.7}
-                accessibilityRole="button"
-                accessibilityLabel="Wybierz linie"
-              >
-                <TramFront size={26} color="#fff" />
-              </TouchableOpacity>
-
-              <TouchableOpacity
+                icon={<TramFront size={22} color={color.text} />}
+              />
+              <TabButton
+                label="Komunikaty"
                 onPress={openAlerts}
-                style={styles.button}
-                activeOpacity={0.7}
-                accessibilityRole="button"
-                accessibilityLabel={`Komunikaty${unreadAlerts ? `, ${unreadAlerts} nowych` : ""}`}
-              >
-                <Bell size={26} color="#fff" />
-                {unreadAlerts > 0 && (
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>
-                      {unreadAlerts > 9 ? "9+" : unreadAlerts}
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-
-              <TouchableOpacity
+                badge={unreadAlerts}
+                icon={<Bell size={22} color={color.text} />}
+              />
+              <TabButton
+                label="Ustawienia"
                 onPress={() => setSettingsVisible(true)}
-                style={styles.button}
-                activeOpacity={0.7}
-                accessibilityRole="button"
-                accessibilityLabel="Ustawienia"
-              >
-                <Settings size={26} color="#fff" />
-              </TouchableOpacity>
+                icon={<Settings size={22} color={color.text} />}
+              />
             </View>
           </SafeAreaView>
         </View>
@@ -278,81 +293,98 @@ export default function App() {
   );
 }
 
+function TabButton({ label, icon, onPress, badge = 0 }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={styles.tab}
+      accessibilityRole="button"
+      accessibilityLabel={badge ? `${label}, ${badge} nowych` : label}
+    >
+      <View>
+        {icon}
+        {badge > 0 && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>{badge > 9 ? "9+" : badge}</Text>
+          </View>
+        )}
+      </View>
+      <Text style={styles.tabLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  container: { flex: 1, backgroundColor: "#0B1020" },
+  container: { flex: 1, backgroundColor: color.paperMuted },
   map: { ...StyleSheet.absoluteFillObject },
-  overlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-  },
-  centerCard: {
+  top: { position: "absolute", top: 0, left: 0, right: 0 },
+  statusPill: { top: space.sm },
+  centreCard: {
     position: "absolute",
     alignSelf: "center",
     top: "45%",
     alignItems: "center",
-    gap: 8,
-    backgroundColor: "rgba(11, 16, 32, 0.85)",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderRadius: 14,
+    gap: space.sm,
+    backgroundColor: color.paper,
+    paddingHorizontal: space.xl,
+    paddingVertical: space.lg,
+    borderRadius: radius.md,
+    ...shadow.chip,
   },
-  centerText: { color: "#fff", fontSize: 14 },
+  centreText: { ...type.small, color: color.textMuted },
+  errorCard: {
+    position: "absolute",
+    top: "45%",
+    left: space.xl,
+    right: space.xl,
+    alignItems: "center",
+    gap: space.xs,
+    backgroundColor: color.paper,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.lg,
+    borderRadius: radius.md,
+    ...shadow.chip,
+  },
+  errorText: { ...type.body, color: color.disruption, textAlign: "center" },
+  errorHint: { ...type.small, color: color.textMuted },
   emptyCard: {
     position: "absolute",
-    bottom: 110,
-    left: 20,
-    right: 20,
+    bottom: 108,
+    left: space.md,
+    right: space.md,
     flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    backgroundColor: "rgba(0, 117, 255, 0.94)",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderRadius: 14,
-  },
-  emptyText: { color: "#fff", fontSize: 14, fontWeight: "600", flexShrink: 1 },
-  navigationWrapper: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    alignItems: "center",
-    paddingBottom: 16,
-  },
-  navigationBar: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 12,
-    backgroundColor: "rgba(6, 5, 34, 0.92)",
-    borderRadius: 32,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    elevation: 8,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-  },
-  button: {
-    backgroundColor: "#0075FF",
-    borderRadius: 26,
     alignItems: "center",
     justifyContent: "center",
-    width: 52,
-    height: 52,
+    gap: space.sm,
+    backgroundColor: color.rail,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    borderRadius: radius.md,
+    ...shadow.chip,
   },
+  emptyText: { ...type.body, color: color.paper },
+  bottom: { position: "absolute", bottom: 0, left: 0, right: 0 },
+  tabBar: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    backgroundColor: color.paper,
+    borderTopWidth: 1,
+    borderTopColor: color.paperLine,
+    paddingTop: space.sm,
+    paddingBottom: space.xs,
+  },
+  tab: { alignItems: "center", gap: 2, paddingHorizontal: space.lg, paddingVertical: space.xs },
+  tabLabel: { ...type.caption, color: color.textMuted, textTransform: "none" },
   badge: {
     position: "absolute",
-    top: 2,
-    right: 2,
-    minWidth: 18,
-    height: 18,
+    top: -4,
+    right: -8,
+    minWidth: 16,
+    height: 16,
     paddingHorizontal: 4,
-    borderRadius: 9,
-    backgroundColor: "#E85D75",
+    borderRadius: 8,
+    backgroundColor: color.disruption,
     alignItems: "center",
     justifyContent: "center",
   },
