@@ -18,6 +18,9 @@ const config = require('../config');
 const logger = require('../logger');
 const { fetchWithTimeout } = require('../http');
 
+/** CKAN has shipped both of these API prefixes; neither is safe to assume. */
+const CKAN_API_PATHS = ['/api/3/action/', '/api/action/'];
+
 /** A feed without these is not usable, whatever the listing claims. */
 const REQUIRED_TABLES = ['routes', 'trips', 'stops', 'stop_times', 'shapes'];
 
@@ -163,7 +166,31 @@ const fetchJson = async (url) => {
     headers: { Accept: 'application/json' },
   });
   if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
-  return response.json();
+
+  const body = await response.text();
+  try {
+    return JSON.parse(body);
+  } catch {
+    // A portal that has been retired or moved serves its own HTML error page
+    // with a 200. Saying so beats a raw "Unexpected token '<'".
+    const looksLikeHtml = /^\s*<(!doctype|html)/i.test(body);
+    throw new Error(
+      looksLikeHtml
+        ? 'responded with an HTML page, not JSON — the API path is probably wrong'
+        : `responded with something that is not JSON: ${body.slice(0, 80).replace(/\s+/g, ' ')}…`,
+    );
+  }
+};
+
+/** A short, safe description of a payload, for when the parser finds nothing. */
+const describePayload = (payload) => {
+  if (payload === null || payload === undefined) return String(payload);
+  if (Array.isArray(payload)) return `array of ${payload.length}`;
+  if (typeof payload !== 'object') return typeof payload;
+
+  const keys = Object.keys(payload);
+  const sample = JSON.stringify(payload).slice(0, 400);
+  return `object with keys [${keys.slice(0, 12).join(', ')}] — ${sample}`;
 };
 
 /**
@@ -187,35 +214,49 @@ const resolveFeedCandidates = async ({ now = Date.now() } = {}) => {
 
   // 1. The city's current data API, which returns the whole dated archive.
   try {
-    const listing = parseFileListing(await fetchJson(config.gtfs.catalogueUrl));
-    const ordered = orderByEffectiveDate(listing, now);
+    const payload = await fetchJson(config.gtfs.catalogueUrl);
+    const ordered = orderByEffectiveDate(parseFileListing(payload), now);
+
     if (ordered.length) {
       logger.info(
         `catalogue lists ${ordered.length} snapshot(s); using ${ordered[0].name}`,
       );
       candidates.push(...ordered.map((entry) => ({ url: entry.url, name: entry.name })));
     } else {
+      // Print what actually came back. Without this the only way to find out is
+      // to curl the endpoint by hand from a machine that can reach it.
       logger.warn(
         `catalogue at ${config.gtfs.catalogueUrl} returned no usable entries — ` +
-          'parseFileListing probably needs adjusting to the real payload',
+          'parseFileListing needs adjusting to this payload:',
       );
+      logger.warn(`  ${describePayload(payload)}`);
     }
   } catch (error) {
     logger.warn(`catalogue lookup failed: ${error.message}`);
   }
 
-  // 2. The legacy CKAN instance, still up at the time of writing.
+  // 2. CKAN instances. Both the API path and the hostname have moved before —
+  // opendata. and open-data. are different portals, not aliases — so try each
+  // combination rather than betting on one.
   for (const host of config.gtfs.ckanHosts) {
-    try {
-      const json = await fetchJson(
-        `${host}/api/3/action/package_show?id=${config.gtfs.ckanDataset}`,
-      );
-      for (const url of pickZipResources(json?.result?.resources)) {
-        candidates.push({ url, name: null });
+    let found = false;
+
+    for (const apiPath of CKAN_API_PATHS) {
+      if (found) break;
+      const url = `${host}${apiPath}package_show?id=${config.gtfs.ckanDataset}`;
+      try {
+        const json = await fetchJson(url);
+        const urls = pickZipResources(json?.result?.resources ?? json?.resources);
+        if (!urls.length) continue;
+        for (const resourceUrl of urls) candidates.push({ url: resourceUrl, name: null });
+        logger.info(`CKAN at ${url} offered ${urls.length} archive(s)`);
+        found = true;
+      } catch (error) {
+        logger.debug(`CKAN lookup failed for ${url}: ${error.message}`);
       }
-    } catch (error) {
-      logger.warn(`CKAN lookup failed for ${host}: ${error.message}`);
     }
+
+    if (!found) logger.warn(`no CKAN archives found at ${host}`);
   }
 
   // 3. Static mirrors, last.
@@ -233,6 +274,7 @@ const resolveFeedCandidates = async ({ now = Date.now() } = {}) => {
 
 module.exports = {
   REQUIRED_TABLES,
+  describePayload,
   effectiveDateFromName,
   orderByEffectiveDate,
   parseFileListing,

@@ -139,11 +139,29 @@ describe('assertComplete', () => {
     );
   });
 
+  it('accepts an archive whose tables are nested in a directory', () => {
+    // Some publishers ship GTFS/shapes.txt rather than shapes.txt; an
+    // exact-path lookup reads that as a feed with no route geometry.
+    assert.doesNotThrow(() => assertComplete(buildFixtureZip({ prefix: 'GTFS/' })));
+  });
+
   it('names every missing table', () => {
     assert.throws(
       () => assertComplete(buildFixtureZip({ omit: ['shapes', 'stop_times'] })),
       /stop_times\.txt/,
     );
+  });
+});
+
+describe('nested archives', () => {
+  it('indexes a feed whose tables sit in a subdirectory', async () => {
+    const nested = new GtfsStore();
+    await nested.build(buildFixtureZip({ prefix: 'OtwartyWroclaw_GTFS/' }));
+
+    assert.deepEqual(nested.lines.tram, ['4']);
+    assert.equal(nested.status.counts.stops, 5);
+    // The point of the fix: route geometry survives the nesting.
+    assert.ok(nested.getVariants('4')[0].points.length > 0);
   });
 });
 

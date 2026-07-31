@@ -58,7 +58,10 @@ module.exports = {
     // and returns the whole archive of dated snapshots, not one current file.
     catalogueUrl: process.env.GTFS_CATALOGUE_URL || 'https://api.open-data.cui.wroclaw.pl/od2/6/',
     // Legacy CKAN instance, tried after the data API.
-    ckanHosts: list(process.env.GTFS_CKAN_HOSTS, ['https://opendata.cui.wroclaw.pl']),
+    ckanHosts: list(process.env.GTFS_CKAN_HOSTS, [
+      'https://opendata.cui.wroclaw.pl',
+      'https://open-data.cui.wroclaw.pl',
+    ]),
     ckanDataset: process.env.GTFS_CKAN_DATASET || 'rozkladjazdytransportupublicznegoplik_data',
     // Static mirrors, tried last.
     mirrors: list(process.env.GTFS_MIRROR_URLS, [

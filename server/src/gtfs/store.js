@@ -13,8 +13,28 @@ const { parseTable, secondsToTime, streamTable, timeToSeconds } = require('./par
 const SHAPE_SIMPLIFY_METERS = 4;
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
+/**
+ * Find a GTFS table inside the archive by file name, ignoring any directory.
+ *
+ * Some publishers ship the tables at the root and others nest them in a folder
+ * (`GTFS/shapes.txt`). An exact-path lookup silently misses the nested layout,
+ * which then looks like a feed that is missing shapes.txt — the dane.gov.pl
+ * mirror was rejected for exactly this reason.
+ */
+const findEntry = (zip, fileName) => {
+  const wanted = fileName.toLowerCase();
+  return (
+    zip.getEntry(fileName) ??
+    zip.getEntries().find((entry) => {
+      if (entry.isDirectory) return false;
+      return entry.entryName.replace(/^.*\//, '').toLowerCase() === wanted;
+    }) ??
+    null
+  );
+};
+
 const entryBuffer = (zip, name) => {
-  const entry = zip.getEntry(name);
+  const entry = findEntry(zip, name);
   return entry ? entry.getData() : null;
 };
 
@@ -31,7 +51,7 @@ const entryBuffer = (zip, name) => {
 const assertComplete = (buffer) => {
   const zip = new AdmZip(buffer);
   const missing = REQUIRED_TABLES.filter((table) => {
-    const entry = zip.getEntry(`${table}.txt`);
+    const entry = findEntry(zip, `${table}.txt`);
     // A header-only table is as useless as an absent one.
     return !entry || entry.header.size < 64;
   });
@@ -571,4 +591,4 @@ class GtfsStore {
   }
 }
 
-module.exports = { GtfsStore, SHAPE_SIMPLIFY_METERS, assertComplete };
+module.exports = { GtfsStore, SHAPE_SIMPLIFY_METERS, assertComplete, findEntry };

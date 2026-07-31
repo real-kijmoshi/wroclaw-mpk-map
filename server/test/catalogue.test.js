@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
+  describePayload,
   effectiveDateFromName,
   orderByEffectiveDate,
   parseFileListing,
@@ -91,6 +92,23 @@ describe('orderByEffectiveDate', () => {
       ordered.map((entry) => entry.name),
       ['undated', 'future'],
     );
+  });
+});
+
+describe('describePayload', () => {
+  // Printed to the log when the parser finds nothing, so that the next
+  // production log says what the payload actually looks like instead of
+  // needing someone to curl the endpoint by hand.
+  it('summarises an object without dumping all of it', () => {
+    const described = describePayload({ files: [{ nazwa: 'a' }], total: 1 });
+    assert.match(described, /keys \[files, total\]/);
+    assert.ok(described.length < 500);
+  });
+
+  it('handles arrays and non-objects', () => {
+    assert.equal(describePayload([1, 2, 3]), 'array of 3');
+    assert.equal(describePayload(null), 'null');
+    assert.equal(describePayload('text'), 'string');
   });
 });
 
