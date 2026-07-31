@@ -71,6 +71,11 @@ module.exports = {
     // snapshot, which then goes stale without any error — the exact failure
     // that killed the original version of this project.
     overrideUrls: list(process.env.GTFS_URLS, []),
+    // Where a file id is downloaded from when its metadata carries no URL.
+    downloadBase: process.env.GTFS_DOWNLOAD_BASE || 'https://open-data.cui.wroclaw.pl/hdb/ft',
+    // Dataset 6 lists ~66 file ids, ordered newest first. Only the recent ones
+    // can be the timetable in force, so there is no point resolving all of them.
+    maxFileLookups: num(process.env.GTFS_MAX_FILE_LOOKUPS, 24),
     // How many discovered candidates to try before giving up.
     maxCandidates: num(process.env.GTFS_MAX_CANDIDATES, 6),
     // Where the last successfully downloaded archive is kept so a restart (or a

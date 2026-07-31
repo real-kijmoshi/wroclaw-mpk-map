@@ -182,6 +182,89 @@ const fetchJson = async (url) => {
   }
 };
 
+/**
+ * File IDs referenced by a dataset payload.
+ *
+ * `/od2/6/` does not describe its files — it answers
+ * `{id: 6, active: true, pliki: [119, 117, 121, …]}`, a bare list of IDs that
+ * each have to be resolved separately. The array is ordered newest upload
+ * first, matching the order the portal renders.
+ */
+const fileIdsFrom = (payload) => {
+  if (!payload || typeof payload !== 'object') return [];
+
+  for (const value of Object.values(payload)) {
+    if (!Array.isArray(value) || !value.length) continue;
+    if (value.every((item) => Number.isInteger(item) || /^\d+$/.test(item))) {
+      return value.map(Number);
+    }
+  }
+  return [];
+};
+
+/**
+ * Endpoints that might describe a single file. The portal's schema is not
+ * documented, so the first pattern that answers with something usable wins and
+ * is then reused for the rest instead of probing 60 times over.
+ */
+const fileEndpointsFor = (catalogueUrl, id) => {
+  const base = new URL(catalogueUrl);
+  const origin = base.origin;
+  const withinDataset = new URL(`${id}/`, base).toString();
+
+  return [
+    withinDataset,
+    `${origin}/od2/pliki/${id}/`,
+    `${origin}/od2/plik/${id}/`,
+    `${origin}/od2/file/${id}/`,
+  ];
+};
+
+/**
+ * Resolve file IDs into named, downloadable entries.
+ *
+ * Anything without a URL in its metadata still gets a download candidate
+ * guessed from the file-transfer path the portal uses. Guessing is safe here:
+ * the download loop checks the zip magic bytes and validates the contents, so a
+ * wrong URL is rejected rather than served.
+ */
+const resolveFileEntries = async (ids, { catalogueUrl, downloadBase, limit }) => {
+  const entries = [];
+  let workingPattern = null;
+
+  for (const id of ids.slice(0, limit)) {
+    const urls = workingPattern
+      ? [workingPattern(id)]
+      : fileEndpointsFor(catalogueUrl, id);
+
+    for (const [index, url] of urls.entries()) {
+      try {
+        const payload = await fetchJson(url);
+        const [parsed] = parseFileListing(payload);
+        const name = parsed?.name ?? pickKey(payload, NAME_KEYS);
+        if (!name) continue;
+
+        entries.push({
+          name,
+          url: parsed?.url ?? `${downloadBase}/${id}/`,
+          effectiveDate: effectiveDateFromName(name),
+        });
+
+        if (!workingPattern) {
+          const template = fileEndpointsFor(catalogueUrl, '__ID__')[index];
+          workingPattern = (fileId) => template.replace('__ID__', String(fileId));
+          logger.debug(`file metadata resolved from ${url}`);
+        }
+        break;
+      } catch {
+        // Try the next shape; a dead pattern is not worth logging per file.
+      }
+    }
+  }
+
+  return entries;
+};
+
 /** A short, safe description of a payload, for when the parser finds nothing. */
 const describePayload = (payload) => {
   if (payload === null || payload === undefined) return String(payload);
@@ -215,7 +298,23 @@ const resolveFeedCandidates = async ({ now = Date.now() } = {}) => {
   // 1. The city's current data API, which returns the whole dated archive.
   try {
     const payload = await fetchJson(config.gtfs.catalogueUrl);
-    const ordered = orderByEffectiveDate(parseFileListing(payload), now);
+
+    // Some payloads describe their files inline; dataset 6 only lists IDs and
+    // needs a second call each. Try the cheap path first.
+    let listing = parseFileListing(payload);
+    if (!listing.length) {
+      const ids = fileIdsFrom(payload);
+      if (ids.length) {
+        logger.info(`catalogue lists ${ids.length} file id(s); resolving the newest`);
+        listing = await resolveFileEntries(ids, {
+          catalogueUrl: config.gtfs.catalogueUrl,
+          downloadBase: config.gtfs.downloadBase,
+          limit: config.gtfs.maxFileLookups,
+        });
+      }
+    }
+
+    const ordered = orderByEffectiveDate(listing, now);
 
     if (ordered.length) {
       logger.info(
@@ -275,6 +374,8 @@ const resolveFeedCandidates = async ({ now = Date.now() } = {}) => {
 module.exports = {
   REQUIRED_TABLES,
   describePayload,
+  fileIdsFrom,
+  resolveFileEntries,
   effectiveDateFromName,
   orderByEffectiveDate,
   parseFileListing,
