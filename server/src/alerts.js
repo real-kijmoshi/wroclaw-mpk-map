@@ -155,15 +155,27 @@ const parsePage = (html, pageUrl) => {
     if (seen.has(url)) continue;
     seen.add(url);
 
-    // Look just past the link for a date; these pages usually print one next
-    // to the headline. Falling back to "now" keeps undated notices visible.
-    const nearby = stripHtml(html.slice(match.index, match.index + match[0].length + 400));
-    const published = polishDate(nearby);
+    // Look just past the link for a date and a lead paragraph; these pages
+    // print both next to the headline. Falling back to "now" for the date keeps
+    // undated notices visible rather than dropping them.
+    // Stop at the next link. Each notice on these pages begins with its own
+    // headline link, so that is where this one's text ends — a fixed-size
+    // window instead runs into the following notice and appends its body to
+    // this one.
+    const rest = html.slice(match.index + match[0].length);
+    const nextLink = rest.search(/<a\b/i);
+    const after = rest.slice(0, nextLink === -1 ? 600 : Math.min(nextLink, 600));
+    const trailing = stripHtml(after);
+    const published = polishDate(`${title} ${trailing}`);
+
+    // Only keep the trailing text when it adds something; on a bare link list
+    // it is the next headline, which would read as this one's description.
+    const lead = trailing.length > 40 ? trailing.slice(0, 240).trim() : null;
 
     results.push({
       id: url,
       title,
-      content: title,
+      content: lead ?? title,
       url,
       timestamp: published ?? Date.now(),
       source: pageUrl,
