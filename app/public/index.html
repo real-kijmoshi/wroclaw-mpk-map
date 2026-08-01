@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      viewport-fit=cover is what makes env(safe-area-inset-*) report real values
+      on a notched iPhone; without it react-native-safe-area-context reads zero
+      on the web build and the tab bar sits under the home indicator.
+      user-scalable=no keeps a double tap on a map control from zooming the page.
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <title>WroMapa — tramwaje i autobusy MPK Wrocław na żywo</title>
+    <meta
+      name="description"
+      content="Pozycje tramwajów i autobusów MPK Wrocław na żywo, najbliższe odjazdy z przystanku i komunikaty o utrudnieniach."
+    />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#0E141B" />
+
+    <!-- Added to the home screen it should open without browser chrome. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="WroMapa" />
+    <meta name="format-detection" content="telephone=no" />
+
+    <style id="expo-reset">
+      /*
+       * The react-native-web root reset, plus the handful of rules a full-screen
+       * map app needs in a mobile browser.
+       */
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        /* <ScrollView> does the scrolling; the document itself never should. */
+        overflow: hidden;
+        background-color: #0e141b;
+        /* Stops the rubber-band drag and pull-to-refresh that otherwise fire
+           when a gesture starts on the map. */
+        overscroll-behavior: none;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+        /* Chrome for a map, not a document: no accidental text selection, no
+           300ms tap delay. */
+        -webkit-user-select: none;
+        user-select: none;
+        touch-action: manipulation;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+          Roboto, Helvetica, Arial, sans-serif;
+      }
+
+      #root {
+        display: flex;
+        flex: 1;
+        /* 100% resolves against the largest viewport on iOS Safari, so the tab
+           bar ends up under the browser toolbar. dvh follows the toolbar as it
+           collapses; the earlier values are the fallbacks for browsers without
+           it. */
+        height: 100%;
+        height: 100vh;
+        height: -webkit-fill-available;
+        height: 100dvh;
+        overflow: hidden;
+      }
+
+      /* Inputs inherit the app's face instead of the platform's form default,
+         and 16px keeps iOS Safari from zooming in when one takes focus. */
+      input,
+      textarea,
+      select,
+      button {
+        font-family: inherit;
+        font-size: 16px;
+      }
+
+      /* The splash background stays visible until the bundle mounts, so a cold
+         load is a dark screen rather than a white flash. */
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <noscript>
+      Ta aplikacja wymaga włączonego JavaScriptu.
+    </noscript>
+    <div id="root"></div>
+  </body>
+</html>

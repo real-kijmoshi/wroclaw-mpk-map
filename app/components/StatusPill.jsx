@@ -1,6 +1,9 @@
-import { useEffect, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Animated, StyleSheet, Text, View } from "react-native";
+import { ChevronDown } from "lucide-react-native";
 
+import Material from "./Material";
+import PressableScale from "./PressableScale";
 import { color, font, radius, shadow, space, type } from "../theme";
 
 /**
@@ -9,10 +12,13 @@ import { color, font, radius, shadow, space, type } from "../theme";
  * answers a question you would actually ask.
  *
  * This says the one thing worth knowing: is what you are looking at live, and
- * how much of the city is on screen.
+ * how much of the city is on screen. It is a translucent capsule rather than a
+ * solid card because it sits on top of a moving map and should read as glass
+ * over it, not as a hole punched in it.
  */
-export default function StatusPill({ lastUpdated, vehicleCount, lineCount, onPress, style }) {
+export default function StatusPill({ lastUpdated, vehicleCount, lineCount, onPress }) {
   const [now, setNow] = useState(() => Date.now());
+  const pulse = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 5000);
@@ -21,6 +27,26 @@ export default function StatusPill({ lastUpdated, vehicleCount, lineCount, onPre
 
   const age = lastUpdated ? Math.round((now - lastUpdated) / 1000) : null;
   const stale = age != null && age > 45;
+  const live = age != null && !stale;
+
+  // A slow breath on the dot, which is the difference between "this is live"
+  // and "this is a screenshot". It stops when the feed goes stale, so the
+  // stillness itself carries the warning.
+  useEffect(() => {
+    if (!live) {
+      pulse.setValue(1);
+      return undefined;
+    }
+
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 0.35, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [live, pulse]);
 
   let label;
   if (age == null) label = "Łączenie…";
@@ -28,22 +54,28 @@ export default function StatusPill({ lastUpdated, vehicleCount, lineCount, onPre
   else label = `${vehicleCount} w ruchu · ${lineCount} ${plural(lineCount)}`;
 
   return (
-    <Pressable
-      style={[styles.pill, style]}
+    <PressableScale
       onPress={onPress}
+      scale={0.97}
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={`${label}. Dotknij, aby wybrać linie.`}
     >
-      <View
-        style={[
-          styles.dot,
-          { backgroundColor: age == null ? color.textMuted : stale ? color.stale : color.live },
-        ]}
-      />
-      <Text style={styles.label} numberOfLines={1}>
-        {label}
-      </Text>
-    </Pressable>
+      <Material style={styles.pill}>
+        <Animated.View
+          style={[
+            styles.dot,
+            { opacity: live ? pulse : 1 },
+            { backgroundColor: age == null ? color.textMuted : stale ? color.stale : color.live },
+          ]}
+        />
+        <Text style={styles.label} numberOfLines={1}>
+          {label}
+        </Text>
+        <View style={styles.chevron}>
+          <ChevronDown size={14} color={color.textMuted} strokeWidth={2.5} />
+        </View>
+      </Material>
+    </PressableScale>
   );
 }
 
@@ -57,17 +89,17 @@ function plural(count) {
 
 const styles = StyleSheet.create({
   pill: {
-    position: "absolute",
-    alignSelf: "center",
     flexDirection: "row",
     alignItems: "center",
     gap: space.sm,
-    backgroundColor: color.paper,
-    paddingVertical: space.sm,
+    height: 40,
     paddingHorizontal: space.lg,
     borderRadius: radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255, 255, 255, 0.55)",
     ...shadow.chip,
   },
   dot: { width: 8, height: 8, borderRadius: 4 },
-  label: { ...type.small, fontFamily: font.dataMedium, fontSize: 15, color: color.text },
+  label: { ...type.body, fontFamily: font.dataMedium, fontSize: 15, color: color.text },
+  chevron: { marginLeft: -space.xs, opacity: 0.8 },
 });

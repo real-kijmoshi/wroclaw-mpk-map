@@ -1,36 +1,68 @@
 import { useEffect, useRef } from "react";
 import {
   Animated,
-  Dimensions,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
   StyleSheet,
+  Text,
   View,
+  useWindowDimensions,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   GestureHandlerRootView,
   PanGestureHandler,
   State,
 } from "react-native-gesture-handler";
 
-import { color, radius } from "../theme";
+import PressableScale from "./PressableScale";
+import { color, hairline, layout, radius, shadow, space, spring, type } from "../theme";
 
-const { height: SCREEN_HEIGHT } = Dimensions.get("window");
-const DEFAULT_MODAL_HEIGHT = SCREEN_HEIGHT * 0.75;
 const DISMISS_DISTANCE = 100;
 const DISMISS_VELOCITY = 1000;
 
+/**
+ * The iOS sheet.
+ *
+ * Two things it does that the previous version did not:
+ *
+ * The size comes from `useWindowDimensions`, not from a `Dimensions.get` read
+ * at import time. That read happens once, so the sheet kept the height of
+ * whatever the window was when the bundle loaded — wrong after a rotation, and
+ * wrong for the entire session in a resized browser window.
+ *
+ * The drag lives on the grabber and the header, not on the whole sheet. When
+ * the pan handler wrapped everything, a flick inside the list either scrolled
+ * or dismissed depending on which handler won, so scrolling a long line list
+ * would sometimes throw the sheet off the screen instead. Owning the header
+ * here is also what keeps the three sheets looking like the same object.
+ */
 export default function SwipeableModal({
   visible,
   onClose,
   children,
-  modalHeight = DEFAULT_MODAL_HEIGHT,
+  title,
+  subtitle,
+  actionLabel = "Gotowe",
+  onAction,
+  secondaryAction,
+  background = "paper",
+  detent = 0.9,
   closeOnBackdropPress = true,
 }) {
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+
+  // iOS never lets a sheet reach the top edge; the gap is what says there is a
+  // screen behind it.
+  const topGap = Math.max(insets.top, space.xl) + space.md;
+  const sheetHeight = Math.min(windowHeight * detent, windowHeight - topGap);
+
   // sheetY is the open/close animation; dragY tracks the finger. Keeping them
   // separate means a drag can be clamped without fighting the open animation.
-  const sheetY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  const sheetY = useRef(new Animated.Value(windowHeight)).current;
   const dragY = useRef(new Animated.Value(0)).current;
 
   // Downward drags move the sheet; upward drags are ignored so it cannot be
@@ -41,23 +73,29 @@ export default function SwipeableModal({
   });
   const translateY = Animated.add(sheetY, clampedDrag);
 
+  // The backdrop tracks the sheet, so a drag that is released halfway does not
+  // leave a fully dark screen behind a half-open sheet.
+  const backdropOpacity = translateY.interpolate({
+    inputRange: [0, Math.max(sheetHeight, 1)],
+    outputRange: [1, 0],
+    extrapolate: "clamp",
+  });
+
   useEffect(() => {
     if (!visible) return;
     dragY.setValue(0);
-    sheetY.setValue(SCREEN_HEIGHT);
+    sheetY.setValue(sheetHeight);
     Animated.spring(sheetY, {
       toValue: 0,
       useNativeDriver: true,
-      damping: 20,
-      stiffness: 180,
-      mass: 0.6,
+      ...spring.sheet,
     }).start();
-  }, [visible, sheetY, dragY]);
+  }, [visible, sheetY, dragY, sheetHeight]);
 
   const dismiss = () => {
     Animated.timing(sheetY, {
-      toValue: SCREEN_HEIGHT,
-      duration: 200,
+      toValue: sheetHeight,
+      duration: 220,
       useNativeDriver: true,
     }).start(({ finished }) => {
       if (!finished) return;
@@ -83,15 +121,12 @@ export default function SwipeableModal({
       return;
     }
 
-    Animated.spring(dragY, {
-      toValue: 0,
-      useNativeDriver: true,
-      damping: 20,
-      stiffness: 200,
-    }).start();
+    Animated.spring(dragY, { toValue: 0, useNativeDriver: true, ...spring.settle }).start();
   };
 
   if (!visible) return null;
+
+  const wide = windowWidth > layout.maxContentWidth + 2 * space.lg;
 
   return (
     <Modal
@@ -103,26 +138,88 @@ export default function SwipeableModal({
     >
       <GestureHandlerRootView style={styles.root}>
         <View style={styles.overlay}>
-          <Pressable
-            style={styles.backdrop}
-            onPress={closeOnBackdropPress ? dismiss : undefined}
-            accessibilityLabel="Zamknij"
-          />
+          <Animated.View style={[styles.backdrop, { opacity: backdropOpacity }]}>
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={closeOnBackdropPress ? dismiss : undefined}
+              accessibilityLabel="Zamknij"
+            />
+          </Animated.View>
 
-          <PanGestureHandler
-            onGestureEvent={onGestureEvent}
-            onHandlerStateChange={onHandlerStateChange}
-            activeOffsetY={10}
+          <KeyboardAvoidingView
+            style={styles.keyboard}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            pointerEvents="box-none"
           >
             <Animated.View
-              style={[styles.sheet, { height: modalHeight, transform: [{ translateY }] }]}
+              style={[
+                styles.sheet,
+                wide && styles.sheetWide,
+                {
+                  height: sheetHeight,
+                  backgroundColor: background === "grouped" ? color.paperMuted : color.paper,
+                  paddingBottom: Math.max(insets.bottom, space.lg),
+                  transform: [{ translateY }],
+                },
+              ]}
             >
-              <View style={styles.handleArea}>
-                <View style={styles.handle} />
-              </View>
-              {children}
+              <PanGestureHandler
+                onGestureEvent={onGestureEvent}
+                onHandlerStateChange={onHandlerStateChange}
+                activeOffsetY={10}
+              >
+                <View style={styles.grabArea}>
+                  <View style={styles.grabber} />
+                  {(title || onAction || secondaryAction) && (
+                    <View style={styles.header}>
+                      <View style={styles.headerText}>
+                        {title ? (
+                          <Text style={styles.title} numberOfLines={1}>
+                            {title}
+                          </Text>
+                        ) : null}
+                        {subtitle ? (
+                          <Text style={styles.subtitle} numberOfLines={1}>
+                            {subtitle}
+                          </Text>
+                        ) : null}
+                      </View>
+
+                      <View style={styles.headerActions}>
+                        {secondaryAction && (
+                          <PressableScale
+                            style={styles.headerButton}
+                            onPress={secondaryAction.onPress}
+                            accessibilityRole="button"
+                          >
+                            <Text
+                              style={[
+                                styles.headerButtonText,
+                                secondaryAction.destructive && styles.headerButtonDestructive,
+                              ]}
+                            >
+                              {secondaryAction.label}
+                            </Text>
+                          </PressableScale>
+                        )}
+                        <PressableScale
+                          style={styles.headerButton}
+                          onPress={onAction ?? dismiss}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.headerButtonText, styles.headerButtonPrimary]}>
+                            {actionLabel}
+                          </Text>
+                        </PressableScale>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              </PanGestureHandler>
+
+              <View style={styles.content}>{children}</View>
             </Animated.View>
-          </PanGestureHandler>
+          </KeyboardAvoidingView>
         </View>
       </GestureHandlerRootView>
     </Modal>
@@ -131,24 +228,54 @@ export default function SwipeableModal({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "flex-end",
-  },
-  backdrop: { ...StyleSheet.absoluteFillObject },
+  overlay: { flex: 1, justifyContent: "flex-end" },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: color.scrim },
+  keyboard: { flex: 1, justifyContent: "flex-end" },
   sheet: {
-    backgroundColor: color.paper,
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
-    paddingHorizontal: 20,
-    paddingBottom: Platform.OS === "ios" ? 30 : 20,
+    borderTopLeftRadius: radius.sheet,
+    borderTopRightRadius: radius.sheet,
+    overflow: "hidden",
+    ...shadow.sheet,
   },
-  handleArea: { alignItems: "center", paddingVertical: 10 },
-  handle: {
-    width: 44,
+  // On a desktop-sized window the sheet stops being full-bleed and becomes a
+  // centred card, which is what iPadOS does with the same component.
+  sheetWide: {
+    width: layout.maxContentWidth,
+    alignSelf: "center",
+    borderBottomLeftRadius: radius.sheet,
+    borderBottomRightRadius: radius.sheet,
+    marginBottom: space.lg,
+  },
+  grabArea: { paddingBottom: space.sm },
+  grabber: {
+    width: 36,
     height: 5,
-    backgroundColor: color.paperLine,
     borderRadius: 2.5,
+    backgroundColor: color.fillStrong,
+    alignSelf: "center",
+    marginTop: space.sm,
+    marginBottom: space.sm,
   },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+    paddingBottom: space.sm,
+  },
+  headerText: { flex: 1 },
+  title: { ...type.title, color: color.text },
+  subtitle: { ...type.footnote, color: color.textMuted, marginTop: 1 },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: space.xs },
+  headerButton: {
+    minHeight: 36,
+    justifyContent: "center",
+    paddingHorizontal: space.sm,
+    borderRadius: radius.control,
+  },
+  headerButtonText: { ...type.headline, color: color.textMuted },
+  headerButtonPrimary: { color: color.rail },
+  headerButtonDestructive: { color: color.destructive },
+  content: { flex: 1, borderTopWidth: hairline, borderTopColor: color.separator },
 });
