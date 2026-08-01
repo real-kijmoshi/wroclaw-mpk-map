@@ -1,24 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Animated,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
-import { PanGestureHandler, State } from "react-native-gesture-handler";
+import { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 import { X } from "lucide-react-native";
 
+import BottomSheet from "./BottomSheet";
 import LineBadge from "./LineBadge";
 import PressableScale from "./PressableScale";
 import { fetchDepartures } from "../api";
-import { color, font, hairline, layout, radius, shadow, space, spring, type } from "../theme";
+import { color, font, hairline, radius, space, type } from "../theme";
 
 const REFRESH_MS = 30000;
-const HIDDEN_OFFSET = 480;
-const DISMISS_DISTANCE = 80;
-const DISMISS_VELOCITY = 800;
 
 /**
  * The departure board.
@@ -35,16 +25,6 @@ const DISMISS_VELOCITY = 800;
  */
 export default function DeparturesSheet({ stop, onClose, bottomOffset = 0 }) {
   const [state, setState] = useState({ status: "loading", departures: [] });
-  const slide = useRef(new Animated.Value(1)).current;
-  const drag = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.spring(slide, {
-      toValue: stop ? 0 : 1,
-      useNativeDriver: true,
-      ...spring.settle,
-    }).start();
-  }, [stop, slide]);
 
   const load = useCallback(
     async (signal, quiet) => {
@@ -77,146 +57,87 @@ export default function DeparturesSheet({ stop, onClose, bottomOffset = 0 }) {
     };
   }, [stop?.id, load]);
 
-  const onGestureEvent = Animated.event([{ nativeEvent: { translationY: drag } }], {
-    useNativeDriver: true,
-  });
-
-  const onHandlerStateChange = ({ nativeEvent }) => {
-    if (nativeEvent.state !== State.END && nativeEvent.state !== State.CANCELLED) return;
-
-    const { translationY, velocityY } = nativeEvent;
-    if (translationY > DISMISS_DISTANCE || velocityY > DISMISS_VELOCITY) {
-      drag.setValue(0);
-      onClose?.();
-      return;
-    }
-    Animated.spring(drag, { toValue: 0, useNativeDriver: true, ...spring.settle }).start();
-  };
-
   if (!stop) return null;
 
-  // Downward drags follow the finger; upward ones are ignored so the board
-  // cannot be dragged up over the map.
-  const clampedDrag = drag.interpolate({ inputRange: [-1, 0, 1], outputRange: [0, 0, 1] });
-  const translateY = Animated.add(
-    slide.interpolate({ inputRange: [0, 1], outputRange: [0, HIDDEN_OFFSET] }),
-    clampedDrag,
+  const header = (
+    <View style={styles.header}>
+      <View style={styles.headerText}>
+        <Text style={styles.eyebrow}>Najbliższe odjazdy</Text>
+        <Text style={styles.stopName} numberOfLines={1}>
+          {stop.name}
+        </Text>
+      </View>
+      <PressableScale
+        onPress={onClose}
+        hitSlop={12}
+        style={styles.close}
+        accessibilityRole="button"
+        accessibilityLabel="Zamknij odjazdy"
+      >
+        <X size={18} color={color.textOnDarkMuted} strokeWidth={2.5} />
+      </PressableScale>
+    </View>
   );
 
   return (
-    <View style={[styles.wrapper, { bottom: bottomOffset }]} pointerEvents="box-none">
-      <Animated.View style={[styles.sheet, { transform: [{ translateY }] }]}>
-        <PanGestureHandler
-          onGestureEvent={onGestureEvent}
-          onHandlerStateChange={onHandlerStateChange}
-          activeOffsetY={10}
+    <BottomSheet header={header} onClose={onClose} bottomOffset={bottomOffset}>
+      {state.status === "loading" && (
+        <View style={styles.centre}>
+          <ActivityIndicator color={color.amber} />
+        </View>
+      )}
+
+      {state.status === "error" && (
+        <View style={styles.centre}>
+          <Text style={styles.message}>Nie udało się pobrać odjazdów.</Text>
+          <PressableScale onPress={() => load(undefined, false)} style={styles.retry}>
+            <Text style={styles.retryText}>Spróbuj ponownie</Text>
+          </PressableScale>
+        </View>
+      )}
+
+      {state.status === "ready" && state.departures.length === 0 && (
+        <View style={styles.centre}>
+          <Text style={styles.message}>Brak odjazdów w ciągu najbliższych dwóch godzin.</Text>
+        </View>
+      )}
+
+      {state.status === "ready" && state.departures.length > 0 && (
+        <ScrollView
+          style={styles.list}
+          contentContainerStyle={{ paddingBottom: space.sm }}
+          showsVerticalScrollIndicator={false}
         >
-          <View>
-            <View style={styles.grabber} />
-            <View style={styles.header}>
-              <View style={styles.headerText}>
-                <Text style={styles.eyebrow}>Najbliższe odjazdy</Text>
-                <Text style={styles.stopName} numberOfLines={1}>
-                  {stop.name}
-                </Text>
-              </View>
-              <PressableScale
-                onPress={onClose}
-                hitSlop={12}
-                style={styles.close}
-                accessibilityRole="button"
-                accessibilityLabel="Zamknij odjazdy"
+          {state.departures.map((departure, index) => {
+            const minutes = Math.round((departure.inSeconds ?? 0) / 60);
+            return (
+              <View
+                key={`${departure.tripId}-${departure.departure}-${index}`}
+                style={[styles.row, index === 0 && styles.rowFirst]}
               >
-                <X size={18} color={color.textOnDarkMuted} strokeWidth={2.5} />
-              </PressableScale>
-            </View>
-          </View>
-        </PanGestureHandler>
-
-        {state.status === "loading" && (
-          <View style={styles.centre}>
-            <ActivityIndicator color={color.amber} />
-          </View>
-        )}
-
-        {state.status === "error" && (
-          <View style={styles.centre}>
-            <Text style={styles.message}>Nie udało się pobrać odjazdów.</Text>
-            <PressableScale onPress={() => load(undefined, false)} style={styles.retry}>
-              <Text style={styles.retryText}>Spróbuj ponownie</Text>
-            </PressableScale>
-          </View>
-        )}
-
-        {state.status === "ready" && state.departures.length === 0 && (
-          <View style={styles.centre}>
-            <Text style={styles.message}>Brak odjazdów w ciągu najbliższych dwóch godzin.</Text>
-          </View>
-        )}
-
-        {state.status === "ready" && state.departures.length > 0 && (
-          <ScrollView
-            style={styles.list}
-            contentContainerStyle={{ paddingBottom: space.sm }}
-            showsVerticalScrollIndicator={false}
-          >
-            {state.departures.map((departure, index) => {
-              const minutes = Math.round((departure.inSeconds ?? 0) / 60);
-              return (
-                <View
-                  key={`${departure.tripId}-${departure.departure}-${index}`}
-                  style={[styles.row, index === 0 && styles.rowFirst]}
-                >
-                  <LineBadge line={departure.line} type={departure.type} size="sm" />
-                  <View style={styles.rowText}>
-                    <Text style={styles.headsign} numberOfLines={1}>
-                      {departure.headsign || "—"}
-                    </Text>
-                    {departure.departure ? (
-                      <Text style={styles.scheduled}>{departure.departure.slice(0, 5)}</Text>
-                    ) : null}
-                  </View>
-                  <Text style={styles.minutes} allowFontScaling={false}>
-                    {minutes <= 0 ? "teraz" : minutes}
+                <LineBadge line={departure.line} type={departure.type} size="sm" />
+                <View style={styles.rowText}>
+                  <Text style={styles.headsign} numberOfLines={1}>
+                    {departure.headsign || "—"}
                   </Text>
-                  {minutes > 0 && <Text style={styles.unit}>min</Text>}
+                  {departure.departure ? (
+                    <Text style={styles.scheduled}>{departure.departure.slice(0, 5)}</Text>
+                  ) : null}
                 </View>
-              );
-            })}
-          </ScrollView>
-        )}
-      </Animated.View>
-    </View>
+                <Text style={styles.minutes} allowFontScaling={false}>
+                  {minutes <= 0 ? "teraz" : minutes}
+                </Text>
+                {minutes > 0 && <Text style={styles.unit}>min</Text>}
+              </View>
+            );
+          })}
+        </ScrollView>
+      )}
+    </BottomSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  wrapper: {
-    position: "absolute",
-    left: space.md,
-    right: space.md,
-    alignItems: "center",
-  },
-  sheet: {
-    width: "100%",
-    maxWidth: layout.maxContentWidth,
-    maxHeight: 360,
-    backgroundColor: color.ink,
-    borderRadius: radius.sheet - space.sm,
-    paddingBottom: space.sm,
-    overflow: "hidden",
-    borderWidth: hairline,
-    borderColor: color.hairlineOnDark,
-    ...shadow.float,
-  },
-  grabber: {
-    width: 36,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: "rgba(255, 255, 255, 0.22)",
-    alignSelf: "center",
-    marginTop: space.sm,
-  },
   header: {
     flexDirection: "row",
     alignItems: "flex-start",

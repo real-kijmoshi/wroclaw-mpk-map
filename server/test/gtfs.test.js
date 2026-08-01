@@ -54,6 +54,49 @@ describe('GtfsStore', () => {
     assert.equal(westbound.shapeId, 's4a');
   });
 
+  it('uses the reported heading to choose between the two directions', () => {
+    // Just off Oporów, the terminus s4a ends at and s4b starts from. Distance
+    // puts both within a few dozen metres, so proximity alone decides the
+    // direction on GPS noise — and half the time announces the wrong terminus.
+    const position = [51.081, 16.983];
+
+    assert.equal(store.getBestVariant('4', ...position, { heading: 231 }).shapeId, 's4a');
+    assert.equal(store.getBestVariant('4', ...position, { heading: 78 }).shapeId, 's4b');
+  });
+
+  it('reports where on the shape a position falls', () => {
+    const { variant, projection } = store.matchVariant('4', 51.105, 17.033);
+    assert.equal(variant.shapeId, 's4a');
+    assert.ok(projection.distance < 5, `expected to be on the line, got ${projection.distance} m`);
+    // Świdnicka is the second stop, roughly 550 m into the route.
+    assert.ok(projection.along > 500 && projection.along < 620, `got ${projection.along} m`);
+  });
+
+  it('measures each stop along the shape and against the start of the run', () => {
+    const [variant] = store.getVariants('4');
+    const along = variant.stops.map((stop) => stop.alongMeters);
+    assert.deepEqual([...along].sort((a, b) => a - b), along, 'stops advance along the shape');
+    assert.equal(along[0], 0);
+    assert.ok(Math.abs(along[2] - variant.lengthMeters) < 1, 'the last stop is the end of the shape');
+
+    // 08:00, 08:05, 08:15 — offsets from the moment the run leaves Rynek, so
+    // they hold for every departure of the shape and not just this one.
+    assert.deepEqual(
+      variant.stops.map((stop) => stop.arrivalOffset),
+      [0, 300, 900],
+    );
+  });
+
+  it('indexes every trip running a shape, in departure order', () => {
+    const [variant] = store.getVariants('4');
+    assert.deepEqual(
+      [...variant.trips].map((index) => store.trips[index].id),
+      ['t4a', 't4a2'],
+    );
+    assert.equal(store.tripStart[variant.trips[0]], 8 * 3600, 't4a leaves at 08:00');
+    assert.equal(store.tripEnd[variant.trips[0]], 8 * 3600 + 900, 'and arrives at 08:15');
+  });
+
   it('falls back to the busiest variant without a position', () => {
     assert.equal(store.getBestVariant('4', null, null).shapeId, 's4a');
     assert.equal(store.getBestVariant('4', Number.NaN, Number.NaN).shapeId, 's4a');

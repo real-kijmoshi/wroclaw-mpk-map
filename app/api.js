@@ -147,18 +147,48 @@ export function toStops(stops) {
     );
 }
 
+/**
+ * What a vehicle is doing, or null when the payload is not what we expect.
+ *
+ * The server answers with the direction and, when it can place the vehicle on
+ * its route, the stops still ahead of it. Both halves are optional — a vehicle
+ * on a diversion has a destination and no stop list — so a component reading
+ * this has to cope with either being missing, and the arrays are normalised
+ * here so it never has to check that they are arrays.
+ */
+export function normaliseTrip(payload) {
+  const trip = payload?.trip;
+  if (!trip || typeof trip !== "object" || Array.isArray(trip)) return null;
+
+  const stops = (list) =>
+    (Array.isArray(list) ? list : []).filter((stop) => stop?.id != null && stop.name);
+
+  return {
+    ...trip,
+    nextStops: stops(trip.nextStops),
+    previousStops: stops(trip.previousStops),
+  };
+}
+
 export const fetchLines = (options) => apiGet("/lines", options);
 
 export const fetchVehicles = (options) => apiGet("/locations", options);
 
 export const fetchAlerts = (options) => apiGet("/alerts", options);
 
-export const fetchShape = (line, { lat, lon, ...options } = {}) => {
+export const fetchVehicle = (id, options) =>
+  apiGet(`/vehicle/${encodeURIComponent(id)}`, options);
+
+export const fetchShape = (line, { lat, lon, heading, ...options } = {}) => {
   const params = new URLSearchParams({ format: "compact" });
   if (Number.isFinite(lat) && Number.isFinite(lon)) {
     params.set("lat", String(lat));
     params.set("lon", String(lon));
   }
+  // Both directions of a line run down the same street, so the position alone
+  // resolves to whichever variant is a few metres nearer. The heading is what
+  // decides which way this vehicle is actually going.
+  if (Number.isFinite(heading)) params.set("heading", String(Math.round(heading)));
   return apiGet(`/shapes/${encodeURIComponent(line)}?${params}`, options);
 };
 

@@ -6,6 +6,7 @@ const path = require('node:path');
 const config = require('./config');
 const { LruCache } = require('./cache');
 const { CATEGORIES } = require('./lines');
+const { describeVehicle } = require('./progress');
 
 const shapeCache = new LruCache(config.cache.shapeEntries);
 
@@ -86,6 +87,12 @@ const parseCoordinate = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+/** A compass bearing from the query string, or null when it is absent or junk. */
+const parseHeading = (value) => {
+  const parsed = parseCoordinate(value);
+  return parsed === null ? null : ((parsed % 360) + 360) % 360;
+};
+
 /**
  * @param {{ gtfs: import('./gtfs/store').GtfsStore, vehicles: any, alerts: any, startedAt: Date }} services
  */
@@ -111,8 +118,9 @@ const createRouter = ({ gtfs, vehicles, alerts, startedAt }) => {
       endpoints: [
         { method: 'GET', path: '/lines', description: 'All lines grouped by category' },
         { method: 'GET', path: '/lines/:category', description: `One category (${CATEGORIES.join(', ')})` },
-        { method: 'GET', path: '/locations', description: 'Live vehicle positions' },
-        { method: 'GET', path: '/shapes/:line', description: 'Route shape; ?lat=&lon= picks the closest variant, ?format=compact for the smaller payload' },
+        { method: 'GET', path: '/locations', description: 'Live vehicle positions, with destination and next stop' },
+        { method: 'GET', path: '/vehicle/:id', description: 'One vehicle with its remaining stops and estimated times' },
+        { method: 'GET', path: '/shapes/:line', description: 'Route shape; ?lat=&lon=&heading= picks the variant being run, ?format=compact for the smaller payload' },
         { method: 'GET', path: '/shapes/:line/variants', description: 'Every variant of a route' },
         { method: 'GET', path: '/stops', description: 'Search stops with ?q=' },
         { method: 'GET', path: '/stops/near', description: 'Stops near ?lat=&lon=; ?radius= (m) and ?limit=' },
@@ -154,6 +162,28 @@ const createRouter = ({ gtfs, vehicles, alerts, startedAt }) => {
     return res.json({ ...snapshot, locations, count: locations.length });
   });
 
+  /**
+   * One vehicle, with the whole stop list of the run it is on.
+   *
+   * /locations carries only the next stop for every vehicle — the full board
+   * for a few hundred of them would be several times the payload for something
+   * a rider looks at one vehicle at a time.
+   */
+  router.get('/vehicle/:id', requireGtfs, noStore, (req, res) => {
+    const vehicle = vehicles.snapshot.locations.find((entry) => entry.id === req.params.id);
+    if (!vehicle) {
+      return res.status(404).json({ error: 'Vehicle not tracked', id: req.params.id });
+    }
+
+    const limit = Math.min(Number.parseInt(req.query.limit, 10) || 40, 200);
+    const history = Math.min(Number.parseInt(req.query.history, 10) || 2, 20);
+
+    return res.json({
+      vehicle,
+      trip: describeVehicle(gtfs, vehicle, { limit, history }),
+    });
+  });
+
   router.get('/shapes/:line/variants', requireGtfs, cacheFor(3600), (req, res) => {
     const { line } = req.params;
     const variants = gtfs.getVariants(line);
@@ -170,19 +200,23 @@ const createRouter = ({ gtfs, vehicles, alerts, startedAt }) => {
     const { line } = req.params;
     const lat = parseCoordinate(req.query.lat);
     const lon = parseCoordinate(req.query.lon);
+    const heading = parseHeading(req.query.heading);
     const compact = req.query.format === 'compact';
 
     if (!gtfs.hasLine(line)) return res.status(404).json({ error: 'Line not found', line });
 
     // Rounding the position keeps the cache useful: vehicles a few metres apart
-    // resolve to the same variant anyway.
+    // resolve to the same variant anyway. The heading is bucketed to 45° for
+    // the same reason — it is only ever used to rule out the opposite
+    // direction, and a per-degree key would never hit.
     const positionKey = lat !== null && lon !== null ? `${lat.toFixed(3)},${lon.toFixed(3)}` : 'default';
-    const cacheKey = `${line}|${positionKey}|${compact ? 'compact' : 'legacy'}`;
+    const headingKey = heading === null ? 'any' : String(Math.round(heading / 45) % 8);
+    const cacheKey = `${line}|${positionKey}|${headingKey}|${compact ? 'compact' : 'legacy'}`;
 
     const cached = shapeCache.get(cacheKey);
     if (cached) return res.json(cached);
 
-    const variant = gtfs.getBestVariant(line, lat, lon);
+    const variant = gtfs.getBestVariant(line, lat, lon, { heading });
     if (!variant) return res.status(404).json({ error: 'No shape available for this line', line });
 
     const payload = compact ? toCompact(variant) : toLegacy(variant);

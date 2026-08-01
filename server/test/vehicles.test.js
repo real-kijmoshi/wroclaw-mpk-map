@@ -5,7 +5,9 @@ const http = require('node:http');
 const { after, before, describe, it } = require('node:test');
 
 const config = require('../src/config');
+const { GtfsStore } = require('../src/gtfs/store');
 const { VehicleTracker, bearing, normalizeVehicle } = require('../src/vehicles');
+const { buildFixtureZip } = require('./fixtures/gtfs');
 
 describe('normalizeVehicle', () => {
   it('maps the MPK payload, where x is latitude', () => {
@@ -148,5 +150,33 @@ describe('VehicleTracker against a stand-in endpoint', () => {
 
     await tracker.poll();
     assert.equal(tracker.snapshot.locations[0].heading, 0, 'moved north');
+  });
+
+  it('attaches the destination and next stop when a timetable is loaded', async () => {
+    const gtfs = new GtfsStore();
+    await gtfs.build(buildFixtureZip());
+    gtfs.status.state = 'ready';
+
+    // Between Świdnicka and Oporów on the outbound leg of tram 4.
+    const server = await startEndpoint(() => [{ name: '4', type: 'tram', x: 51.1, y: 17.0215, k: 9 }]);
+    servers.push(server);
+    config.vehicles.sources = [`http://127.0.0.1:${server.address().port}/bus_position`];
+
+    const tracker = new VehicleTracker(() => lines, { gtfs });
+    await tracker.poll();
+
+    const [vehicle] = tracker.snapshot.locations;
+    assert.equal(vehicle.trip.towards, 'Oporów');
+    assert.equal(vehicle.trip.nextStop.name, 'Oporów');
+    assert.equal(vehicle.trip.previousStop.name, 'Świdnicka');
+    assert.equal(tracker.status.described, 1);
+  });
+
+  it('serves positions with no trip information when there is no timetable', async () => {
+    const tracker = await trackerFor(() => [{ name: '4', type: 'tram', x: 51.1, y: 17.0215, k: 9 }]);
+    await tracker.poll();
+
+    assert.equal(tracker.snapshot.locations[0].trip, null);
+    assert.equal(tracker.status.described, 0);
   });
 });

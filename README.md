@@ -66,8 +66,9 @@ Base URL: your deployment, or `http://localhost:3000`.
 | --- | --- |
 | `GET /lines` | All lines grouped by category (`tram`, `busNight`, `busExpress`, …) |
 | `GET /lines/:category` | One category |
-| `GET /locations` | Live vehicle positions. `?line=4,17` and `?type=tram` filter |
-| `GET /shapes/:line` | Route shape and stops. `?lat=&lon=` picks the variant nearest a vehicle, `?format=compact` halves the payload |
+| `GET /locations` | Live vehicle positions, each with where it is headed, its next stop and how late it is. `?line=4,17` and `?type=tram` filter |
+| `GET /vehicle/:id` | One vehicle with the stops still ahead of it, their timetabled times and estimated arrivals. `?limit=` `?history=` |
+| `GET /shapes/:line` | Route shape and stops. `?lat=&lon=` picks the variant nearest a vehicle and `?heading=` the direction it is running, `?format=compact` halves the payload |
 | `GET /shapes/:line/variants` | Every variant of a route |
 | `GET /stops?q=rynek` | Stop search, diacritic-insensitive |
 | `GET /stops/near?lat=&lon=` | Stops near a point, nearest first. `?radius=` (m) `?limit=` |
@@ -87,7 +88,7 @@ people's phones keep working; `?format=compact` is what the current app requests
 app/                 Expo app (SDK 57, React Native 0.86)
   api.js             API client — retries the server's 503 cold start, validates payloads
   theme.js           Design tokens; amber is reserved for departure countdowns
-  components/        Map, departures sheet, line badge, status pill, bottom sheet
+  components/        Map, departures and vehicle sheets, line badge, status pill
   modals/            Line picker, alerts, settings
 server/
   index.js           Entry point: starts HTTP first, loads data in the background
@@ -95,6 +96,7 @@ server/
   src/gtfs/          Discover, download, parse, index and query the GTFS feed
   src/gtfs/catalogue.js  Which snapshot to use, and why
   src/vehicles.js    Live position polling and normalisation
+  src/progress.js    Positions onto the timetable: direction, next stops, delay
   src/alerts.js      Notice pages: RSS if they offer it, scraped otherwise
   src/routes.js      HTTP endpoints
   scripts/doctor.js  Upstream connectivity check

@@ -130,4 +130,130 @@ const distanceToPolyline = (lat, lon, points) => {
   return best;
 };
 
-module.exports = { boundsOf, distanceMeters, distanceToPolyline, simplify };
+/** Compass bearing in degrees from one position to another. */
+const bearingDegrees = (fromLat, fromLon, toLat, toLon) => {
+  const dLon = toRadians(toLon - fromLon);
+  const y = Math.sin(dLon) * Math.cos(toRadians(toLat));
+  const x =
+    Math.cos(toRadians(fromLat)) * Math.sin(toRadians(toLat)) -
+    Math.sin(toRadians(fromLat)) * Math.cos(toRadians(toLat)) * Math.cos(dLon);
+  return (((Math.atan2(y, x) * 180) / Math.PI) + 360) % 360;
+};
+
+/** Smallest angle between two compass bearings, 0–180. */
+const angleBetween = (a, b) => Math.abs((((a - b) % 360) + 540) % 360 - 180);
+
+const METERS_PER_DEGREE_LAT = 111_320;
+
+/**
+ * Distance along the polyline at every vertex, in metres.
+ *
+ * Computed once per route variant so a vehicle's position can be turned into
+ * "x metres into the route", which is what the stop and time interpolation
+ * downstream is expressed in.
+ *
+ * @param {Float64Array} points interleaved [lat, lon, ...]
+ * @returns {Float64Array} one entry per vertex
+ */
+const cumulativeDistances = (points) => {
+  const count = points.length / 2;
+  const cumulative = new Float64Array(count);
+  for (let i = 1; i < count; i += 1) {
+    cumulative[i] =
+      cumulative[i - 1] +
+      distanceMeters(points[(i - 1) * 2], points[(i - 1) * 2 + 1], points[i * 2], points[i * 2 + 1]);
+  }
+  return cumulative;
+};
+
+/**
+ * Nearest point on a polyline to a position.
+ *
+ * Projects onto every *segment*, not just the vertices: shapes are simplified
+ * to 4 m before they are stored, so a vehicle sitting halfway down a 300 m
+ * straight is nowhere near either end of it, and a vertex-only search reports
+ * it as 150 m off route.
+ *
+ * Distances are computed in a local metre plane (longitude scaled by the
+ * cosine of the latitude), which is accurate to well under a metre across a
+ * city and far cheaper than a geodesic per segment.
+ *
+ * @param {number} lat
+ * @param {number} lon
+ * @param {Float64Array} points interleaved [lat, lon, ...]
+ * @param {{ cumulative?: Float64Array, fromIndex?: number }} options
+ *   `fromIndex` restricts the search to segments at or after that index, which
+ *   is how stops are matched in order along a route that doubles back on itself.
+ * @returns {{ distance: number, along: number, index: number, t: number,
+ *   lat: number, lon: number, bearing: number|null } | null}
+ */
+const projectToPolyline = (lat, lon, points, { cumulative = null, fromIndex = 0 } = {}) => {
+  const count = points.length / 2;
+  if (!count || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+
+  if (count === 1) {
+    return {
+      distance: distanceMeters(lat, lon, points[0], points[1]),
+      along: 0,
+      index: 0,
+      t: 0,
+      lat: points[0],
+      lon: points[1],
+      bearing: null,
+    };
+  }
+
+  const lonScale = Math.cos(toRadians(lat)) * METERS_PER_DEGREE_LAT;
+  const px = lon * lonScale;
+  const py = lat * METERS_PER_DEGREE_LAT;
+
+  let best = null;
+  for (let i = Math.max(0, Math.min(fromIndex, count - 2)); i < count - 1; i += 1) {
+    const ax = points[i * 2 + 1] * lonScale;
+    const ay = points[i * 2] * METERS_PER_DEGREE_LAT;
+    const bx = points[i * 2 + 3] * lonScale;
+    const by = points[i * 2 + 2] * METERS_PER_DEGREE_LAT;
+
+    const dx = bx - ax;
+    const dy = by - ay;
+    const lengthSq = dx * dx + dy * dy;
+
+    let t = lengthSq === 0 ? 0 : ((px - ax) * dx + (py - ay) * dy) / lengthSq;
+    t = Math.max(0, Math.min(1, t));
+
+    const distance = Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+    if (best && distance >= best.distance) continue;
+    best = { distance, index: i, t };
+  }
+
+  const { index, t } = best;
+  const aLat = points[index * 2];
+  const aLon = points[index * 2 + 1];
+  const bLat = points[index * 2 + 2];
+  const bLon = points[index * 2 + 3];
+
+  const segmentLength = cumulative
+    ? cumulative[index + 1] - cumulative[index]
+    : distanceMeters(aLat, aLon, bLat, bLon);
+
+  return {
+    distance: best.distance,
+    along: (cumulative ? cumulative[index] : 0) + t * segmentLength,
+    index,
+    t,
+    lat: aLat + (bLat - aLat) * t,
+    lon: aLon + (bLon - aLon) * t,
+    bearing: segmentLength > 0 ? bearingDegrees(aLat, aLon, bLat, bLon) : null,
+  };
+};
+
+module.exports = {
+  angleBetween,
+  bearingDegrees,
+  boundsOf,
+  cumulativeDistances,
+  distanceMeters,
+  distanceToPolyline,
+  projectToPolyline,
+  simplify,
+};
