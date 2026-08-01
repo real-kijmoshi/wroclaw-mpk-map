@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
@@ -14,17 +14,28 @@ import {
 import { Bell, Settings, TramFront } from "lucide-react-native";
 
 import MapView from "./components/MapView";
+import Material from "./components/Material";
+import PressableScale from "./components/PressableScale";
 import StatusPill from "./components/StatusPill";
 import DeparturesSheet from "./components/DeparturesSheet";
 import LinesSelection from "./modals/LinesSelection";
 import SettingsModal from "./modals/SettingsModal";
 import AlertsModal from "./modals/AlertsModal";
 import { fetchAlerts, fetchLines, fetchVehicles, normaliseLines } from "./api";
-import { color, radius, shadow, space, type } from "./theme";
+import { color, layout, radius, shadow, space, type } from "./theme";
 
 const VEHICLE_REFRESH_MS = 10_000;
 const ALERT_REFRESH_MS = 5 * 60_000;
 const STORAGE_KEY = "selectedLines";
+
+/**
+ * The tab bar floats over the map instead of sitting in a bar of its own, so
+ * every other piece of chrome has to be told how much room it takes. These are
+ * the only two numbers; everything else is derived from them and from the safe
+ * area, which is what stops the sheet from ending up under the home indicator.
+ */
+const TAB_BAR_HEIGHT = 58;
+const STATUS_PILL_HEIGHT = 40;
 
 const INITIAL_REGION = {
   latitude: 51.107885,
@@ -36,6 +47,24 @@ const INITIAL_REGION = {
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function App() {
+  return (
+    <GestureHandlerRootView style={styles.root}>
+      <SafeAreaProvider>
+        <StatusBar style="dark" />
+        <Shell />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
+  );
+}
+
+/**
+ * Everything lives inside the providers so it can read the safe-area insets.
+ * On the web those come from the `env(safe-area-inset-*)` values that
+ * `viewport-fit=cover` in public/index.html unlocks.
+ */
+function Shell() {
+  const insets = useSafeAreaInsets();
+
   const [fontsLoaded] = useFonts({
     BarlowSemiCondensed_600SemiBold,
     BarlowSemiCondensed_700Bold,
@@ -192,125 +221,150 @@ export default function App() {
 
   if (!fontsLoaded) return null;
 
+  // How much of the bottom of the screen the floating tab bar occupies, home
+  // indicator included. Anything that must clear it measures from here.
+  const tabBarSpace = TAB_BAR_HEIGHT + space.sm + Math.max(insets.bottom, space.md);
+  const topSpace = insets.top + space.sm;
+
   return (
-    <GestureHandlerRootView style={styles.root}>
-      <SafeAreaProvider>
-        <StatusBar style="dark" />
-        <View style={styles.container}>
-          <MapView
-            style={styles.map}
-            initialRegion={INITIAL_REGION}
-            vehicles={visibleVehicles}
-            showsUserLocation={followUser}
-            onSelectStop={setSelectedStop}
-            selectedStopId={selectedStop?.id}
-          />
+    <View style={styles.container}>
+      <MapView
+        style={styles.map}
+        initialRegion={INITIAL_REGION}
+        vehicles={visibleVehicles}
+        showsUserLocation={followUser}
+        onSelectStop={setSelectedStop}
+        selectedStopId={selectedStop?.id}
+        topOffset={topSpace + STATUS_PILL_HEIGHT + space.sm}
+        bottomOffset={tabBarSpace + space.sm}
+      />
 
-          <SafeAreaView style={styles.top} pointerEvents="box-none" edges={["top"]}>
-            <StatusPill
-              lastUpdated={lastUpdated}
-              vehicleCount={visibleVehicles.length}
-              lineCount={selectedLines.length}
-              onPress={() => setLinesSelectionVisible(true)}
-              style={styles.statusPill}
-            />
-          </SafeAreaView>
+      <View style={[styles.top, { paddingTop: topSpace }]} pointerEvents="box-none">
+        <StatusPill
+          lastUpdated={lastUpdated}
+          vehicleCount={visibleVehicles.length}
+          lineCount={selectedLines.length}
+          onPress={() => setLinesSelectionVisible(true)}
+        />
+      </View>
 
-          {lines === null && !linesError && (
-            <View style={styles.centreCard} pointerEvents="none">
-              <ActivityIndicator color={color.rail} />
-              <Text style={styles.centreText}>Wczytywanie rozkładów…</Text>
-            </View>
-          )}
-
-          {linesError && (
-            <Pressable style={styles.errorCard} onPress={loadLines}>
-              <Text style={styles.errorText}>{linesError}</Text>
-              <Text style={styles.errorHint}>Dotknij, aby spróbować ponownie</Text>
-            </Pressable>
-          )}
-
-          {preferencesLoaded && lines !== null && selectedLines.length === 0 && (
-            <Pressable
-              style={styles.emptyCard}
-              onPress={() => setLinesSelectionVisible(true)}
-              accessibilityRole="button"
-            >
-              <TramFront size={20} color={color.paper} />
-              <Text style={styles.emptyText}>Wybierz linie, które chcesz śledzić</Text>
-            </Pressable>
-          )}
-
-          <DeparturesSheet stop={selectedStop} onClose={() => setSelectedStop(null)} />
-
-          <LinesSelection
-            lines={lines ?? {}}
-            selectedLines={selectedLines}
-            setSelectedLines={setSelectedLines}
-            visible={linesSelectionVisible}
-            onClose={() => setLinesSelectionVisible(false)}
-          />
-
-          <SettingsModal
-            visible={settingsVisible}
-            onClose={() => setSettingsVisible(false)}
-            selectedCount={selectedLines.length}
-            onClearLines={() => setSelectedLines([])}
-          />
-
-          <AlertsModal
-            visible={alertsVisible}
-            onClose={() => setAlertsVisible(false)}
-            alerts={rankedAlerts}
-            followedLines={selectedSet}
-            loading={alertsLoading}
-            error={alertsError}
-          />
-
-          <SafeAreaView style={styles.bottom} pointerEvents="box-none" edges={["bottom"]}>
-            <View style={styles.tabBar}>
-              <TabButton
-                label="Linie"
-                onPress={() => setLinesSelectionVisible(true)}
-                icon={<TramFront size={22} color={color.text} />}
-              />
-              <TabButton
-                label="Komunikaty"
-                onPress={openAlerts}
-                badge={unreadAlerts}
-                icon={<Bell size={22} color={color.text} />}
-              />
-              <TabButton
-                label="Ustawienia"
-                onPress={() => setSettingsVisible(true)}
-                icon={<Settings size={22} color={color.text} />}
-              />
-            </View>
-          </SafeAreaView>
+      {lines === null && !linesError && (
+        <View style={styles.centre} pointerEvents="none">
+          <Material style={styles.centreCard}>
+            <ActivityIndicator color={color.rail} />
+            <Text style={styles.centreText}>Wczytywanie rozkładów…</Text>
+          </Material>
         </View>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+      )}
+
+      {linesError && (
+        <View style={styles.centre} pointerEvents="box-none">
+          <PressableScale style={styles.errorCard} onPress={loadLines} feedback="light">
+            <Text style={styles.errorText}>{linesError}</Text>
+            <Text style={styles.errorHint}>Dotknij, aby spróbować ponownie</Text>
+          </PressableScale>
+        </View>
+      )}
+
+      {preferencesLoaded && lines !== null && selectedLines.length === 0 && !selectedStop && (
+        <View style={[styles.callToAction, { bottom: tabBarSpace }]} pointerEvents="box-none">
+          <PressableScale
+            style={styles.emptyCard}
+            onPress={() => setLinesSelectionVisible(true)}
+            accessibilityRole="button"
+          >
+            <TramFront size={20} color={color.paper} />
+            <Text style={styles.emptyText}>Wybierz linie, które chcesz śledzić</Text>
+          </PressableScale>
+        </View>
+      )}
+
+      <DeparturesSheet
+        stop={selectedStop}
+        onClose={() => setSelectedStop(null)}
+        bottomOffset={tabBarSpace}
+      />
+
+      <LinesSelection
+        lines={lines ?? {}}
+        selectedLines={selectedLines}
+        setSelectedLines={setSelectedLines}
+        visible={linesSelectionVisible}
+        onClose={() => setLinesSelectionVisible(false)}
+      />
+
+      <SettingsModal
+        visible={settingsVisible}
+        onClose={() => setSettingsVisible(false)}
+        selectedCount={selectedLines.length}
+        onClearLines={() => setSelectedLines([])}
+      />
+
+      <AlertsModal
+        visible={alertsVisible}
+        onClose={() => setAlertsVisible(false)}
+        alerts={rankedAlerts}
+        followedLines={selectedSet}
+        loading={alertsLoading}
+        error={alertsError}
+      />
+
+      <View
+        style={[styles.bottom, { paddingBottom: Math.max(insets.bottom, space.md) }]}
+        pointerEvents="box-none"
+      >
+        <Material style={styles.tabBar}>
+          <TabButton
+            label="Linie"
+            active={linesSelectionVisible}
+            onPress={() => setLinesSelectionVisible(true)}
+            icon={TramFront}
+          />
+          <TabButton
+            label="Komunikaty"
+            active={alertsVisible}
+            onPress={openAlerts}
+            badge={unreadAlerts}
+            icon={Bell}
+          />
+          <TabButton
+            label="Ustawienia"
+            active={settingsVisible}
+            onPress={() => setSettingsVisible(true)}
+            icon={Settings}
+          />
+        </Material>
+      </View>
+    </View>
   );
 }
 
-function TabButton({ label, icon, onPress, badge = 0 }) {
+function TabButton({ label, icon: Icon, onPress, badge = 0, active = false }) {
+  const tint = active ? color.rail : color.text;
+
   return (
-    <Pressable
+    <PressableScale
       onPress={onPress}
-      style={styles.tab}
+      scale={0.92}
+      style={[styles.tab, active && styles.tabActive]}
       accessibilityRole="button"
+      accessibilityState={{ selected: active }}
       accessibilityLabel={badge ? `${label}, ${badge} nowych` : label}
     >
       <View>
-        {icon}
+        <Icon size={22} color={tint} strokeWidth={active ? 2.4 : 2} />
         {badge > 0 && (
           <View style={styles.badge}>
-            <Text style={styles.badgeText}>{badge > 9 ? "9+" : badge}</Text>
+            <Text style={styles.badgeText} allowFontScaling={false}>
+              {badge > 9 ? "9+" : badge}
+            </Text>
           </View>
         )}
       </View>
-      <Text style={styles.tabLabel}>{label}</Text>
-    </Pressable>
+      <Text style={[styles.tabLabel, { color: tint }]} numberOfLines={1}>
+        {label}
+      </Text>
+    </PressableScale>
   );
 }
 
@@ -318,41 +372,52 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   container: { flex: 1, backgroundColor: color.paperMuted },
   map: { ...StyleSheet.absoluteFillObject },
-  top: { position: "absolute", top: 0, left: 0, right: 0 },
-  statusPill: { top: space.sm },
-  centreCard: {
+  top: { position: "absolute", top: 0, left: 0, right: 0, alignItems: "center" },
+
+  // Overlays are centred and capped: full-width cards look right on a phone and
+  // absurd on a desktop browser window.
+  centre: {
     position: "absolute",
-    alignSelf: "center",
-    top: "45%",
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
     alignItems: "center",
-    gap: space.sm,
-    backgroundColor: color.paper,
+    justifyContent: "center",
+    paddingHorizontal: space.xl,
+  },
+  centreCard: {
+    alignItems: "center",
+    gap: space.md,
     paddingHorizontal: space.xl,
     paddingVertical: space.lg,
-    borderRadius: radius.md,
+    borderRadius: radius.card,
     ...shadow.chip,
   },
-  centreText: { ...type.small, color: color.textMuted },
+  centreText: { ...type.footnote, color: color.textMuted },
   errorCard: {
-    position: "absolute",
-    top: "45%",
-    left: space.xl,
-    right: space.xl,
+    width: "100%",
+    maxWidth: layout.maxContentWidth,
     alignItems: "center",
     gap: space.xs,
     backgroundColor: color.paper,
     paddingHorizontal: space.lg,
     paddingVertical: space.lg,
-    borderRadius: radius.md,
-    ...shadow.chip,
+    borderRadius: radius.card,
+    ...shadow.card,
   },
-  errorText: { ...type.body, color: color.disruption, textAlign: "center" },
-  errorHint: { ...type.small, color: color.textMuted },
-  emptyCard: {
+  errorText: { ...type.callout, color: color.disruption, textAlign: "center" },
+  errorHint: { ...type.footnote, color: color.textMuted },
+
+  callToAction: {
     position: "absolute",
-    bottom: 108,
     left: space.md,
     right: space.md,
+    alignItems: "center",
+  },
+  emptyCard: {
+    width: "100%",
+    maxWidth: layout.maxContentWidth,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -360,33 +425,56 @@ const styles = StyleSheet.create({
     backgroundColor: color.rail,
     paddingHorizontal: space.lg,
     paddingVertical: space.md,
-    borderRadius: radius.md,
-    ...shadow.chip,
+    borderRadius: radius.card,
+    ...shadow.float,
   },
-  emptyText: { ...type.body, color: color.paper },
-  bottom: { position: "absolute", bottom: 0, left: 0, right: 0 },
+  emptyText: { ...type.callout, color: color.paper },
+
+  bottom: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    paddingHorizontal: space.md,
+  },
+  // A capsule that floats over the map, rather than a bar welded to the bottom
+  // edge: the map keeps running underneath it and the blur says so.
   tabBar: {
     flexDirection: "row",
-    justifyContent: "space-around",
-    backgroundColor: color.paper,
-    borderTopWidth: 1,
-    borderTopColor: color.paperLine,
-    paddingTop: space.sm,
-    paddingBottom: space.xs,
+    alignItems: "center",
+    gap: space.xs,
+    height: TAB_BAR_HEIGHT,
+    paddingHorizontal: space.xs,
+    borderRadius: radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255, 255, 255, 0.55)",
+    ...shadow.float,
   },
-  tab: { alignItems: "center", gap: 2, paddingHorizontal: space.lg, paddingVertical: space.xs },
-  tabLabel: { ...type.caption, color: color.textMuted, textTransform: "none" },
+  tab: {
+    minWidth: 84,
+    height: TAB_BAR_HEIGHT - space.sm,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    paddingHorizontal: space.sm,
+    borderRadius: radius.pill,
+  },
+  tabActive: { backgroundColor: "rgba(11, 95, 191, 0.12)" },
+  tabLabel: { ...type.caption, letterSpacing: 0, textTransform: "none" },
   badge: {
     position: "absolute",
-    top: -4,
-    right: -8,
-    minWidth: 16,
-    height: 16,
-    paddingHorizontal: 4,
-    borderRadius: 8,
+    top: -5,
+    right: -10,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 5,
+    borderRadius: 9,
     backgroundColor: color.disruption,
+    borderWidth: 2,
+    borderColor: color.paper,
     alignItems: "center",
     justifyContent: "center",
   },
-  badgeText: { color: "#fff", fontSize: 10, fontWeight: "700" },
+  badgeText: { color: "#fff", fontSize: 10, fontWeight: "700", lineHeight: 12 },
 });

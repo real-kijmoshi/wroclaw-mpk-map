@@ -1,15 +1,9 @@
-import {
-  ActivityIndicator,
-  Linking,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Linking, ScrollView, StyleSheet, Text, View } from "react-native";
+import { CheckCircle2, ChevronRight, TriangleAlert } from "lucide-react-native";
 
 import SwipeableModal from "../components/Modal";
 import LineBadge from "../components/LineBadge";
+import PressableScale from "../components/PressableScale";
 import { color, font, radius, space, type } from "../theme";
 
 const formatAge = (timestamp) => {
@@ -43,15 +37,15 @@ export default function AlertsModal({
   const followed = (alert) => alert.affected?.some((line) => followedLines?.has(line));
 
   return (
-    <SwipeableModal visible={visible} onClose={onClose}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Komunikaty</Text>
-        <Pressable onPress={onClose} style={styles.close} hitSlop={12}>
-          <Text style={styles.closeText}>Zamknij</Text>
-        </Pressable>
-      </View>
-
-      <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
+    <SwipeableModal
+      visible={visible}
+      onClose={onClose}
+      title="Komunikaty"
+      subtitle={alerts.length > 0 ? `${alerts.length} aktualnych` : undefined}
+      actionLabel="Zamknij"
+      background="grouped"
+    >
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {loading && (
           <View style={styles.centre}>
             <ActivityIndicator size="large" color={color.rail} />
@@ -60,12 +54,14 @@ export default function AlertsModal({
 
         {!loading && error && (
           <View style={styles.centre}>
+            <TriangleAlert size={28} color={color.disruption} strokeWidth={2} />
             <Text style={styles.errorText}>{error}</Text>
           </View>
         )}
 
         {!loading && !error && alerts.length === 0 && (
           <View style={styles.centre}>
+            <CheckCircle2 size={30} color={color.live} strokeWidth={2} />
             <Text style={styles.emptyText}>Brak aktualnych utrudnień.</Text>
           </View>
         )}
@@ -73,16 +69,28 @@ export default function AlertsModal({
         {!loading &&
           !error &&
           alerts.map((alert) => (
-            <Pressable
+            <PressableScale
               key={alert.id}
+              scale={0.98}
               style={[styles.card, followed(alert) && styles.cardFollowed]}
               onPress={() => open(alert.url)}
+              disabled={!alert.url}
+              feedback={alert.url ? "selection" : null}
               accessibilityRole={alert.url ? "link" : "text"}
             >
               <View style={styles.cardHeader}>
-                <Text style={styles.source}>{sourceLabel(alert.source)}</Text>
-                <Text style={styles.age}>{formatAge(alert.timestamp)}</Text>
+                <Text style={styles.source} numberOfLines={1}>
+                  {sourceLabel(alert.source)}
+                </Text>
+                <View style={styles.cardHeaderRight}>
+                  <Text style={styles.age}>{formatAge(alert.timestamp)}</Text>
+                  {alert.url ? (
+                    <ChevronRight size={15} color={color.textMuted} strokeWidth={2.5} />
+                  ) : null}
+                </View>
               </View>
+
+              {followed(alert) && <Text style={styles.followedTag}>Dotyczy Twojej linii</Text>}
 
               {alert.title ? <Text style={styles.title}>{alert.title}</Text> : null}
               {alert.content && alert.content !== alert.title ? (
@@ -98,7 +106,7 @@ export default function AlertsModal({
                   ))}
                 </View>
               )}
-            </Pressable>
+            </PressableScale>
           ))}
       </ScrollView>
     </SwipeableModal>
@@ -106,33 +114,37 @@ export default function AlertsModal({
 }
 
 const styles = StyleSheet.create({
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: space.md,
-  },
-  headerTitle: { ...type.title, color: color.text },
-  close: { paddingVertical: space.xs, paddingHorizontal: space.sm },
-  closeText: { ...type.body, color: color.rail, fontWeight: "600" },
-  scroll: { flex: 1 },
-  centre: { alignItems: "center", justifyContent: "center", paddingVertical: 60 },
-  errorText: { ...type.body, color: color.disruption, textAlign: "center" },
-  emptyText: { ...type.body, color: color.textMuted, textAlign: "center" },
+  content: { paddingHorizontal: space.lg, paddingTop: space.lg, paddingBottom: space.xxl },
+  centre: { alignItems: "center", justifyContent: "center", gap: space.md, paddingVertical: 64 },
+  errorText: { ...type.callout, color: color.disruption, textAlign: "center" },
+  emptyText: { ...type.callout, color: color.textMuted, textAlign: "center" },
   card: {
-    backgroundColor: color.paperMuted,
-    borderRadius: radius.md,
+    backgroundColor: color.paper,
+    borderRadius: radius.card,
     padding: space.lg,
-    marginBottom: space.sm,
+    marginBottom: space.md,
     borderLeftWidth: 3,
     borderLeftColor: "transparent",
   },
   // Something touching a line you follow is the reason you opened this.
   cardFollowed: { borderLeftColor: color.disruption },
-  cardHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: space.xs },
-  source: { ...type.caption, color: color.textMuted, textTransform: "none" },
+  cardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: space.sm,
+    marginBottom: space.xs,
+  },
+  cardHeaderRight: { flexDirection: "row", alignItems: "center", gap: space.xs },
+  source: { ...type.caption, color: color.textMuted, textTransform: "none", flexShrink: 1 },
   age: { ...type.caption, color: color.textMuted, fontFamily: font.dataMedium },
-  title: { ...type.body, fontWeight: "700", color: color.text, marginBottom: space.xs },
-  body: { ...type.small, color: color.textMuted, lineHeight: 20 },
+  followedTag: {
+    ...type.caption,
+    color: color.disruption,
+    textTransform: "uppercase",
+    marginBottom: space.xs,
+  },
+  title: { ...type.headline, color: color.text, marginBottom: space.xs },
+  body: { ...type.footnote, color: color.textMuted, lineHeight: 19 },
   badges: { flexDirection: "row", flexWrap: "wrap", gap: space.xs, marginTop: space.md },
 });
