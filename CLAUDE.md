@@ -211,13 +211,17 @@ itself with a title that reads exactly like a disruption ("Zmiany w
 komunikacji"); `parsePage()` drops any notice whose link resolves to the page
 URL itself for that reason.
 
-Wrocław has real lines numbered 1, 6 and 21. A day-of-month next to those
-numbers ("Od **1** sierpnia", "**21**.07.2026", "od **6** lipca") is not a
-reference to those lines, but matching against the known-lines set alone
-cannot tell the difference — the number really is a valid line, just not the
-one in that sentence. `extractAffectedLines()` strips recognized Polish date
-expressions (`POLISH_DATE`) before tokenizing, specifically because this
-produced phantom line badges on notices that were correctly about other lines.
+Wrocław has real lines numbered 1, 6, 11 and 21. A day-of-month next to those
+numbers ("Od **1** sierpnia", "**21**.07.2026", "od **6** lipca", "(**11** - 16
+lipca)") is not a reference to those lines, but matching against the
+known-lines set alone cannot tell the difference — the number really is a
+valid line, just not the one in that sentence. `extractAffectedLines()` strips
+recognized Polish date expressions (`POLISH_DATE`) before tokenizing,
+specifically because this produced phantom line badges on notices that were
+correctly about other lines. The date-range form has to be matched as one unit
+("D1 - D2 miesiąc") ahead of the single-day form in the alternation — observed
+live on a notice reading "(11 - 16 lipca)": the single-day pattern matched only
+"16 lipca" and left the range's opening "11" behind as a phantom line 11.
 
 ## How to work here
 
