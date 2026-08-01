@@ -94,6 +94,24 @@ export const type = {
 
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 };
 
+/**
+ * Heights of the chrome that floating surfaces have to clear.
+ *
+ * The tab bar and the status pill are laid out by hand rather than measured,
+ * and three things float over the map and must not collide with them: the
+ * departures sheet, the "pick some lines" prompt and the route banner. Those
+ * offsets used to be written as literals (`bottom: 92`, `top: 96`) that were
+ * only correct on an iPhone with a home indicator — on a device with no bottom
+ * inset the sheet hovered 34pt above the tab bar with a gap under it. Combine
+ * these with the live inset from `useSafeAreaInsets()`, never on their own.
+ */
+export const layout = {
+  // paddingTop 8 + icon 22 + gap 2 + label ~14 + tab padding 8 + paddingBottom 4
+  tabBar: 58,
+  // paddingVertical 8 twice + a 15pt line
+  statusPill: 36,
+};
+
 export const radius = { sm: 8, md: 12, lg: 18, pill: 999 };
 
 export const shadow = {

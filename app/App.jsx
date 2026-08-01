@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import * as SplashScreen from "expo-splash-screen";
-import {
-  BarlowSemiCondensed_600SemiBold,
-  BarlowSemiCondensed_700Bold,
-  useFonts,
-} from "@expo-google-fonts/barlow-semi-condensed";
+import { useFonts } from "expo-font";
+// Imported as individual files, not from the package root: the barrel re-exports
+// all nine weights in both italic and roman, and a `require` of every one of
+// them puts ~1.9 MB of TTFs the app never renders into the binary.
+import BarlowSemiCondensed_600SemiBold from "@expo-google-fonts/barlow-semi-condensed/600SemiBold/BarlowSemiCondensed_600SemiBold.ttf";
+import BarlowSemiCondensed_700Bold from "@expo-google-fonts/barlow-semi-condensed/700Bold/BarlowSemiCondensed_700Bold.ttf";
 import { Bell, Settings, TramFront } from "lucide-react-native";
 
 import MapView from "./components/MapView";
@@ -20,7 +25,7 @@ import LinesSelection from "./modals/LinesSelection";
 import SettingsModal from "./modals/SettingsModal";
 import AlertsModal from "./modals/AlertsModal";
 import { fetchAlerts, fetchLines, fetchVehicles, normaliseLines } from "./api";
-import { color, radius, shadow, space, type } from "./theme";
+import { color, layout, radius, shadow, space, type } from "./theme";
 
 const VEHICLE_REFRESH_MS = 10_000;
 const ALERT_REFRESH_MS = 5 * 60_000;
@@ -36,10 +41,41 @@ const INITIAL_REGION = {
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function App() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     BarlowSemiCondensed_600SemiBold,
     BarlowSemiCondensed_700Bold,
   });
+
+  // A font that fails to load must not cost you the whole app. This was
+  // `if (!fontsLoaded) return null` with the error discarded, so a rejected
+  // load left a blank screen under a splash that never hid — no map, no
+  // message, nothing to retry. Barlow is only the departure-board face; without
+  // it the numerals fall back to the system font and everything still works.
+  const ready = fontsLoaded || Boolean(fontError);
+
+  useEffect(() => {
+    if (ready) SplashScreen.hideAsync().catch(() => {});
+  }, [ready]);
+
+  return (
+    <GestureHandlerRootView style={styles.root}>
+      <SafeAreaProvider>
+        <StatusBar style="dark" />
+        {ready ? <Screen /> : null}
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
+  );
+}
+
+/**
+ * Everything below the providers.
+ *
+ * Split out so it can read the safe-area insets — `useSafeAreaInsets()` only
+ * answers inside the provider, and the floating surfaces need the real bottom
+ * inset to sit above the tab bar on every device rather than on one of them.
+ */
+function Screen() {
+  const insets = useSafeAreaInsets();
 
   const [lines, setLines] = useState(null);
   const [linesError, setLinesError] = useState(null);
@@ -168,10 +204,6 @@ export default function App() {
       .catch(() => setFollowUser(false));
   }, []);
 
-  useEffect(() => {
-    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
-  }, [fontsLoaded]);
-
   const openAlerts = () => {
     alerts.forEach((alert) => seenAlertsRef.current.add(alert.id));
     setUnreadAlerts(0);
@@ -190,122 +222,126 @@ export default function App() {
     return [...alerts].sort((a, b) => Number(relevant(b)) - Number(relevant(a)));
   }, [alerts, selectedSet]);
 
-  if (!fontsLoaded) return null;
+  // Top of the tab bar. Everything that floats over the map stacks off this.
+  const chromeBottom = layout.tabBar + insets.bottom;
 
   return (
-    <GestureHandlerRootView style={styles.root}>
-      <SafeAreaProvider>
-        <StatusBar style="dark" />
-        <View style={styles.container}>
-          <MapView
-            style={styles.map}
-            initialRegion={INITIAL_REGION}
-            vehicles={visibleVehicles}
-            showsUserLocation={followUser}
-            onSelectStop={setSelectedStop}
-            selectedStopId={selectedStop?.id}
-          />
+    <View style={styles.container}>
+      <MapView
+        style={styles.map}
+        initialRegion={INITIAL_REGION}
+        vehicles={visibleVehicles}
+        showsUserLocation={followUser}
+        onSelectStop={setSelectedStop}
+        selectedStopId={selectedStop?.id}
+      />
 
-          <SafeAreaView style={styles.top} pointerEvents="box-none" edges={["top"]}>
-            <StatusPill
-              lastUpdated={lastUpdated}
-              vehicleCount={visibleVehicles.length}
-              lineCount={selectedLines.length}
-              onPress={() => setLinesSelectionVisible(true)}
-              style={styles.statusPill}
-            />
-          </SafeAreaView>
+      <SafeAreaView style={styles.top} pointerEvents="box-none" edges={["top"]}>
+        <StatusPill
+          lastUpdated={lastUpdated}
+          vehicleCount={visibleVehicles.length}
+          lineCount={selectedLines.length}
+          onPress={() => setLinesSelectionVisible(true)}
+          style={styles.statusPill}
+        />
+      </SafeAreaView>
 
-          {lines === null && !linesError && (
-            <View style={styles.centreCard} pointerEvents="none">
-              <ActivityIndicator color={color.rail} />
-              <Text style={styles.centreText}>Wczytywanie rozkładów…</Text>
-            </View>
-          )}
-
-          {linesError && (
-            <Pressable style={styles.errorCard} onPress={loadLines}>
-              <Text style={styles.errorText}>{linesError}</Text>
-              <Text style={styles.errorHint}>Dotknij, aby spróbować ponownie</Text>
-            </Pressable>
-          )}
-
-          {preferencesLoaded && lines !== null && selectedLines.length === 0 && (
-            <Pressable
-              style={styles.emptyCard}
-              onPress={() => setLinesSelectionVisible(true)}
-              accessibilityRole="button"
-            >
-              <TramFront size={20} color={color.paper} />
-              <Text style={styles.emptyText}>Wybierz linie, które chcesz śledzić</Text>
-            </Pressable>
-          )}
-
-          <DeparturesSheet stop={selectedStop} onClose={() => setSelectedStop(null)} />
-
-          <LinesSelection
-            lines={lines ?? {}}
-            selectedLines={selectedLines}
-            setSelectedLines={setSelectedLines}
-            visible={linesSelectionVisible}
-            onClose={() => setLinesSelectionVisible(false)}
-          />
-
-          <SettingsModal
-            visible={settingsVisible}
-            onClose={() => setSettingsVisible(false)}
-            selectedCount={selectedLines.length}
-            onClearLines={() => setSelectedLines([])}
-          />
-
-          <AlertsModal
-            visible={alertsVisible}
-            onClose={() => setAlertsVisible(false)}
-            alerts={rankedAlerts}
-            followedLines={selectedSet}
-            loading={alertsLoading}
-            error={alertsError}
-          />
-
-          <SafeAreaView style={styles.bottom} pointerEvents="box-none" edges={["bottom"]}>
-            <View style={styles.tabBar}>
-              <TabButton
-                label="Linie"
-                onPress={() => setLinesSelectionVisible(true)}
-                icon={<TramFront size={22} color={color.text} />}
-              />
-              <TabButton
-                label="Komunikaty"
-                onPress={openAlerts}
-                badge={unreadAlerts}
-                icon={<Bell size={22} color={color.text} />}
-              />
-              <TabButton
-                label="Ustawienia"
-                onPress={() => setSettingsVisible(true)}
-                icon={<Settings size={22} color={color.text} />}
-              />
-            </View>
-          </SafeAreaView>
+      {lines === null && !linesError && (
+        <View style={styles.centreCard} pointerEvents="none">
+          <ActivityIndicator color={color.rail} />
+          <Text style={styles.centreText}>Wczytywanie rozkładów…</Text>
         </View>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+      )}
+
+      {linesError && (
+        <Pressable
+          style={({ pressed }) => [styles.errorCard, pressed && styles.cardPressed]}
+          onPress={loadLines}
+          accessibilityRole="button"
+        >
+          <Text style={styles.errorText}>{linesError}</Text>
+          <Text style={styles.errorHint}>Dotknij, aby spróbować ponownie</Text>
+        </Pressable>
+      )}
+
+      {preferencesLoaded && lines !== null && selectedLines.length === 0 && (
+        <Pressable
+          style={({ pressed }) => [
+            styles.emptyCard,
+            { bottom: chromeBottom + space.md },
+            pressed && styles.cardPressed,
+          ]}
+          onPress={() => setLinesSelectionVisible(true)}
+          accessibilityRole="button"
+        >
+          <TramFront size={20} color={color.paper} />
+          <Text style={styles.emptyText}>Wybierz linie, które chcesz śledzić</Text>
+        </Pressable>
+      )}
+
+      <DeparturesSheet stop={selectedStop} onClose={() => setSelectedStop(null)} />
+
+      <LinesSelection
+        lines={lines ?? {}}
+        selectedLines={selectedLines}
+        setSelectedLines={setSelectedLines}
+        visible={linesSelectionVisible}
+        onClose={() => setLinesSelectionVisible(false)}
+      />
+
+      <SettingsModal
+        visible={settingsVisible}
+        onClose={() => setSettingsVisible(false)}
+        selectedCount={selectedLines.length}
+        onClearLines={() => setSelectedLines([])}
+      />
+
+      <AlertsModal
+        visible={alertsVisible}
+        onClose={() => setAlertsVisible(false)}
+        alerts={rankedAlerts}
+        followedLines={selectedSet}
+        loading={alertsLoading}
+        error={alertsError}
+      />
+
+      <SafeAreaView style={styles.bottom} pointerEvents="box-none" edges={["bottom"]}>
+        <View style={styles.tabBar}>
+          <TabButton
+            label="Linie"
+            onPress={() => setLinesSelectionVisible(true)}
+            icon={TramFront}
+          />
+          <TabButton label="Komunikaty" onPress={openAlerts} badge={unreadAlerts} icon={Bell} />
+          <TabButton
+            label="Ustawienia"
+            onPress={() => setSettingsVisible(true)}
+            icon={Settings}
+          />
+        </View>
+      </SafeAreaView>
+    </View>
   );
 }
 
-function TabButton({ label, icon, onPress, badge = 0 }) {
+function TabButton({ label, icon: Icon, onPress, badge = 0 }) {
   return (
     <Pressable
       onPress={onPress}
-      style={styles.tab}
+      // The icon and label both dim on press. They used to have no pressed
+      // state at all, so a tap on a modal that takes a frame to open read as
+      // the button not having registered.
+      style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}
       accessibilityRole="button"
       accessibilityLabel={badge ? `${label}, ${badge} nowych` : label}
     >
       <View>
-        {icon}
+        <Icon size={22} color={color.text} strokeWidth={1.9} />
         {badge > 0 && (
           <View style={styles.badge}>
-            <Text style={styles.badgeText}>{badge > 9 ? "9+" : badge}</Text>
+            <Text style={styles.badgeText} allowFontScaling={false}>
+              {badge > 9 ? "9+" : badge}
+            </Text>
           </View>
         )}
       </View>
@@ -348,9 +384,10 @@ const styles = StyleSheet.create({
   },
   errorText: { ...type.body, color: color.disruption, textAlign: "center" },
   errorHint: { ...type.small, color: color.textMuted },
+  cardPressed: { opacity: 0.8 },
+  // `bottom` is supplied at render time from the safe-area inset.
   emptyCard: {
     position: "absolute",
-    bottom: 108,
     left: space.md,
     right: space.md,
     flexDirection: "row",
@@ -365,16 +402,19 @@ const styles = StyleSheet.create({
   },
   emptyText: { ...type.body, color: color.paper },
   bottom: { position: "absolute", bottom: 0, left: 0, right: 0 },
+  // Keep this in step with `layout.tabBar`, which is what everything floating
+  // over the map uses to work out how much room the bar takes.
   tabBar: {
     flexDirection: "row",
     justifyContent: "space-around",
     backgroundColor: color.paper,
-    borderTopWidth: 1,
+    borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: color.paperLine,
     paddingTop: space.sm,
     paddingBottom: space.xs,
   },
   tab: { alignItems: "center", gap: 2, paddingHorizontal: space.lg, paddingVertical: space.xs },
+  tabPressed: { opacity: 0.55 },
   tabLabel: { ...type.caption, color: color.textMuted, textTransform: "none" },
   badge: {
     position: "absolute",

@@ -15,6 +15,7 @@ import { color, font, radius, space, type } from "../theme";
 const formatAge = (timestamp) => {
   const minutes = Math.floor((Date.now() - timestamp) / 60_000);
   if (!Number.isFinite(minutes)) return "";
+  // A notice dated in the future is a source's clock being wrong, not news.
   if (minutes < 1) return "teraz";
   if (minutes < 60) return `${minutes} min`;
   if (minutes < 1440) return `${Math.floor(minutes / 60)} godz.`;
@@ -45,8 +46,20 @@ export default function AlertsModal({
   return (
     <SwipeableModal visible={visible} onClose={onClose}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Komunikaty</Text>
-        <Pressable onPress={onClose} style={styles.close} hitSlop={12}>
+        <View style={styles.headerText}>
+          <Text style={styles.headerTitle}>Komunikaty</Text>
+          {!loading && !error && alerts.length > 0 && (
+            <Text style={styles.headerSubtitle}>
+              {`${alerts.length} ${plural(alerts.length)}`}
+            </Text>
+          )}
+        </View>
+        <Pressable
+          onPress={onClose}
+          style={({ pressed }) => [styles.close, pressed && styles.pressed]}
+          hitSlop={12}
+          accessibilityRole="button"
+        >
           <Text style={styles.closeText}>Zamknij</Text>
         </Pressable>
       </View>
@@ -75,8 +88,13 @@ export default function AlertsModal({
           alerts.map((alert) => (
             <Pressable
               key={alert.id}
-              style={[styles.card, followed(alert) && styles.cardFollowed]}
+              style={({ pressed }) => [
+                styles.card,
+                followed(alert) && styles.cardFollowed,
+                alert.url && pressed && styles.pressed,
+              ]}
               onPress={() => open(alert.url)}
+              disabled={!alert.url}
               accessibilityRole={alert.url ? "link" : "text"}
             >
               <View style={styles.cardHeader}>
@@ -96,6 +114,9 @@ export default function AlertsModal({
                   {alert.affected.slice(0, 12).map((line) => (
                     <LineBadge key={line} line={line} type={alert.types?.[line]} size="sm" />
                   ))}
+                  {alert.affected.length > 12 && (
+                    <Text style={styles.more}>{`+${alert.affected.length - 12}`}</Text>
+                  )}
                 </View>
               )}
             </Pressable>
@@ -105,6 +126,14 @@ export default function AlertsModal({
   );
 }
 
+/** Polish counts take three forms: 1 komunikat, 2-4 komunikaty, 5+ komunikatów. */
+function plural(count) {
+  if (count === 1) return "komunikat";
+  const last = count % 10;
+  const teen = count % 100 >= 12 && count % 100 <= 14;
+  return !teen && last >= 2 && last <= 4 ? "komunikaty" : "komunikatów";
+}
+
 const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
@@ -112,9 +141,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: space.md,
   },
+  headerText: { flex: 1 },
   headerTitle: { ...type.title, color: color.text },
+  headerSubtitle: { ...type.small, color: color.textMuted, marginTop: 2 },
   close: { paddingVertical: space.xs, paddingHorizontal: space.sm },
   closeText: { ...type.body, color: color.rail, fontWeight: "600" },
+  pressed: { opacity: 0.6 },
   scroll: { flex: 1 },
   centre: { alignItems: "center", justifyContent: "center", paddingVertical: 60 },
   errorText: { ...type.body, color: color.disruption, textAlign: "center" },
@@ -134,5 +166,12 @@ const styles = StyleSheet.create({
   age: { ...type.caption, color: color.textMuted, fontFamily: font.dataMedium },
   title: { ...type.body, fontWeight: "700", color: color.text, marginBottom: space.xs },
   body: { ...type.small, color: color.textMuted, lineHeight: 20 },
-  badges: { flexDirection: "row", flexWrap: "wrap", gap: space.xs, marginTop: space.md },
+  badges: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: space.xs,
+    marginTop: space.md,
+  },
+  more: { ...type.small, fontFamily: font.dataMedium, color: color.textMuted },
 });

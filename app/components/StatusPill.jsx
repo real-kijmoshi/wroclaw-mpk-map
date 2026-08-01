@@ -25,11 +25,12 @@ export default function StatusPill({ lastUpdated, vehicleCount, lineCount, onPre
   let label;
   if (age == null) label = "Łączenie…";
   else if (stale) label = `Brak odświeżenia od ${Math.round(age / 60) || 1} min`;
+  else if (lineCount === 0) label = "Wybierz linie";
   else label = `${vehicleCount} w ruchu · ${lineCount} ${plural(lineCount)}`;
 
   return (
     <Pressable
-      style={[styles.pill, style]}
+      style={({ pressed }) => [styles.pill, style, pressed && styles.pressed]}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={label}
@@ -68,6 +69,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     ...shadow.chip,
   },
+  pressed: { opacity: 0.75 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   label: { ...type.small, fontFamily: font.dataMedium, fontSize: 15, color: color.text },
 });

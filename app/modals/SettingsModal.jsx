@@ -1,5 +1,6 @@
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Constants from "expo-constants";
+import { ExternalLink } from "lucide-react-native";
 
 import SwipeableModal from "../components/Modal";
 import { API_URL } from "../api";
@@ -19,6 +20,21 @@ function Row({ label, value }) {
   );
 }
 
+function LinkButton({ label, url }) {
+  return (
+    <Pressable
+      // `openURL` rejects when nothing can handle the scheme; unhandled, that
+      // was an unhandled promise rejection rather than a no-op.
+      onPress={() => Linking.openURL(url).catch(() => {})}
+      style={({ pressed }) => [styles.button, styles.linkButton, pressed && styles.pressed]}
+      accessibilityRole="link"
+    >
+      <Text style={styles.buttonText}>{label}</Text>
+      <ExternalLink size={16} color={color.textMuted} />
+    </Pressable>
+  );
+}
+
 /**
  * The old settings screen was `#000` text on a `#121212` background — invisible
  * — and had nothing in it besides a sentence saying settings could go here.
@@ -28,7 +44,12 @@ export default function SettingsModal({ visible, onClose, selectedCount = 0, onC
     <SwipeableModal visible={visible} onClose={onClose} modalHeight={540}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Ustawienia</Text>
-        <Pressable onPress={onClose} style={styles.close} hitSlop={12}>
+        <Pressable
+          onPress={onClose}
+          style={({ pressed }) => [styles.close, pressed && styles.pressed]}
+          hitSlop={12}
+          accessibilityRole="button"
+        >
           <Text style={styles.closeText}>Gotowe</Text>
         </Pressable>
       </View>
@@ -37,9 +58,14 @@ export default function SettingsModal({ visible, onClose, selectedCount = 0, onC
         <Text style={styles.section}>Twoje linie</Text>
         <Row label="Zaznaczone linie" value={String(selectedCount)} />
         <Pressable
-          style={[styles.button, selectedCount === 0 && styles.buttonDisabled]}
+          style={({ pressed }) => [
+            styles.button,
+            selectedCount === 0 && styles.buttonDisabled,
+            pressed && styles.pressed,
+          ]}
           onPress={onClearLines}
           disabled={selectedCount === 0}
+          accessibilityRole="button"
         >
           <Text style={styles.buttonText}>Wyczyść wybór linii</Text>
         </Pressable>
@@ -59,12 +85,8 @@ export default function SettingsModal({ visible, onClose, selectedCount = 0, onC
           urządzenia.
         </Text>
 
-        <Pressable style={styles.button} onPress={() => Linking.openURL(DATA_URL)}>
-          <Text style={styles.buttonText}>Otwarte Dane Wrocław</Text>
-        </Pressable>
-        <Pressable style={styles.button} onPress={() => Linking.openURL(REPO_URL)}>
-          <Text style={styles.buttonText}>Kod źródłowy na GitHubie</Text>
-        </Pressable>
+        <LinkButton label="Otwarte Dane Wrocław" url={DATA_URL} />
+        <LinkButton label="Kod źródłowy na GitHubie" url={REPO_URL} />
       </ScrollView>
     </SwipeableModal>
   );
@@ -113,6 +135,8 @@ const styles = StyleSheet.create({
     paddingVertical: space.md,
     alignItems: "center",
   },
+  linkButton: { flexDirection: "row", justifyContent: "center", gap: space.sm },
   buttonDisabled: { opacity: 0.4 },
+  pressed: { opacity: 0.6 },
   buttonText: { ...type.body, color: color.text, fontWeight: "600" },
 });

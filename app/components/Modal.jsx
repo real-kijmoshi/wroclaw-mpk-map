@@ -1,11 +1,10 @@
 import { useEffect, useRef } from "react";
 import {
   Animated,
-  Dimensions,
   Modal,
-  Platform,
   Pressable,
   StyleSheet,
+  useWindowDimensions,
   View,
 } from "react-native";
 import {
@@ -13,25 +12,44 @@ import {
   PanGestureHandler,
   State,
 } from "react-native-gesture-handler";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { color, radius } from "../theme";
+import { color, radius, space } from "../theme";
 
-const { height: SCREEN_HEIGHT } = Dimensions.get("window");
-const DEFAULT_MODAL_HEIGHT = SCREEN_HEIGHT * 0.75;
 const DISMISS_DISTANCE = 100;
 const DISMISS_VELOCITY = 1000;
 
+/**
+ * Note on `PanGestureHandler`: it is deprecated in favour of `Gesture.Pan()`,
+ * but the replacement only runs on the UI thread with react-native-reanimated
+ * installed, which this app does not have. Moving over now would turn a
+ * natively driven drag into a JS-driven one — a downgrade. Migrate together
+ * with reanimated, not before.
+ */
 export default function SwipeableModal({
   visible,
   onClose,
   children,
-  modalHeight = DEFAULT_MODAL_HEIGHT,
+  modalHeight,
   closeOnBackdropPress = true,
 }) {
+  // Read live rather than once at import: the module-scope `Dimensions.get()`
+  // this used to use is captured before the window is laid out, and never
+  // updates.
+  const { height: screenHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+
+  // Never taller than the screen minus the notch, whatever a caller asks for.
+  const sheetHeight = Math.min(
+    modalHeight ?? screenHeight * 0.75,
+    screenHeight - insets.top - space.xl,
+  );
+
   // sheetY is the open/close animation; dragY tracks the finger. Keeping them
   // separate means a drag can be clamped without fighting the open animation.
-  const sheetY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  const sheetY = useRef(new Animated.Value(screenHeight)).current;
   const dragY = useRef(new Animated.Value(0)).current;
+  const backdrop = useRef(new Animated.Value(0)).current;
 
   // Downward drags move the sheet; upward drags are ignored so it cannot be
   // pulled off the top of the screen.
@@ -44,22 +62,31 @@ export default function SwipeableModal({
   useEffect(() => {
     if (!visible) return;
     dragY.setValue(0);
-    sheetY.setValue(SCREEN_HEIGHT);
-    Animated.spring(sheetY, {
-      toValue: 0,
-      useNativeDriver: true,
-      damping: 20,
-      stiffness: 180,
-      mass: 0.6,
-    }).start();
-  }, [visible, sheetY, dragY]);
+    sheetY.setValue(screenHeight);
+    backdrop.setValue(0);
+    Animated.parallel([
+      Animated.spring(sheetY, {
+        toValue: 0,
+        useNativeDriver: true,
+        damping: 20,
+        stiffness: 180,
+        mass: 0.6,
+      }),
+      // The backdrop used to snap to full black on the frame the modal
+      // mounted, ahead of the sheet it belongs to.
+      Animated.timing(backdrop, { toValue: 1, duration: 180, useNativeDriver: true }),
+    ]).start();
+  }, [visible, screenHeight, sheetY, dragY, backdrop]);
 
   const dismiss = () => {
-    Animated.timing(sheetY, {
-      toValue: SCREEN_HEIGHT,
-      duration: 200,
-      useNativeDriver: true,
-    }).start(({ finished }) => {
+    Animated.parallel([
+      Animated.timing(sheetY, {
+        toValue: screenHeight,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.timing(backdrop, { toValue: 0, duration: 200, useNativeDriver: true }),
+    ]).start(({ finished }) => {
       if (!finished) return;
       dragY.setValue(0);
       onClose?.();
@@ -103,6 +130,7 @@ export default function SwipeableModal({
     >
       <GestureHandlerRootView style={styles.root}>
         <View style={styles.overlay}>
+          <Animated.View style={[styles.scrim, { opacity: backdrop }]} pointerEvents="none" />
           <Pressable
             style={styles.backdrop}
             onPress={closeOnBackdropPress ? dismiss : undefined}
@@ -115,7 +143,16 @@ export default function SwipeableModal({
             activeOffsetY={10}
           >
             <Animated.View
-              style={[styles.sheet, { height: modalHeight, transform: [{ translateY }] }]}
+              style={[
+                styles.sheet,
+                {
+                  height: sheetHeight,
+                  // The home indicator ate the last row of every list; this was
+                  // a flat 30/20pt guess by platform.
+                  paddingBottom: Math.max(insets.bottom, space.lg),
+                  transform: [{ translateY }],
+                },
+              ]}
             >
               <View style={styles.handleArea}>
                 <View style={styles.handle} />
@@ -131,20 +168,16 @@ export default function SwipeableModal({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "flex-end",
-  },
+  overlay: { flex: 1, justifyContent: "flex-end" },
+  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0, 0, 0, 0.5)" },
   backdrop: { ...StyleSheet.absoluteFillObject },
   sheet: {
     backgroundColor: color.paper,
     borderTopLeftRadius: radius.lg,
     borderTopRightRadius: radius.lg,
-    paddingHorizontal: 20,
-    paddingBottom: Platform.OS === "ios" ? 30 : 20,
+    paddingHorizontal: space.lg,
   },
-  handleArea: { alignItems: "center", paddingVertical: 10 },
+  handleArea: { alignItems: "center", paddingVertical: space.sm + 2 },
   handle: {
     width: 44,
     height: 5,

@@ -1,10 +1,14 @@
 import { useMemo, useState } from "react";
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import * as Haptics from "expo-haptics";
+import { Search, X } from "lucide-react-native";
 
 import SwipeableModal from "../components/Modal";
-import { color, colorForType, lineLabel } from "../theme";
+import { color, colorForType, font, lineLabel, radius, space, type } from "../theme";
 
 const HIDDEN_CATEGORIES = new Set(["allBuses", "allTrams"]);
+
+const tick = () => Haptics.selectionAsync().catch(() => {});
 
 export default function LinesSelection({
   lines,
@@ -29,12 +33,15 @@ export default function LinesSelection({
       .filter(([, values]) => values.length);
   }, [lines, query]);
 
-  const toggle = (line) =>
+  const toggle = (line) => {
+    tick();
     setSelectedLines((previous) =>
       previous.includes(line) ? previous.filter((item) => item !== line) : [...previous, line],
     );
+  };
 
   const toggleCategory = (values) => {
+    tick();
     const allSelected = values.every((line) => selected.has(line));
     setSelectedLines((previous) =>
       allSelected
@@ -46,38 +53,64 @@ export default function LinesSelection({
   return (
     <SwipeableModal visible={visible} onClose={onClose}>
       <View style={styles.header}>
-        <View>
+        <View style={styles.headerText}>
           <Text style={styles.headerTitle}>Wybierz linie</Text>
-          <Text style={styles.headerSubtitle}>{`Zaznaczono ${selectedLines.length}`}</Text>
+          <Text style={styles.headerSubtitle}>
+            {selectedLines.length === 0
+              ? "Śledzone linie pojawią się na mapie"
+              : `Śledzisz ${selectedLines.length} ${plural(selectedLines.length)}`}
+          </Text>
         </View>
         <View style={styles.headerActions}>
           {selectedLines.length > 0 && (
-            <TouchableOpacity onPress={() => setSelectedLines([])} style={styles.headerButton}>
+            <Pressable
+              onPress={() => setSelectedLines([])}
+              style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
+              accessibilityRole="button"
+            >
               <Text style={styles.headerButtonText}>Wyczyść</Text>
-            </TouchableOpacity>
+            </Pressable>
           )}
-          <TouchableOpacity onPress={onClose} style={styles.headerButton}>
+          <Pressable
+            onPress={onClose}
+            style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
+            accessibilityRole="button"
+          >
             <Text style={[styles.headerButtonText, styles.headerButtonPrimary]}>Gotowe</Text>
-          </TouchableOpacity>
+          </Pressable>
         </View>
       </View>
 
-      <TextInput
-        style={styles.search}
-        value={query}
-        onChangeText={setQuery}
-        placeholder="Szukaj linii…"
-        placeholderTextColor={color.textMuted}
-        autoCapitalize="characters"
-        autoCorrect={false}
-        inputMode="search"
-        returnKeyType="search"
-      />
+      <View style={styles.searchRow}>
+        <Search size={17} color={color.textMuted} strokeWidth={2} />
+        <TextInput
+          style={styles.search}
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Szukaj linii…"
+          placeholderTextColor={color.textMuted}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          inputMode="search"
+          returnKeyType="search"
+        />
+        {query.length > 0 && (
+          <Pressable
+            onPress={() => setQuery("")}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Wyczyść wyszukiwanie"
+          >
+            <X size={17} color={color.textMuted} />
+          </Pressable>
+        )}
+      </View>
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
       >
         {categories.length === 0 && (
           <Text style={styles.empty}>
@@ -86,50 +119,50 @@ export default function LinesSelection({
         )}
 
         {categories.map(([category, values]) => {
+          const tint = colorForType(category);
           const allSelected = values.every((line) => selected.has(line));
           return (
             <View key={category} style={styles.category}>
               <View style={styles.categoryHeader}>
                 <View style={styles.categoryTitleRow}>
-                  <View
-                    style={[
-                      styles.swatch,
-                      { backgroundColor: colorForType(category) },
-                    ]}
-                  />
-                  <Text style={styles.categoryTitle}>
-                    {lineLabel[category] ?? category}
-                  </Text>
+                  <View style={[styles.swatch, { backgroundColor: tint }]} />
+                  <Text style={styles.categoryTitle}>{lineLabel[category] ?? category}</Text>
                 </View>
-                <TouchableOpacity onPress={() => toggleCategory(values)} hitSlop={8}>
+                <Pressable
+                  onPress={() => toggleCategory(values)}
+                  hitSlop={8}
+                  style={({ pressed }) => pressed && styles.pressed}
+                  accessibilityRole="button"
+                >
                   <Text style={styles.categoryAction}>
                     {allSelected ? "Odznacz wszystkie" : "Zaznacz wszystkie"}
                   </Text>
-                </TouchableOpacity>
+                </Pressable>
               </View>
 
               <View style={styles.linesRow}>
                 {values.map((line) => {
                   const isSelected = selected.has(line);
                   return (
-                    <TouchableOpacity
+                    <Pressable
                       key={line}
                       onPress={() => toggle(line)}
-                      style={[
+                      style={({ pressed }) => [
                         styles.lineButton,
-                        isSelected && {
-                          backgroundColor: colorForType(category),
-                          borderColor: "#fff",
-                        },
+                        isSelected && { backgroundColor: tint, borderColor: tint },
+                        pressed && styles.pressed,
                       ]}
                       accessibilityRole="checkbox"
                       accessibilityState={{ checked: isSelected }}
                       accessibilityLabel={`Linia ${line}`}
                     >
-                      <Text style={[styles.lineText, isSelected && styles.lineTextSelected]}>
+                      <Text
+                        style={[styles.lineText, isSelected && styles.lineTextSelected]}
+                        allowFontScaling={false}
+                      >
                         {line}
                       </Text>
-                    </TouchableOpacity>
+                    </Pressable>
                   );
                 })}
               </View>
@@ -141,52 +174,78 @@ export default function LinesSelection({
   );
 }
 
+/** Polish counts take three forms: 1 linię, 2-4 linie, 5+ linii. */
+function plural(count) {
+  if (count === 1) return "linię";
+  const last = count % 10;
+  const teen = count % 100 >= 12 && count % 100 <= 14;
+  return !teen && last >= 2 && last <= 4 ? "linie" : "linii";
+}
+
 const styles = StyleSheet.create({
+  pressed: { opacity: 0.6 },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
+    gap: space.sm,
+    marginBottom: space.md,
   },
-  headerTitle: { fontSize: 20, fontWeight: "700", color: color.text },
-  headerSubtitle: { fontSize: 12, color: color.textMuted, marginTop: 2 },
-  headerActions: { flexDirection: "row", alignItems: "center", gap: 4 },
-  headerButton: { paddingVertical: 6, paddingHorizontal: 8 },
-  headerButtonText: { fontSize: 15, color: color.textMuted, fontWeight: "600" },
+  headerText: { flex: 1 },
+  headerTitle: { ...type.title, color: color.text },
+  headerSubtitle: { ...type.small, color: color.textMuted, marginTop: 2 },
+  headerActions: { flexDirection: "row", alignItems: "center" },
+  headerButton: { paddingVertical: space.xs, paddingHorizontal: space.sm },
+  headerButtonText: { ...type.body, color: color.textMuted, fontWeight: "600" },
   headerButtonPrimary: { color: color.rail },
-  search: {
+  searchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
     backgroundColor: color.paperMuted,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    color: color.text,
-    fontSize: 15,
-    marginBottom: 14,
+    borderRadius: radius.sm,
+    paddingHorizontal: space.md,
+    marginBottom: space.md,
   },
-  scrollContent: { paddingBottom: 30 },
-  empty: { color: color.textMuted, fontSize: 14, textAlign: "center", marginTop: 24 },
-  category: { marginBottom: 22 },
+  search: {
+    flex: 1,
+    paddingVertical: space.md,
+    color: color.text,
+    ...type.body,
+  },
+  scrollContent: { paddingBottom: space.xxl },
+  empty: { ...type.body, color: color.textMuted, textAlign: "center", marginTop: space.xl },
+  category: { marginBottom: space.xl },
   categoryHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10,
+    gap: space.sm,
+    marginBottom: space.md,
   },
-  categoryTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  categoryTitleRow: { flexDirection: "row", alignItems: "center", gap: space.sm, flexShrink: 1 },
   swatch: { width: 10, height: 10, borderRadius: 5 },
-  categoryTitle: { fontSize: 16, fontWeight: "700", color: color.text },
-  categoryAction: { fontSize: 12, color: color.rail, fontWeight: "600" },
-  linesRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  categoryTitle: { ...type.body, fontWeight: "700", fontSize: 16, color: color.text },
+  categoryAction: { ...type.caption, letterSpacing: 0, color: color.rail },
+  linesRow: { flexDirection: "row", flexWrap: "wrap", gap: space.sm },
   lineButton: {
     minWidth: 52,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.md,
+    borderRadius: radius.sm,
     alignItems: "center",
     backgroundColor: color.paperMuted,
     borderWidth: 1.5,
     borderColor: "transparent",
   },
-  lineText: { fontSize: 15, color: color.textMuted, fontWeight: "700" },
-  lineTextSelected: { color: "#fff" },
+  // The same condensed numeral face the badges use, so a line number reads as
+  // the same object here as it does on the map and on the board.
+  lineText: {
+    fontFamily: font.data,
+    fontSize: 17,
+    lineHeight: 20,
+    color: color.textMuted,
+    includeFontPadding: false,
+  },
+  lineTextSelected: { color: color.paper },
 });

@@ -35,13 +35,20 @@ That keeps a plain-HTTP address out of production bundles, which both stores rej
 
 | Path | What it does |
 | --- | --- |
-| `App.jsx` | State, polling loops, permission request, navigation bar |
-| `api.js` | API calls with timeouts and Polish error messages |
-| `theme.js` | Colours and category labels shared by every screen |
-| `components/MapView.jsx` | Map, vehicle markers, route polyline, departure board |
+| `App.jsx` | Fonts and providers, then `Screen`: state, polling loops, permission request, tab bar |
+| `api.js` | API calls with timeouts, 503 retry and Polish error messages |
+| `theme.js` | Colours, type scale, spacing and the chrome heights in `layout` |
+| `components/MapView.jsx` | Map, vehicle markers, route polyline, route banner, recentre button |
+| `components/DeparturesSheet.jsx` | The amber departure board for a selected stop |
+| `components/StatusPill.jsx` | Live/stale indicator and how much is on screen |
+| `components/LineBadge.jsx` | A line number, set the same way everywhere it appears |
 | `components/Modal.jsx` | Swipe-to-dismiss bottom sheet |
-| `components/InfoBox.jsx` | Clock and data-freshness pill |
 | `modals/` | Line picker, alerts, settings |
+| `.preview/maps-stub.js` | Web-only stand-in for `react-native-maps` (never shipped) |
+
+Anything that floats over the map takes its offset from `layout.tabBar` /
+`layout.statusPill` plus the live `useSafeAreaInsets()` value — see invariant 17
+in the root `CLAUDE.md`.
 
 ## Building for the stores
 

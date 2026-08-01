@@ -133,6 +133,28 @@ this one.
 `expo-notifications` was in the config with an iOS usage string and no code
 behind it. An unused permission is an App Review question you cannot answer.
 
+**16. Import font weights by file, never from the package root.**
+`@expo-google-fonts/barlow-semi-condensed`'s `index.js` `require`s all nine
+weights in roman and italic, so importing two named exports from it shipped
+eighteen TTFs — about 1.9 MB of fonts the app never renders. `App.jsx` imports
+`600SemiBold/BarlowSemiCondensed_600SemiBold.ttf` and the `700Bold` equivalent
+as files instead, which takes the bundled asset count from 18 to 2. `expo
+export` prints the list; if it grows, someone reached for the barrel again.
+
+**17. Never write a layout offset that assumes a home indicator.**
+The departures sheet, the empty-state prompt and the route banner were pinned at
+`bottom: 92`, `bottom: 108` and `top: 96` — numbers that are only right on an
+iPhone with a 34pt bottom inset. On a device without one the sheet floated with
+a gap beneath it. `layout.tabBar` and `layout.statusPill` in `app/theme.js` are
+the chrome heights; combine them with `useSafeAreaInsets()` at render time and
+never hardcode the sum.
+
+**18. `useFonts` returns an error and it has to be handled.**
+`const [fontsLoaded] = useFonts(...)` followed by `if (!fontsLoaded) return null`
+discards the error, so a rejected load left a blank screen under a splash that
+never hid — no map, no message, nothing to retry. Barlow is a presentation
+detail; the app renders once loading has *settled*, either way.
+
 ## Fragile by nature
 
 `parsePage()` in `server/src/alerts.js` scrapes
@@ -236,7 +258,16 @@ cd app && API_URL=http://localhost:3000 npx expo export --platform web --output-
 python3 -m http.server 4620 --directory /tmp/web
 ```
 
-The map area will be an empty grey box. That is the stub, not a bug.
+There are no map tiles — the background stays a flat grey box, and that is the
+stub, not a bug. Everything drawn *on* the map is real, though: the stub
+projects the current region onto that box, places markers on it and implements
+the `fitToCoordinates` / `animateToRegion` calls the app makes on the map ref,
+so tapping a vehicle to load a route and then a stop to open the departures
+board both work in a browser. Distances are visibly wrong; it is a harness for
+the surrounding UI, not a map. When it rendered nothing, every screen reached
+through a marker was untestable without a device, which is how a `ReferenceError`
+in `App.jsx` survived a clean `expo export` — the bundler does not resolve
+identifiers, so **a green build is not a working app**. Drive it in a browser.
 
 ## Open work
 

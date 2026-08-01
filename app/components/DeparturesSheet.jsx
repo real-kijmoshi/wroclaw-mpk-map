@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -6,15 +6,20 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { X } from "lucide-react-native";
 
 import LineBadge from "./LineBadge";
 import { fetchDepartures } from "../api";
-import { color, font, radius, shadow, space, type } from "../theme";
+import { color, font, layout, radius, shadow, space, type } from "../theme";
 
-const REFRESH_MS = 30000;
+/** How often to ask the server for a fresh board. */
+const REFRESH_MS = 30_000;
+/** How often to re-derive the countdown locally between those requests. */
+const TICK_MS = 5_000;
 
 /**
  * The departure board.
@@ -26,17 +31,28 @@ const REFRESH_MS = 30000;
  * read while standing at the pole.
  */
 export default function DeparturesSheet({ stop, onClose }) {
-  const [state, setState] = useState({ status: "loading", departures: [] });
+  const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
+  const [state, setState] = useState({ status: "loading", departures: [], fetchedAt: Date.now() });
+  const [now, setNow] = useState(() => Date.now());
+
+  // The sheet outlives `stop` by one animation: closing used to unmount it on
+  // the same frame the state cleared, so the slide-out never played and the
+  // board simply blinked out of existence.
+  const [shown, setShown] = useState(stop);
   const slide = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
+    if (stop) setShown(stop);
     Animated.spring(slide, {
       toValue: stop ? 0 : 1,
       useNativeDriver: true,
       damping: 22,
       stiffness: 220,
       mass: 0.7,
-    }).start();
+    }).start(({ finished }) => {
+      if (finished && !stop) setShown(null);
+    });
   }, [stop, slide]);
 
   const load = useCallback(
@@ -49,9 +65,14 @@ export default function DeparturesSheet({ stop, onClose }) {
         setState({
           status: "ready",
           departures: Array.isArray(data.departures) ? data.departures : [],
+          // `inSeconds` is measured from when the server answered, so the
+          // countdown has to be re-derived against this, not against the clock.
+          fetchedAt: Date.now(),
         });
       } catch (error) {
-        if (error.name !== "AbortError") setState({ status: "error", departures: [] });
+        if (error.name !== "AbortError") {
+          setState({ status: "error", departures: [], fetchedAt: Date.now() });
+        }
       }
     },
     [stop?.id],
@@ -62,38 +83,58 @@ export default function DeparturesSheet({ stop, onClose }) {
 
     const controller = new AbortController();
     load(controller.signal, false);
-    const id = setInterval(() => load(controller.signal, true), REFRESH_MS);
+    const request = setInterval(() => load(controller.signal, true), REFRESH_MS);
+    // Without this the board froze between requests: a departure fetched as
+    // "3 min" still read 3 min half a minute later, then jumped two.
+    const tick = setInterval(() => setNow(Date.now()), TICK_MS);
 
     return () => {
       controller.abort();
-      clearInterval(id);
+      clearInterval(request);
+      clearInterval(tick);
     };
   }, [stop?.id, load]);
 
-  if (!stop) return null;
+  const rows = useMemo(() => {
+    const elapsed = (now - state.fetchedAt) / 1000;
+    return state.departures.map((departure, index) => ({
+      key: `${departure.tripId}-${departure.departure}-${index}`,
+      line: departure.line,
+      type: departure.type,
+      headsign: departure.headsign,
+      // "14:32:00" is what the timetable says; the countdown is what you act on.
+      scheduled: String(departure.departure ?? "").slice(0, 5),
+      minutes: Math.round(((departure.inSeconds ?? 0) - elapsed) / 60),
+    }));
+  }, [state.departures, state.fetchedAt, now]);
+
+  if (!shown) return null;
 
   return (
     <Animated.View
+      pointerEvents={stop ? "auto" : "none"}
       style={[
         styles.sheet,
         {
+          bottom: layout.tabBar + insets.bottom + space.md,
+          maxHeight: Math.min(360, height * 0.45),
           transform: [
-            { translateY: slide.interpolate({ inputRange: [0, 1], outputRange: [0, 420] }) },
+            { translateY: slide.interpolate({ inputRange: [0, 1], outputRange: [0, 460] }) },
           ],
         },
       ]}
     >
       <View style={styles.header}>
-        <View style={{ flex: 1 }}>
+        <View style={styles.headerText}>
           <Text style={styles.eyebrow}>Najbliższe odjazdy</Text>
           <Text style={styles.stopName} numberOfLines={1}>
-            {stop.name}
+            {shown.name}
           </Text>
         </View>
         <Pressable
           onPress={onClose}
           hitSlop={12}
-          style={styles.close}
+          style={({ pressed }) => [styles.close, pressed && styles.closePressed]}
           accessibilityRole="button"
           accessibilityLabel="Zamknij odjazdy"
         >
@@ -110,42 +151,43 @@ export default function DeparturesSheet({ stop, onClose }) {
       {state.status === "error" && (
         <View style={styles.centre}>
           <Text style={styles.message}>Nie udało się pobrać odjazdów.</Text>
-          <Pressable onPress={() => load(undefined, false)} style={styles.retry}>
+          <Pressable
+            onPress={() => load(undefined, false)}
+            style={({ pressed }) => [styles.retry, pressed && styles.closePressed]}
+            accessibilityRole="button"
+          >
             <Text style={styles.retryText}>Spróbuj ponownie</Text>
           </Pressable>
         </View>
       )}
 
-      {state.status === "ready" && state.departures.length === 0 && (
+      {state.status === "ready" && rows.length === 0 && (
         <View style={styles.centre}>
           <Text style={styles.message}>Brak odjazdów w ciągu najbliższych dwóch godzin.</Text>
         </View>
       )}
 
-      {state.status === "ready" && state.departures.length > 0 && (
+      {state.status === "ready" && rows.length > 0 && (
         <ScrollView
           style={styles.list}
-          contentContainerStyle={{ paddingBottom: space.sm }}
+          contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
         >
-          {state.departures.map((departure, index) => {
-            const minutes = Math.round((departure.inSeconds ?? 0) / 60);
-            return (
-              <View
-                key={`${departure.tripId}-${departure.departure}-${index}`}
-                style={[styles.row, index === 0 && styles.rowFirst]}
-              >
-                <LineBadge line={departure.line} type={departure.type} size="sm" />
+          {rows.map((row, index) => (
+            <View key={row.key} style={[styles.row, index === 0 && styles.rowFirst]}>
+              <LineBadge line={row.line} type={row.type} size="sm" />
+              <View style={styles.rowText}>
                 <Text style={styles.headsign} numberOfLines={1}>
-                  {departure.headsign || "—"}
+                  {row.headsign || "—"}
                 </Text>
-                <Text style={styles.minutes} allowFontScaling={false}>
-                  {minutes <= 0 ? "teraz" : minutes}
-                </Text>
-                {minutes > 0 && <Text style={styles.unit}>min</Text>}
+                {row.scheduled ? <Text style={styles.scheduled}>{row.scheduled}</Text> : null}
               </View>
-            );
-          })}
+              <Text style={styles.minutes} allowFontScaling={false}>
+                {row.minutes <= 0 ? "teraz" : row.minutes}
+              </Text>
+              {row.minutes > 0 && <Text style={styles.unit}>min</Text>}
+            </View>
+          ))}
         </ScrollView>
       )}
     </Animated.View>
@@ -153,12 +195,13 @@ export default function DeparturesSheet({ stop, onClose }) {
 }
 
 const styles = StyleSheet.create({
+  // `bottom` and `maxHeight` are supplied at render time — they depend on the
+  // safe-area inset and the window, and hardcoding them put the sheet 34pt off
+  // the tab bar on anything without a home indicator.
   sheet: {
     position: "absolute",
     left: space.md,
     right: space.md,
-    bottom: 92,
-    maxHeight: 340,
     backgroundColor: color.ink,
     borderRadius: radius.lg,
     paddingBottom: space.sm,
@@ -172,6 +215,7 @@ const styles = StyleSheet.create({
     paddingTop: space.lg,
     paddingBottom: space.md,
   },
+  headerText: { flex: 1 },
   eyebrow: {
     ...type.caption,
     color: color.textOnDarkMuted,
@@ -185,7 +229,9 @@ const styles = StyleSheet.create({
     includeFontPadding: false,
   },
   close: { padding: space.xs },
+  closePressed: { opacity: 0.6 },
   list: { borderTopWidth: 1, borderTopColor: color.inkLine },
+  listContent: { paddingBottom: space.sm },
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -196,10 +242,17 @@ const styles = StyleSheet.create({
     borderTopColor: color.inkLine,
   },
   rowFirst: { borderTopWidth: 0 },
+  rowText: { flex: 1 },
   headsign: {
-    flex: 1,
     ...type.body,
     color: color.textOnDark,
+  },
+  scheduled: {
+    ...type.caption,
+    fontFamily: font.dataMedium,
+    letterSpacing: 0,
+    color: color.textOnDarkMuted,
+    marginTop: 1,
   },
   // Amber is reserved for the countdown. Nothing else in the app uses it, so
   // the eye goes straight to the number that decides whether you run.
