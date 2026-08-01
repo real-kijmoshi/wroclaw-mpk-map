@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Platform, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Search, X } from "lucide-react-native";
 
 import SwipeableModal from "../components/Modal";
-import { color, colorForType, lineLabel } from "../theme";
+import PressableScale from "../components/PressableScale";
+import { HIT_SIZE, color, colorForType, font, lineLabel, radius, space, type } from "../theme";
 
 const HIDDEN_CATEGORIES = new Set(["allBuses", "allTrams"]);
 
@@ -44,40 +46,52 @@ export default function LinesSelection({
   };
 
   return (
-    <SwipeableModal visible={visible} onClose={onClose}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>Wybierz linie</Text>
-          <Text style={styles.headerSubtitle}>{`Zaznaczono ${selectedLines.length}`}</Text>
-        </View>
-        <View style={styles.headerActions}>
-          {selectedLines.length > 0 && (
-            <TouchableOpacity onPress={() => setSelectedLines([])} style={styles.headerButton}>
-              <Text style={styles.headerButtonText}>Wyczyść</Text>
-            </TouchableOpacity>
+    <SwipeableModal
+      visible={visible}
+      onClose={onClose}
+      title="Wybierz linie"
+      subtitle={`Zaznaczono ${selectedLines.length}`}
+      secondaryAction={
+        selectedLines.length > 0
+          ? { label: "Wyczyść", onPress: () => setSelectedLines([]) }
+          : undefined
+      }
+    >
+      <View style={styles.searchRow}>
+        <View style={styles.search}>
+          <Search size={16} color={color.textMuted} strokeWidth={2.5} />
+          <TextInput
+            style={styles.searchInput}
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Szukaj linii…"
+            placeholderTextColor={color.textMuted}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            inputMode="search"
+            returnKeyType="search"
+            clearButtonMode="never"
+          />
+          {query.length > 0 && (
+            <PressableScale
+              onPress={() => setQuery("")}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Wyczyść wyszukiwanie"
+            >
+              <View style={styles.clear}>
+                <X size={12} color={color.paper} strokeWidth={3} />
+              </View>
+            </PressableScale>
           )}
-          <TouchableOpacity onPress={onClose} style={styles.headerButton}>
-            <Text style={[styles.headerButtonText, styles.headerButtonPrimary]}>Gotowe</Text>
-          </TouchableOpacity>
         </View>
       </View>
-
-      <TextInput
-        style={styles.search}
-        value={query}
-        onChangeText={setQuery}
-        placeholder="Szukaj linii…"
-        placeholderTextColor={color.textMuted}
-        autoCapitalize="characters"
-        autoCorrect={false}
-        inputMode="search"
-        returnKeyType="search"
-      />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
       >
         {categories.length === 0 && (
           <Text style={styles.empty}>
@@ -87,49 +101,48 @@ export default function LinesSelection({
 
         {categories.map(([category, values]) => {
           const allSelected = values.every((line) => selected.has(line));
+          const tint = colorForType(category);
+
           return (
             <View key={category} style={styles.category}>
               <View style={styles.categoryHeader}>
                 <View style={styles.categoryTitleRow}>
-                  <View
-                    style={[
-                      styles.swatch,
-                      { backgroundColor: colorForType(category) },
-                    ]}
-                  />
-                  <Text style={styles.categoryTitle}>
-                    {lineLabel[category] ?? category}
-                  </Text>
+                  <View style={[styles.swatch, { backgroundColor: tint }]} />
+                  <Text style={styles.categoryTitle}>{lineLabel[category] ?? category}</Text>
                 </View>
-                <TouchableOpacity onPress={() => toggleCategory(values)} hitSlop={8}>
+                <PressableScale
+                  onPress={() => toggleCategory(values)}
+                  hitSlop={8}
+                  style={styles.categoryButton}
+                  accessibilityRole="button"
+                >
                   <Text style={styles.categoryAction}>
                     {allSelected ? "Odznacz wszystkie" : "Zaznacz wszystkie"}
                   </Text>
-                </TouchableOpacity>
+                </PressableScale>
               </View>
 
               <View style={styles.linesRow}>
                 {values.map((line) => {
                   const isSelected = selected.has(line);
                   return (
-                    <TouchableOpacity
+                    <PressableScale
                       key={line}
                       onPress={() => toggle(line)}
-                      style={[
-                        styles.lineButton,
-                        isSelected && {
-                          backgroundColor: colorForType(category),
-                          borderColor: "#fff",
-                        },
-                      ]}
+                      scale={0.9}
+                      style={[styles.lineButton, isSelected && { backgroundColor: tint }]}
                       accessibilityRole="checkbox"
                       accessibilityState={{ checked: isSelected }}
                       accessibilityLabel={`Linia ${line}`}
                     >
-                      <Text style={[styles.lineText, isSelected && styles.lineTextSelected]}>
+                      <Text
+                        style={[styles.lineText, isSelected && styles.lineTextSelected]}
+                        allowFontScaling={false}
+                        numberOfLines={1}
+                      >
                         {line}
                       </Text>
-                    </TouchableOpacity>
+                    </PressableScale>
                   );
                 })}
               </View>
@@ -142,51 +155,64 @@ export default function LinesSelection({
 }
 
 const styles = StyleSheet.create({
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  headerTitle: { fontSize: 20, fontWeight: "700", color: color.text },
-  headerSubtitle: { fontSize: 12, color: color.textMuted, marginTop: 2 },
-  headerActions: { flexDirection: "row", alignItems: "center", gap: 4 },
-  headerButton: { paddingVertical: 6, paddingHorizontal: 8 },
-  headerButtonText: { fontSize: 15, color: color.textMuted, fontWeight: "600" },
-  headerButtonPrimary: { color: color.rail },
+  searchRow: { paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: space.sm },
   search: {
-    backgroundColor: color.paperMuted,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    color: color.text,
-    fontSize: 15,
-    marginBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    height: 38,
+    paddingHorizontal: space.md,
+    borderRadius: radius.control,
+    backgroundColor: color.fill,
   },
-  scrollContent: { paddingBottom: 30 },
-  empty: { color: color.textMuted, fontSize: 14, textAlign: "center", marginTop: 24 },
-  category: { marginBottom: 22 },
+  searchInput: {
+    flex: 1,
+    ...type.callout,
+    color: color.text,
+    // Web only: react-native-web renders a real <input>, which draws a focus
+    // ring the rest of the app has no equivalent for.
+    ...Platform.select({ web: { outlineStyle: "none" }, default: {} }),
+  },
+  clear: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: color.textMuted,
+  },
+  scrollContent: { paddingHorizontal: space.lg, paddingTop: space.sm, paddingBottom: space.xxl },
+  empty: { ...type.callout, color: color.textMuted, textAlign: "center", marginTop: space.xxl },
+  category: { marginBottom: space.xl },
   categoryHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10,
+    gap: space.sm,
+    marginBottom: space.md,
   },
-  categoryTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  categoryTitleRow: { flexDirection: "row", alignItems: "center", gap: space.sm, flexShrink: 1 },
   swatch: { width: 10, height: 10, borderRadius: 5 },
-  categoryTitle: { fontSize: 16, fontWeight: "700", color: color.text },
-  categoryAction: { fontSize: 12, color: color.rail, fontWeight: "600" },
-  linesRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  categoryTitle: { ...type.headline, color: color.text, flexShrink: 1 },
+  categoryButton: { paddingVertical: space.xs, paddingLeft: space.sm },
+  categoryAction: { ...type.small, color: color.rail, fontWeight: "600" },
+  linesRow: { flexDirection: "row", flexWrap: "wrap", gap: space.sm },
+  // 44pt square minimum: these were 35pt tall, which is a miss every few taps
+  // when you are walking.
   lineButton: {
-    minWidth: 52,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
+    minWidth: 56,
+    height: HIT_SIZE,
+    paddingHorizontal: space.md,
+    borderRadius: radius.control,
     alignItems: "center",
-    backgroundColor: color.paperMuted,
-    borderWidth: 1.5,
-    borderColor: "transparent",
+    justifyContent: "center",
+    backgroundColor: color.fill,
   },
-  lineText: { fontSize: 15, color: color.textMuted, fontWeight: "700" },
-  lineTextSelected: { color: "#fff" },
+  lineText: {
+    fontFamily: font.data,
+    fontSize: 19,
+    color: color.text,
+    includeFontPadding: false,
+  },
+  lineTextSelected: { color: color.paper },
 });

@@ -1,14 +1,35 @@
-import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Linking, ScrollView, StyleSheet, Text, View } from "react-native";
 import Constants from "expo-constants";
+import { ChevronRight, ExternalLink } from "lucide-react-native";
 
 import SwipeableModal from "../components/Modal";
+import PressableScale from "../components/PressableScale";
 import { API_URL } from "../api";
-import { color, font, radius, space, type } from "../theme";
+import { HIT_SIZE, color, font, hairline, radius, space, type } from "../theme";
 
 const REPO_URL = "https://github.com/real-kijmoshi/wroclaw-mpk-map";
 const DATA_URL = "https://opendata.cui.wroclaw.pl/";
 
-function Row({ label, value }) {
+/** iOS inset grouped list: a card per group, hairlines only between rows. */
+function Group({ title, footer, children }) {
+  const rows = Array.isArray(children) ? children.filter(Boolean) : [children];
+
+  return (
+    <View style={styles.group}>
+      {title ? <Text style={styles.groupTitle}>{title}</Text> : null}
+      <View style={styles.card}>
+        {rows.map((row, index) => (
+          <View key={index} style={index > 0 ? styles.rowDivider : null}>
+            {row}
+          </View>
+        ))}
+      </View>
+      {footer ? <Text style={styles.groupFooter}>{footer}</Text> : null}
+    </View>
+  );
+}
+
+function ValueRow({ label, value }) {
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -19,100 +40,114 @@ function Row({ label, value }) {
   );
 }
 
+function ActionRow({ label, onPress, disabled, destructive, external }) {
+  return (
+    <PressableScale
+      scale={0.99}
+      onPress={onPress}
+      disabled={disabled}
+      style={[styles.row, disabled && styles.rowDisabled]}
+      accessibilityRole={external ? "link" : "button"}
+      accessibilityState={{ disabled: Boolean(disabled) }}
+    >
+      <Text style={[styles.rowLabel, destructive && styles.rowLabelDestructive]}>{label}</Text>
+      {external ? (
+        <ExternalLink size={17} color={color.textMuted} strokeWidth={2} />
+      ) : destructive ? null : (
+        <ChevronRight size={18} color={color.textMuted} strokeWidth={2.5} />
+      )}
+    </PressableScale>
+  );
+}
+
 /**
  * The old settings screen was `#000` text on a `#121212` background — invisible
  * — and had nothing in it besides a sentence saying settings could go here.
  */
 export default function SettingsModal({ visible, onClose, selectedCount = 0, onClearLines }) {
+  const open = (url) => Linking.openURL(url).catch(() => {});
+
   return (
-    <SwipeableModal visible={visible} onClose={onClose} modalHeight={540}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Ustawienia</Text>
-        <Pressable onPress={onClose} style={styles.close} hitSlop={12}>
-          <Text style={styles.closeText}>Gotowe</Text>
-        </Pressable>
-      </View>
-
+    <SwipeableModal
+      visible={visible}
+      onClose={onClose}
+      title="Ustawienia"
+      background="grouped"
+      detent={0.72}
+    >
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.section}>Twoje linie</Text>
-        <Row label="Zaznaczone linie" value={String(selectedCount)} />
-        <Pressable
-          style={[styles.button, selectedCount === 0 && styles.buttonDisabled]}
-          onPress={onClearLines}
-          disabled={selectedCount === 0}
+        <Group title="Twoje linie">
+          <ValueRow label="Zaznaczone linie" value={String(selectedCount)} />
+          <ActionRow
+            label="Wyczyść wybór linii"
+            onPress={onClearLines}
+            disabled={selectedCount === 0}
+            destructive
+          />
+        </Group>
+
+        <Group title="Aplikacja">
+          <ValueRow label="Wersja" value={Constants.expoConfig?.version ?? "—"} />
+          <ValueRow label="Serwer API" value={API_URL} />
+        </Group>
+
+        <Group
+          title="Skąd są dane"
+          footer="Lokalizacja jest używana wyłącznie do pokazania Cię na mapie i nie opuszcza urządzenia."
         >
-          <Text style={styles.buttonText}>Wyczyść wybór linii</Text>
-        </Pressable>
-
-        <Text style={styles.section}>Aplikacja</Text>
-        <Row label="Wersja" value={Constants.expoConfig?.version ?? "—"} />
-        <Row label="Serwer API" value={API_URL} />
-
-        <Text style={styles.section}>Skąd są dane</Text>
-        <Text style={styles.paragraph}>
-          Rozkłady jazdy pochodzą z serwisu Otwarte Dane Wrocław (format GTFS), a pozycje
-          pojazdów z publicznego API MPK Wrocław. Komunikaty są zbierane ze stron miejskich.
-          Aplikacja nie jest oficjalnym produktem MPK.
-        </Text>
-        <Text style={styles.paragraph}>
-          Lokalizacja jest używana wyłącznie do pokazania Cię na mapie i nie opuszcza
-          urządzenia.
-        </Text>
-
-        <Pressable style={styles.button} onPress={() => Linking.openURL(DATA_URL)}>
-          <Text style={styles.buttonText}>Otwarte Dane Wrocław</Text>
-        </Pressable>
-        <Pressable style={styles.button} onPress={() => Linking.openURL(REPO_URL)}>
-          <Text style={styles.buttonText}>Kod źródłowy na GitHubie</Text>
-        </Pressable>
+          <View style={styles.prose}>
+            <Text style={styles.paragraph}>
+              Rozkłady jazdy pochodzą z serwisu Otwarte Dane Wrocław (format GTFS), a pozycje
+              pojazdów z publicznego API MPK Wrocław. Komunikaty są zbierane ze stron miejskich.
+              Aplikacja nie jest oficjalnym produktem MPK.
+            </Text>
+          </View>
+          <ActionRow label="Otwarte Dane Wrocław" onPress={() => open(DATA_URL)} external />
+          <ActionRow label="Kod źródłowy na GitHubie" onPress={() => open(REPO_URL)} external />
+        </Group>
       </ScrollView>
     </SwipeableModal>
   );
 }
 
 const styles = StyleSheet.create({
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: space.md,
-  },
-  headerTitle: { ...type.title, color: color.text },
-  close: { paddingVertical: space.xs, paddingHorizontal: space.sm },
-  closeText: { ...type.body, color: color.rail, fontWeight: "600" },
-  content: { paddingBottom: space.xxl },
-  section: {
+  content: { paddingHorizontal: space.lg, paddingTop: space.lg, paddingBottom: space.xxl },
+  group: { marginBottom: space.xl },
+  groupTitle: {
     ...type.caption,
     color: color.textMuted,
     textTransform: "uppercase",
-    marginTop: space.xl,
     marginBottom: space.sm,
+    marginLeft: space.md,
   },
+  groupFooter: {
+    ...type.footnote,
+    color: color.textMuted,
+    lineHeight: 18,
+    marginTop: space.sm,
+    marginHorizontal: space.md,
+  },
+  card: { backgroundColor: color.paper, borderRadius: radius.card, overflow: "hidden" },
+  rowDivider: { borderTopWidth: hairline, borderTopColor: color.separator },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     gap: space.md,
+    minHeight: HIT_SIZE,
+    paddingHorizontal: space.lg,
     paddingVertical: space.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: color.paperLine,
   },
-  rowLabel: { ...type.body, color: color.text },
+  rowDisabled: { opacity: 0.4 },
+  rowLabel: { ...type.callout, color: color.text },
+  rowLabelDestructive: { color: color.destructive },
   rowValue: {
-    ...type.small,
+    ...type.footnote,
     fontFamily: font.dataMedium,
     color: color.textMuted,
     flexShrink: 1,
     textAlign: "right",
   },
-  paragraph: { ...type.small, color: color.textMuted, lineHeight: 20, marginBottom: space.sm },
-  button: {
-    marginTop: space.md,
-    backgroundColor: color.paperMuted,
-    borderRadius: radius.md,
-    paddingVertical: space.md,
-    alignItems: "center",
-  },
-  buttonDisabled: { opacity: 0.4 },
-  buttonText: { ...type.body, color: color.text, fontWeight: "600" },
+  prose: { paddingHorizontal: space.lg, paddingVertical: space.md },
+  paragraph: { ...type.footnote, color: color.textMuted, lineHeight: 19 },
 });

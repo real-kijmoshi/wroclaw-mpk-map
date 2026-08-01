@@ -20,6 +20,18 @@ build (`expo-dev-client`) gives the real one on both platforms:
 eas build --profile development --platform android
 ```
 
+## The web build
+
+`platforms` includes `web`, and `public/index.html` is the template Expo's metro web
+bundler renders into. It is not decoration: `viewport-fit=cover` is what makes
+`env(safe-area-inset-*)` report real numbers, which is where every safe-area value in
+the UI comes from, and the reset kills the rubber-band scroll and pull-to-refresh that
+otherwise fire whenever a drag starts on the map. Keep the react-native-web root reset
+(`html, body { height: 100% }`, `#root { display: flex }`) if you edit it.
+
+The map itself cannot render in a browser — see "Previewing the app without a device"
+in [CLAUDE.md](../CLAUDE.md).
+
 ## Configuration
 
 The API base URL is **not** committed as a literal. It flows:
@@ -40,13 +52,25 @@ change still needs a new build.
 
 | Path | What it does |
 | --- | --- |
-| `App.jsx` | State, polling loops, permission request, navigation bar |
+| `App.jsx` | State, polling loops, permission request, floating tab bar |
 | `api.js` | API calls with timeouts and Polish error messages |
-| `theme.js` | Colours and category labels shared by every screen |
-| `components/MapView.jsx` | Map, vehicle markers, route polyline, departure board |
-| `components/Modal.jsx` | Swipe-to-dismiss bottom sheet |
-| `components/InfoBox.jsx` | Clock and data-freshness pill |
+| `theme.js` | Colours, iOS type scale, spacing, materials, springs |
+| `components/MapView.jsx` | Map, vehicle markers, route polyline, route card, locate button |
+| `components/Modal.jsx` | Bottom sheet: grabber, sheet header, swipe-to-dismiss |
+| `components/DeparturesSheet.jsx` | The amber departure board for a tapped stop |
+| `components/StatusPill.jsx` | Data-freshness pill, and the shortcut into the line picker |
+| `components/Material.jsx` | Translucent surface (real backdrop blur on the web) |
+| `components/PressableScale.jsx` | Press-to-shrink touchable with haptics |
 | `modals/` | Line picker, alerts, settings |
+| `public/index.html` | The web shell: safe areas, no overscroll, home-screen metas |
+
+### Layout rules worth knowing
+
+The tab bar floats over the map, so nothing may be positioned against the bottom of
+the screen by hand. `App.jsx` derives one `tabBarSpace` from `TAB_BAR_HEIGHT` and the
+safe-area inset, and passes it down (`bottomOffset`) to everything that has to clear
+it. Sizes come from `useWindowDimensions`, never from a `Dimensions.get` read at import
+time — that value is captured once and is wrong after a rotation or a browser resize.
 
 ## Building for the stores
 
