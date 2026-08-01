@@ -15,6 +15,9 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
+# EAS local signing credentials (paths and keystore passwords)
+credentials.json
+
 # Metro
 .metro-health-check*
 
