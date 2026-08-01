@@ -147,6 +147,18 @@ without it the build falls back to Expo Go, which cannot load
 `react-native-maps`. Both are pinned by `expo install`, so bump them with
 `npx expo install --fix` and not by hand.
 
+**17. `/map` is a second client, and the app's rules apply to it too.**
+`server/views/map.html` is a full client — line filters, alerts, routes,
+departures — that just happens to be one file with no build step. It has
+already reproduced two bugs from this list on its own: it kept the pre-2026
+rainbow palette long after invariant 11 retired it (white on `#F8E71C`, about
+1.4:1), and it parsed the boot-time 503 as data the way invariant 7 describes,
+rendering categories out of `{error, state}`. When you change `lineColor` in
+`app/theme.js`, change `LINE_COLOR` here; when you change a payload shape,
+check both readers. It also stops click propagation on its own markers by
+hand — without that a tap on a stop reaches the map's click handler, which
+clears the very route the stop belongs to.
+
 ## Fragile by nature
 
 The default (and, out of the box, only) alerts source is `@AlertMPK` on X —
