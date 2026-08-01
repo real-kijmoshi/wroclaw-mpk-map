@@ -135,18 +135,22 @@ behind it. An unused permission is an App Review question you cannot answer.
 
 ## Fragile by nature
 
-`parsePage()` in `server/src/alerts.js` scrapes
-`wroclaw.pl/komunikacja/zmiany-w-komunikacji`, which is the only source verified
-to carry live disruptions. `mpk.wroc.pl/komunikaty` was a guess and 404s;
-`/o-mpk/aktualnosci` exists but is corporate news.
-There is no API — the X/Twitter timeline it used to read has needed a paid tier
-since 2023, which is why `/alerts` silently returned `[]` for a year. HTML
-scraping is the most likely thing here to break.
+The default (and, out of the box, only) alerts source is `@AlertMPK` on X —
+see the `twitterScrape`/`TwitterScrapeProvider` paragraph below. `parsePage()`
+in `server/src/alerts.js` can also scrape
+`wroclaw.pl/komunikacja/zmiany-w-komunikacji`, a page verified to carry live
+disruptions, but `ALERT_PAGES` is empty by default; set `ALERT_PAGE_URLS` to
+add it (or another page) back as an extra source. `mpk.wroc.pl/komunikaty` was
+a guess and 404s; `/o-mpk/aktualnosci` exists but is corporate news. Both
+providers are HTML/browser scrapes, which is the most likely thing here to
+break.
 
 It fails soft: when every provider fails the previous list stays in place, and
 the reason shows up in `/health` under `alerts.providers[].lastError`. If alerts
-go stale, check that field first, then the keyword lists in `parsePage()`. A page
-that serves RSS is auto-detected and parsed as a feed instead.
+go stale, check that field first — then, for the X source, `npm run
+scrape:twitter`, and for a configured page, the keyword lists in `parsePage()`.
+A configured page that serves RSS is auto-detected and parsed as a feed
+instead.
 
 A notice's body is the text between its headline link and the next link on the
 page. A fixed-size lookahead instead runs into the following notice and appends
@@ -165,18 +169,24 @@ The X API is not usable as a source: reading someone else's timeline needs a
 paid tier, which is what silently emptied `/alerts` for a year in the first
 place. `@AlertMPK` posts real disruptions, though, so `server/src/twitterScrape.js`
 reads the same public HTML a logged-out visitor sees instead, with a headless
-Chromium (`playwright-core`) rather than the API. It is off by default
-(`TWITTER_SCRAPE_ENABLED`) because it is exactly as fragile as scraping a page
-you don't control ever is — X can change the markup, add a login wall, or
-rate-limit the IP with no warning — and because a broken login wall reads as
-"zero posts," not a crash, so a silent failure here is easy to miss. It needs
-its own Chromium on disk (`npx --yes playwright install chromium`, or point
+Chromium (`playwright-core`) rather than the API — this is `TwitterScrapeProvider`
+in `alerts.js`, and it is the default and, out of the box, only alerts source
+(`TWITTER_SCRAPE_ENABLED` defaults to `true`; set it to `false` to turn it off).
+It is still exactly as fragile as scraping a page you don't control ever is —
+X can change the markup, add a login wall, or rate-limit the IP with no
+warning — and because a broken login wall reads as "zero posts," not a crash,
+a silent failure here is easy to miss; that is why `parsePage()` above stays
+available as a fallback/extra source via `ALERT_PAGE_URLS`. It needs its own
+Chromium on disk (`npx --yes playwright install chromium`, or point
 `TWITTER_SCRAPE_EXECUTABLE_PATH` at one that already exists) since
-`playwright-core` does not download one for you. `npm run scrape:twitter`
-is a manual, non-test way to check it against the real profile before turning
-it on — the automated suite can't: this sandbox has no path to x.com and CI
-doesn't install a browser, so `test/twitterScrape.test.js` only covers the pure
-`normalizeScrapedPosts()` parsing, not the browser orchestration.
+`playwright-core` does not download one for you — **a deploy that skips this
+step gets zero alerts, with no page-scrape source configured to fall back on,
+until either step is done.** `npm run scrape:twitter` (and `npm run doctor`,
+which now checks the X source too) are manual, non-test ways to check it
+against the real profile before relying on it — the automated suite can't:
+this sandbox has no path to x.com and CI doesn't install a browser, so
+`test/twitterScrape.test.js` only covers the pure `normalizeScrapedPosts()`
+parsing, not the browser orchestration.
 
 `parseFileListing()` is deliberately shape-agnostic — it walks the JSON looking
 for url-ish and name-ish fields rather than hardcoding a schema, because the CUI

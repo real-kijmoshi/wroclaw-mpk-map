@@ -18,6 +18,7 @@ const AdmZip = require('adm-zip');
 const config = require('../src/config');
 const { fetchWithTimeout } = require('../src/http');
 const { parseFeed, parsePage } = require('../src/alerts');
+const { scrapePosts } = require('../src/twitterScrape');
 const { resolveFeedCandidates } = require('../src/gtfs/catalogue');
 const { assertComplete } = require('../src/gtfs/store');
 
@@ -184,18 +185,34 @@ const checkAlerts = async () => {
     }
   }
 
-  if (config.alerts.twitter.bearerToken) {
-    console.log(DIM('  X/Twitter provider enabled (a paid tier is required to read timelines)'));
-  } else {
-    console.log(DIM('  X/Twitter provider disabled — set TWITTER_BEARER_TOKEN to enable'));
+  const { enabled, username, maxPosts, timeoutMs, headless, executablePath } = config.alerts.twitterScrape;
+  const url = `https://x.com/${username}`;
+
+  if (!enabled) {
+    console.log(DIM('  X/Twitter scrape disabled — set TWITTER_SCRAPE_ENABLED=true to enable'));
+    return;
+  }
+
+  try {
+    const { value, ms } = await timed(() =>
+      scrapePosts({ url, limit: maxPosts, timeoutMs, headless, executablePath }),
+    );
+    if (!value.length) throw new Error('no posts found — the profile markup may have changed');
+    report('alerts', url, true, `${value.length} posts in ${ms} ms`);
+    for (const post of value.slice(0, 4)) {
+      console.log(DIM(`        · ${post.text.slice(0, 90)}`));
+    }
+  } catch (error) {
+    report('alerts', url, false, error.message);
   }
 };
 
 const main = async () => {
   console.log('Checking every upstream source this server depends on.\n');
   console.log(
-    DIM('Vehicle and alert sources come from VEHICLE_POSITION_URLS / ALERT_PAGE_URLS;'),
+    DIM('Vehicle sources come from VEHICLE_POSITION_URLS; alerts default to the'),
   );
+  console.log(DIM('X/Twitter scrape (TWITTER_SCRAPE_ENABLED) plus any ALERT_PAGE_URLS.'));
   console.log(DIM('the GTFS archive is discovered at runtime — see src/gtfs/catalogue.js.'));
 
   await checkGtfs();

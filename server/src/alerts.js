@@ -371,7 +371,10 @@ class AlertsService {
       if (this.alerts.length) {
         logger.warn('No alert provider responded; keeping the previous list');
       } else if (this.providers.length) {
-        logger.warn('No alerts available from any provider — check ALERT_PAGE_URLS');
+        logger.warn(
+          'No alerts available from any provider — check TWITTER_SCRAPE_ENABLED (needs Chromium ' +
+            'on disk, see npm run scrape:twitter) and ALERT_PAGE_URLS',
+        );
       }
       return this.alerts;
     }
