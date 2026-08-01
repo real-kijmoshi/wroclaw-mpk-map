@@ -144,6 +144,12 @@ eas build --platform android --profile production
 eas submit --platform android
 ```
 
+The Android build runs unattended. The **first** iOS build must be run from a real
+terminal — EAS creates the distribution certificate by signing in to Apple and cannot
+prompt for that in CI, which surfaces as `Credentials are not set up. Run this command
+again in interactive mode.` See
+[`app/README.md`](app/README.md#signing-credentials) for the one-time setup.
+
 Before the first submission you still need to, outside this repo:
 
 - create the Play Console and App Store Connect listings,

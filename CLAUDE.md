@@ -133,6 +133,20 @@ this one.
 `expo-notifications` was in the config with an iOS usage string and no code
 behind it. An unused permission is an App Review question you cannot answer.
 
+**16. `expo-updates` and `expo-dev-client` have no imports, and are not dead
+weight.**
+Invariant 15 does not reach them: both are wired up through config rather than
+code, so a grep for imports finds nothing and they look removable. `eas.json`
+names a `channel` on the preview and production profiles, and `app.config.js`
+carries the matching `updates.url` and `runtimeVersion` — without
+`expo-updates` installed, `eas build` warns that the channel does nothing and
+then errors with `You need to be on SDK 46 or higher, and use expo-updates >=
+0.14.4 to use appVersion runtime policy`. The development profile sets
+`developmentClient: true`, which needs `expo-dev-client` for the same reason;
+without it the build falls back to Expo Go, which cannot load
+`react-native-maps`. Both are pinned by `expo install`, so bump them with
+`npx expo install --fix` and not by hand.
+
 ## Fragile by nature
 
 The default (and, out of the box, only) alerts source is `@AlertMPK` on X —
