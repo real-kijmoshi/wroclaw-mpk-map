@@ -161,9 +161,22 @@ it sends people looking for a replacement bus that does not exist. Transport is
 checked across headline *and* lead because real notices often say "Zmiana
 organizacji ruchu na ulicy X" and only list the affected lines in the body.
 
-X/@AlertMPK is not usable as a source: reading someone else's timeline needs a
-paid API tier, which is what silently emptied `/alerts` in the first place.
-`TWITTER_BEARER_TOKEN` enables it for anyone who has that access.
+The X API is not usable as a source: reading someone else's timeline needs a
+paid tier, which is what silently emptied `/alerts` for a year in the first
+place. `@AlertMPK` posts real disruptions, though, so `server/src/twitterScrape.js`
+reads the same public HTML a logged-out visitor sees instead, with a headless
+Chromium (`playwright-core`) rather than the API. It is off by default
+(`TWITTER_SCRAPE_ENABLED`) because it is exactly as fragile as scraping a page
+you don't control ever is — X can change the markup, add a login wall, or
+rate-limit the IP with no warning — and because a broken login wall reads as
+"zero posts," not a crash, so a silent failure here is easy to miss. It needs
+its own Chromium on disk (`npx --yes playwright install chromium`, or point
+`TWITTER_SCRAPE_EXECUTABLE_PATH` at one that already exists) since
+`playwright-core` does not download one for you. `npm run scrape:twitter`
+is a manual, non-test way to check it against the real profile before turning
+it on — the automated suite can't: this sandbox has no path to x.com and CI
+doesn't install a browser, so `test/twitterScrape.test.js` only covers the pure
+`normalizeScrapedPosts()` parsing, not the browser orchestration.
 
 `parseFileListing()` is deliberately shape-agnostic — it walks the JSON looking
 for url-ish and name-ish fields rather than hardcoding a schema, because the CUI
