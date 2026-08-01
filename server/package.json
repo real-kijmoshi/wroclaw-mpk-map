@@ -12,7 +12,8 @@
     "dev": "node --watch index.js",
     "test": "node --test test/*.test.js",
     "doctor": "node scripts/doctor.js",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "scrape:twitter": "node scripts/verify-twitter-scrape.js"
   },
   "keywords": [
     "wroclaw",
@@ -29,7 +30,8 @@
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "fast-xml-parser": "^5.2.0",
-    "node-cron": "^4.1.0"
+    "node-cron": "^4.1.0",
+    "playwright-core": "^1.62.1"
   },
   "devDependencies": {
     "eslint": "^9.28.0"
