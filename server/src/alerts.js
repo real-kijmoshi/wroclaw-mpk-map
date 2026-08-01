@@ -11,6 +11,11 @@ const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_
 
 const stripHtml = (value) =>
   String(value ?? '')
+    // Tag AND content: page builders (Tilda, among others) embed a per-tile
+    // <style> block inside the anchor itself for responsive image sizing, so
+    // stripping only the tags left raw CSS text sitting in the notice title —
+    // "@media screen and (max-width: 767px) { ... }" showing up as content.
+    .replace(/<(style|script)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<[^>]*>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
@@ -30,12 +35,27 @@ const toTimestamp = (value, fallback = Date.now()) => {
 };
 
 /**
+ * Polish date expressions to strip before hunting for line numbers.
+ *
+ * Matches numeric dates (25.07.2026) and "D <month>" phrases (6 lipca,
+ * 1 sierpnia). Both forms put a bare day-of-month number next to the
+ * surrounding text, and Wrocław has real lines numbered 1, 6 and 21 — "Od 6
+ * lipca" and "21.07.2026" produced phantom line 6 and line 21 badges on
+ * otherwise correctly filtered notices, because the day happened to collide
+ * with a real line. Matching against known lines alone cannot catch this: the
+ * number really is a valid line number, just not the one in this sentence.
+ */
+const POLISH_DATE =
+  /\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4}|\b\d{1,2}\s+(?:stycznia|lutego|marca|kwietnia|maja|czerwca|lipca|sierpnia|wrze[śs]nia|pa[źz]dziernika|listopada|grudnia)\b/gi;
+
+/**
  * Pull line numbers out of a disruption message.
  *
  * Matching against the set of lines that actually exist in the timetable is
  * what keeps dates, times and street numbers from being reported as affected
  * lines — the naive "every number in the text" version reported "22" and "00"
- * from "od godz. 22:00".
+ * from "od godz. 22:00". Dates are stripped first (see POLISH_DATE) because a
+ * day-of-month can itself be a real line number.
  *
  * @param {string} text
  * @param {Set<string>} knownLines
@@ -45,7 +65,8 @@ const extractAffectedLines = (text, knownLines) => {
   if (!text || !knownLines?.size) return [];
 
   const found = new Set();
-  const tokens = String(text).split(/[^0-9A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż]+/);
+  const withoutDates = String(text).replace(POLISH_DATE, ' ');
+  const tokens = withoutDates.split(/[^0-9A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż]+/);
 
   for (let i = 0; i < tokens.length; i += 1) {
     const candidate = tokens[i]?.toUpperCase();
@@ -116,6 +137,8 @@ const CHROME_WORDS = /^(menu|nawigacja|strona główna|kontakt|polityka|cookies|
 
 const DATE_PATTERN = /(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})/;
 
+const stripTrailingSlash = (url) => url.replace(/\/$/, '');
+
 const polishDate = (text) => {
   const match = DATE_PATTERN.exec(text ?? '');
   if (!match) return null;
@@ -165,6 +188,10 @@ const parsePage = (html, pageUrl) => {
     } catch {
       continue;
     }
+    // A link back to the notice-list page itself is its own header or
+    // breadcrumb, not a notice — its title reads like one ("Zmiany w
+    // komunikacji" is both the section name and a disruption-shaped phrase).
+    if (stripTrailingSlash(url) === stripTrailingSlash(pageUrl)) continue;
     if (seen.has(url)) continue;
     seen.add(url);
 
@@ -190,10 +217,16 @@ const parsePage = (html, pageUrl) => {
     // affected lines in the body. Without it anywhere, this is roadworks.
     if (!TRANSPORT_WORDS.test(`${title} ${lead ?? ''}`)) continue;
 
+    // These pages print the notice's own publish date right after its title
+    // ("...zmiana tras tramwajów 30.07.2026"). It is already surfaced as a
+    // relative age, so trailing it a second time on the title is just noise.
+    const displayTitle =
+      title.replace(/\s*(?:od|z dnia)?\s*\d{1,2}[.\-/]\d{1,2}[.\-/]\d{4}\s*$/i, '').trim() || title;
+
     results.push({
       id: url,
-      title,
-      content: lead ?? title,
+      title: displayTitle,
+      content: lead ?? displayTitle,
       url,
       timestamp: published ?? Date.now(),
       source: pageUrl,
