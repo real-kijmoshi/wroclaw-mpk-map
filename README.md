@@ -156,10 +156,11 @@ Before the first submission you still need to, outside this repo:
 - Timetables: [Otwarte Dane Wrocław](https://opendata.cui.wroclaw.pl/), resolved through
   the CUI data API at runtime
 - Vehicle positions: `POST https://mpk.wroc.pl/bus_position`
-- Disruptions: `@AlertMPK` on X, read with a headless browser since the
-  timeline API needs a paid tier — the default and, out of the box, only
-  source (`TWITTER_SCRAPE_ENABLED`, needs a Chromium on disk, see
-  `server/.env.example`)
+- Disruptions: `@AlertMPK` on X, since the timeline API needs a paid tier —
+  the default and, out of the box, only source (`TWITTER_SCRAPE_ENABLED`).
+  Reads a plain HTTP endpoint by default (`TWITTER_SCRAPE_MODE=http`, no
+  browser needed) or a headless Chromium (`TWITTER_SCRAPE_MODE=browser`,
+  needs a Chromium on disk) — see `server/.env.example`
 - Disruptions (optional, extra source): `wroclaw.pl/komunikacja/zmiany-w-komunikacji`,
   scraped (configurable via `ALERT_PAGE_URLS`, empty by default)
 

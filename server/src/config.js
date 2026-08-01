@@ -115,21 +115,26 @@ module.exports = {
     refreshIntervalMs: num(process.env.ALERTS_REFRESH_INTERVAL_MS, 5 * 60_000),
     timeoutMs: num(process.env.ALERTS_TIMEOUT_MS, 15_000),
     maxItems: num(process.env.ALERTS_MAX_ITEMS, 100),
-    // The default alerts source: reads @AlertMPK's public posts with a
-    // headless browser instead of the paid X API. See src/twitterScrape.js for
-    // why this is a heavier, more fragile provider than a plain page fetch —
-    // it needs a real Chromium on disk (see TWITTER_SCRAPE_EXECUTABLE_PATH
-    // below and `npm run scrape:twitter`). Set to false to turn it off, e.g.
-    // on a box with no Chromium and no way to install one.
+    // The default alerts source: reads @AlertMPK's public posts instead of
+    // the paid X API. See src/twitterScrape.js for the two ways this can
+    // happen and why "http" is the more fragile of the two, despite being the
+    // default — it needs no Chromium install, at the cost of depending on one
+    // specific undocumented endpoint instead of the rendered page itself.
+    // Set to false to turn this source off entirely.
     twitterScrape: {
       enabled: bool(process.env.TWITTER_SCRAPE_ENABLED, true),
+      // "http": plain fetch of the syndication/embed endpoint, no browser.
+      // "browser": drive a real headless Chromium instead — heavier to run,
+      // but reads the rendered page rather than one specific undocumented
+      // URL, so it's the fallback if TWITTER_SCRAPE_MODE=http stops working.
+      mode: process.env.TWITTER_SCRAPE_MODE === 'browser' ? 'browser' : 'http',
       username: process.env.TWITTER_SCRAPE_USERNAME || 'AlertMPK',
       maxPosts: num(process.env.TWITTER_SCRAPE_MAX_POSTS, 10),
       timeoutMs: num(process.env.TWITTER_SCRAPE_TIMEOUT_MS, 30_000),
       headless: bool(process.env.TWITTER_SCRAPE_HEADLESS, true),
-      // Only needed if playwright-core's own managed browser install (`npx
-      // playwright install chromium`) is not what should be used — e.g. a
-      // distro-packaged Chromium already on the box.
+      // Only used in "browser" mode, and only needed if playwright-core's own
+      // managed browser install (`npx playwright install chromium`) is not
+      // what should be used — e.g. a distro-packaged Chromium already on the box.
       executablePath: process.env.TWITTER_SCRAPE_EXECUTABLE_PATH || undefined,
     },
   },
