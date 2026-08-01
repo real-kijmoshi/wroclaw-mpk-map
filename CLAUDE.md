@@ -274,7 +274,16 @@ live on a notice reading "(11 - 16 lipca)": the single-day pattern matched only
 `react-native-maps` is native-only, so the app cannot actually run in a browser.
 `app/metro.config.js` swaps it for `app/.preview/maps-stub.js` **on web only**,
 which makes `npx expo export --platform web` both a real compile check and a way
-to render every other part of the UI:
+to render every other part of the UI. The stub forwards a ref and answers
+`fitToCoordinates`/`animateToRegion` with no-ops, so keep it in step with any
+imperative map call added to `MapView.jsx` — otherwise the preview throws where
+the app works.
+
+The page the bundle is rendered into is `app/public/index.html`, which Expo's
+metro web bundler picks up as the HTML template (it injects the favicon and the
+script tag into it). It is where `viewport-fit=cover` lives, and that one
+attribute is what makes `env(safe-area-inset-*)` — and therefore every
+`useSafeAreaInsets()` value in the web build — anything other than zero.
 
 ```bash
 cd app && API_URL=http://localhost:3000 npx expo export --platform web --output-dir /tmp/web
