@@ -8,6 +8,28 @@ const { extractAffectedLines, parseFeed, parsePage, stripHtml } = require('../sr
 const KNOWN = new Set(['4', '10', '17', '128', '240', 'A', 'N']);
 
 describe('extractAffectedLines', () => {
+  it('does not mistake a day-of-month for a real line with the same number', () => {
+    // Wrocław has real lines 1, 6 and 21 — these are dates, not references to
+    // them. Observed live: "21.07.2026" and "6 lipca" produced phantom badges
+    // for lines 21 and 6 on notices that were correctly about other lines.
+    assert.deepEqual(extractAffectedLines('Od 1 sierpnia zmiana tras tramwajów', KNOWN), []);
+    assert.deepEqual(
+      extractAffectedLines('Kłokoczyce: od 6 lipca zmiany w kursowaniu autobusów', KNOWN),
+      [],
+    );
+    assert.deepEqual(
+      extractAffectedLines('Od 25 lipca zmiana lokalizacji przystanku 21.07.2026', KNOWN),
+      [],
+    );
+  });
+
+  it('still finds a real line mentioned next to an unrelated date', () => {
+    assert.deepEqual(
+      extractAffectedLines('Linia 4 pojedzie objazdem od 25.07.2026', KNOWN).sort(),
+      ['4'],
+    );
+  });
+
   it('finds line numbers that exist in the timetable', () => {
     const text = 'Uwaga! Linie 4, 10 i 17 jadą objazdem.';
     assert.deepEqual(extractAffectedLines(text, KNOWN).sort(), ['10', '17', '4']);
@@ -100,8 +122,10 @@ describe('parsePage', () => {
   it('finds notices and resolves relative links', () => {
     const items = parsePage(html, 'https://www.wroclaw.pl/komunikacja/zmiany-w-komunikacji');
     assert.deepEqual(
+      // The trailing publish date (and its "od"/"z dnia" connector) is
+      // stripped from the title; it is already surfaced as a relative age.
       items.map((item) => item.title),
-      ['Objazd linii 4 i 10 od 15.06.2026', 'Awaria tramwaju na Świdnickiej'],
+      ['Objazd linii 4 i 10', 'Awaria tramwaju na Świdnickiej'],
     );
     assert.equal(items[0].url, 'https://www.wroclaw.pl/komunikacja/objazd-linii-4');
   });
@@ -206,9 +230,64 @@ describe('parsePage', () => {
   });
 });
 
+describe('parsePage against real page markup', () => {
+  // Wrocław's notice page is built with Tilda, which wraps each photo tile in
+  // an anchor that itself contains a <style> block for responsive images —
+  // observed live as raw CSS leaking into a notice's title.
+  const tildaTile = (href, title, dateSuffix) => `
+    <a href="${href}" class="t-tilesWithPhoto__link">
+      <style>
+        @media screen and (max-width: 767px) { .t-tilesWithPhoto.t-template .boxWithImg img { min-height: 250px; } }
+      </style>
+      <img src="/photo.jpg">
+      <div class="t-tilesWithPhoto__title">${title} ${dateSuffix}</div>
+    </a>`;
+
+  const page = `
+    <a href="https://www.wroclaw.pl/komunikacja/zmiany-w-komunikacji">Zmiany w komunikacji</a>
+    ${tildaTile('/a', 'Ludzkie szczątki na Traugutta. Od 1 sierpnia zmiana tras tramwajów', '30.07.2026')}
+    ${tildaTile('/b', 'Zmiana nazwy przystanku „pl. Staszica”', '27.07.2026')}
+    ${tildaTile('/c', 'Od 25 lipca zmiana lokalizacji przystanku "Kromera (Czajkowskiego)"', '21.07.2026')}
+    ${tildaTile('/d', 'Kłokoczyce: od 6 lipca zmiany w kursowaniu autobusów', '02.07.2026')}`;
+
+  it('drops the page\'s own self-link rather than reporting it as a notice', () => {
+    const items = parsePage(page, 'https://www.wroclaw.pl/komunikacja/zmiany-w-komunikacji');
+    assert.ok(
+      !items.some((item) => item.title === 'Zmiany w komunikacji'),
+      'the page heading linking to itself is not a distinct notice',
+    );
+  });
+
+  it('never leaks the Tilda tile stylesheet into a title or body', () => {
+    const items = parsePage(page, 'https://www.wroclaw.pl/komunikacja/zmiany-w-komunikacji');
+    assert.equal(items.length, 4);
+    for (const item of items) {
+      assert.doesNotMatch(item.title, /@media|t-tilesWithPhoto|min-height/);
+      assert.doesNotMatch(item.content, /@media|t-tilesWithPhoto|min-height/);
+    }
+  });
+
+  it('strips the trailing publish date off the displayed title', () => {
+    const [first] = parsePage(page, 'https://www.wroclaw.pl/komunikacja/zmiany-w-komunikacji');
+    assert.equal(
+      first.title,
+      'Ludzkie szczątki na Traugutta. Od 1 sierpnia zmiana tras tramwajów',
+    );
+  });
+});
+
 describe('stripHtml', () => {
   it('removes tags and decodes common entities', () => {
     assert.equal(stripHtml('<p>a &amp; b</p>'), 'a & b');
     assert.equal(stripHtml(undefined), '');
+  });
+
+  it('removes a <style> block along with its content, not just its tags', () => {
+    const withStyle = '<style>@media (max-width: 767px) { .x { color: red; } }</style>Real text';
+    assert.equal(stripHtml(withStyle), 'Real text');
+  });
+
+  it('removes a <script> block along with its content', () => {
+    assert.equal(stripHtml('<script>alert(1)</script>Real text'), 'Real text');
   });
 });

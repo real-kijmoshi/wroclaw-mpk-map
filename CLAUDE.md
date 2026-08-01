@@ -179,6 +179,23 @@ real payload — that is the first thing to check when the feed goes stale. The
 warning prints the payload's keys and a sample; capture the whole thing with
 `curl -s https://api.open-data.cui.wroclaw.pl/od2/6/ | head -c 2000`.
 
+The scraped page is built with Tilda, whose photo tiles wrap a per-tile
+`<style>` block inside the anchor itself. `stripHtml()` removes `<style>` and
+`<script>` blocks along with their content, not just their tags — stripping
+tags alone left raw CSS text (`@media screen and (max-width: 767px) {…}`)
+sitting in a notice's title in production. The page's own header links back to
+itself with a title that reads exactly like a disruption ("Zmiany w
+komunikacji"); `parsePage()` drops any notice whose link resolves to the page
+URL itself for that reason.
+
+Wrocław has real lines numbered 1, 6 and 21. A day-of-month next to those
+numbers ("Od **1** sierpnia", "**21**.07.2026", "od **6** lipca") is not a
+reference to those lines, but matching against the known-lines set alone
+cannot tell the difference — the number really is a valid line, just not the
+one in that sentence. `extractAffectedLines()` strips recognized Polish date
+expressions (`POLISH_DATE`) before tokenizing, specifically because this
+produced phantom line badges on notices that were correctly about other lines.
+
 ## How to work here
 
 - **Add a test for every bug you fix.** Not ceremony. `findStopsNear` uses real
