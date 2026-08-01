@@ -38,16 +38,20 @@ const toTimestamp = (value, fallback = Date.now()) => {
 /**
  * Polish date expressions to strip before hunting for line numbers.
  *
- * Matches numeric dates (25.07.2026) and "D <month>" phrases (6 lipca,
- * 1 sierpnia). Both forms put a bare day-of-month number next to the
- * surrounding text, and Wrocław has real lines numbered 1, 6 and 21 — "Od 6
- * lipca" and "21.07.2026" produced phantom line 6 and line 21 badges on
- * otherwise correctly filtered notices, because the day happened to collide
- * with a real line. Matching against known lines alone cannot catch this: the
- * number really is a valid line number, just not the one in this sentence.
+ * Matches numeric dates (25.07.2026), "D <month>" phrases (6 lipca,
+ * 1 sierpnia), and "D1 - D2 <month>" ranges (11 - 16 lipca). All three forms
+ * put a bare day-of-month number next to the surrounding text, and Wrocław
+ * has real lines numbered 1, 6, 11 and 21 — "Od 6 lipca", "21.07.2026" and
+ * "(11 - 16 lipca)" all produced a phantom line badge on an otherwise
+ * correctly filtered notice, because the day happened to collide with a real
+ * line. The range form has to come first in the alternation: at the start of
+ * "11 - 16 lipca" the single-day pattern would match just "11" and stop,
+ * leaving the range's opening number unstripped. Matching against known
+ * lines alone cannot catch any of this: the number really is a valid line
+ * number, just not the one in this sentence.
  */
 const POLISH_DATE =
-  /\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4}|\b\d{1,2}\s+(?:stycznia|lutego|marca|kwietnia|maja|czerwca|lipca|sierpnia|wrze[śs]nia|pa[źz]dziernika|listopada|grudnia)\b/gi;
+  /\b\d{1,2}\s*(?:[-–—]|do)\s*\d{1,2}\s+(?:stycznia|lutego|marca|kwietnia|maja|czerwca|lipca|sierpnia|wrze[śs]nia|pa[źz]dziernika|listopada|grudnia)\b|\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4}|\b\d{1,2}\s+(?:stycznia|lutego|marca|kwietnia|maja|czerwca|lipca|sierpnia|wrze[śs]nia|pa[źz]dziernika|listopada|grudnia)\b/gi;
 
 /**
  * Pull line numbers out of a disruption message.

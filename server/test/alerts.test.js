@@ -23,6 +23,24 @@ describe('extractAffectedLines', () => {
     );
   });
 
+  it('does not mistake the opening day of a date range for a real line', () => {
+    // Observed live: "(11 - 16 lipca)" produced a phantom line 11 badge on a
+    // notice about a crane installation, not tram line 11 — the single-day
+    // stripper caught "16 lipca" but left the range's opening "11" behind.
+    const known = new Set([...KNOWN, '11']);
+    assert.deepEqual(
+      extractAffectedLines(
+        'Zmiany rozkładu jazdy autobusów i tramwajów (11 - 16 lipca)',
+        known,
+      ),
+      [],
+    );
+    assert.deepEqual(
+      extractAffectedLines('Utrudnienia od 11 do 16 lipca na trasie objazdu', known),
+      [],
+    );
+  });
+
   it('still finds a real line mentioned next to an unrelated date', () => {
     assert.deepEqual(
       extractAffectedLines('Linia 4 pojedzie objazdem od 25.07.2026', KNOWN).sort(),
