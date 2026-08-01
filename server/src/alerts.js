@@ -6,6 +6,7 @@ const config = require('./config');
 const logger = require('./logger');
 const { fetchWithTimeout } = require('./http');
 const { lineToType } = require('./lines');
+const { scrapePosts } = require('./twitterScrape');
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 
@@ -269,6 +270,48 @@ class NoticeProvider {
 }
 
 /**
+ * Reads @AlertMPK's public posts with a headless browser.
+ *
+ * The account is dedicated entirely to service alerts, unlike the corporate
+ * news page rejected earlier — so unlike `parsePage()`, a post here does not
+ * have to pass the disruption/transport keyword gate to count. Line numbers
+ * are still extracted centrally by `AlertsService.refresh()`, same as every
+ * other provider.
+ */
+class TwitterScrapeProvider {
+  constructor({ username, maxPosts, timeoutMs, headless, executablePath }) {
+    this.username = username;
+    this.maxPosts = maxPosts;
+    this.timeoutMs = timeoutMs;
+    this.headless = headless;
+    this.executablePath = executablePath;
+    this.url = `https://x.com/${username}`;
+    this.name = `twitter-scrape:@${username}`;
+  }
+
+  async fetch() {
+    const posts = await scrapePosts({
+      url: this.url,
+      limit: this.maxPosts,
+      timeoutMs: this.timeoutMs,
+      headless: this.headless,
+      executablePath: this.executablePath,
+    });
+
+    if (!posts.length) throw new Error('no posts found — the profile markup may have changed');
+
+    return posts.map((post) => ({
+      id: post.url ?? `${this.name}:${post.timestamp}`,
+      title: null,
+      content: post.text,
+      url: post.url,
+      timestamp: post.timestamp,
+      source: this.url,
+    }));
+  }
+}
+
+/**
  * Aggregates disruption notices from every configured page.
  *
  * Fails soft: a provider that throws keeps the previous alert list in place and
@@ -281,6 +324,9 @@ class AlertsService {
     this.alerts = [];
     this.timer = null;
     this.providers = config.alerts.pages.map((url) => new NoticeProvider(url));
+    if (config.alerts.twitterScrape.enabled) {
+      this.providers.push(new TwitterScrapeProvider(config.alerts.twitterScrape));
+    }
 
     this.status = {
       providers: this.providers.map((provider) => ({
@@ -389,6 +435,7 @@ class AlertsService {
 module.exports = {
   AlertsService,
   NoticeProvider,
+  TwitterScrapeProvider,
   extractAffectedLines,
   parseFeed,
   parsePage,

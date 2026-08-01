@@ -114,12 +114,19 @@ module.exports = {
     refreshIntervalMs: num(process.env.ALERTS_REFRESH_INTERVAL_MS, 5 * 60_000),
     timeoutMs: num(process.env.ALERTS_TIMEOUT_MS, 15_000),
     maxItems: num(process.env.ALERTS_MAX_ITEMS, 100),
-    // Optional: X/Twitter is only used when a bearer token is supplied, because
-    // reading a user timeline is no longer possible on the free API tier.
-    twitter: {
-      bearerToken: process.env.TWITTER_BEARER_TOKEN || null,
-      userId: process.env.TWITTER_USER_ID || '296212741', // @mpkwroclaw
-      username: process.env.TWITTER_USERNAME || 'mpkwroclaw',
+    // Optional and off by default: reads @AlertMPK's public posts with a
+    // headless browser instead of the paid X API. See src/twitterScrape.js for
+    // why this is a separate, heavier, more fragile provider than the others.
+    twitterScrape: {
+      enabled: bool(process.env.TWITTER_SCRAPE_ENABLED, false),
+      username: process.env.TWITTER_SCRAPE_USERNAME || 'AlertMPK',
+      maxPosts: num(process.env.TWITTER_SCRAPE_MAX_POSTS, 10),
+      timeoutMs: num(process.env.TWITTER_SCRAPE_TIMEOUT_MS, 30_000),
+      headless: bool(process.env.TWITTER_SCRAPE_HEADLESS, true),
+      // Only needed if playwright-core's own managed browser install (`npx
+      // playwright install chromium`) is not what should be used — e.g. a
+      // distro-packaged Chromium already on the box.
+      executablePath: process.env.TWITTER_SCRAPE_EXECUTABLE_PATH || undefined,
     },
   },
 
