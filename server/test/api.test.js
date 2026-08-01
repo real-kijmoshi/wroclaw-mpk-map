@@ -115,6 +115,34 @@ describe('HTTP API', () => {
     assert.equal(near.body.shapeId, 's4b');
   });
 
+  it('picks the direction the vehicle is running when given a heading', async () => {
+    // Both directions of line 4 meet at Oporów. The heading is what separates
+    // them — and it has to be part of the cache key, or the second caller is
+    // served the first one's direction.
+    const arriving = await get('/shapes/4?lat=51.081&lon=16.983&heading=231&format=compact');
+    assert.equal(arriving.body.shapeId, 's4a');
+
+    const leaving = await get('/shapes/4?lat=51.081&lon=16.983&heading=78&format=compact');
+    assert.equal(leaving.body.shapeId, 's4b');
+  });
+
+  it('describes a tracked vehicle, its destination and its remaining stops', async () => {
+    const { status, body } = await get('/vehicle/4-1');
+    assert.equal(status, 200);
+    assert.equal(body.vehicle.line, '4');
+    assert.equal(body.trip.towards, 'Oporów');
+    assert.equal(body.trip.atStop.name, 'Rynek', 'it is sitting at the first stop');
+    assert.deepEqual(
+      body.trip.nextStops.map((stop) => stop.name),
+      ['Świdnicka', 'Oporów'],
+    );
+    assert.ok(body.trip.nextStops.every((stop) => stop.etaSeconds >= 0));
+  });
+
+  it('404s for a vehicle that is not being tracked', async () => {
+    assert.equal((await get('/vehicle/4-nope')).status, 404);
+  });
+
   it('lists every variant of a line', async () => {
     const { body } = await get('/shapes/4/variants');
     assert.equal(body.variants.length, 2);

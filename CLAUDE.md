@@ -147,6 +147,30 @@ without it the build falls back to Expo Go, which cannot load
 `react-native-maps`. Both are pinned by `expo install`, so bump them with
 `npx expo install --fix` and not by hand.
 
+**17. A vehicle's direction cannot be decided by distance alone.**
+Both directions of a line run down the same street, and a tram line runs on
+rails a few metres apart — so whichever variant `matchVariant()` finds nearer is
+decided by GPS noise, and half the time it is the one going the other way. That
+is not a cosmetic error: it announces the opposite terminus and a stop list the
+vehicle will never reach. The heading is folded into the score
+(`HEADING_PENALTY_METERS` in `server/src/gtfs/store.js`), which is why
+`/shapes/:line` takes `?heading=` and why both the app and `views/map.html` send
+it. The penalty is graded by the cosine of the angle rather than a cutoff at
+90°, because a heading is noisy and a hard threshold flips the answer on a bend.
+
+**18. MPK's feed has no trip id, so the run is inferred — and may be unknown.**
+`describeVehicle()` in `server/src/progress.js` projects the position onto the
+matched shape, turns metres into seconds through each stop's `alongMeters` /
+`arrivalOffset`, and then asks which of the shape's departures would be exactly
+there right now. Beyond `MAX_DELAY_SECONDS` (45 min) no run is claimed: the
+nearer explanation is a different departure, and guessing produces a confident
+"18 minut spóźnienia" that is really the next tram running on time. When no run
+matches, `scheduled` is null everywhere and only `etaSeconds` — remaining
+scheduled running time from the vehicle's real position — is served. Never
+substitute the variant's own sample times there; they belong to some other
+departure. This all rests on every trip of a shape sharing one relative profile,
+which is true of this feed and is what makes the offsets reusable.
+
 ## Fragile by nature
 
 The default (and, out of the box, only) alerts source is `@AlertMPK` on X —
@@ -290,7 +314,11 @@ cd app && API_URL=http://localhost:3000 npx expo export --platform web --output-
 python3 -m http.server 4620 --directory /tmp/web
 ```
 
-The map area will be an empty grey box. That is the stub, not a bug.
+The map area will be an empty grey box. That is the stub, not a bug. The
+markers are laid out as a strip of chips along the top of it, in no meaningful
+position — they exist so the things reached by *tapping* one (the route banner,
+the departures board, a vehicle's stop list) can be seen at all; rendering them
+as nothing meant half the UI was unreachable in the preview.
 
 ## Open work
 

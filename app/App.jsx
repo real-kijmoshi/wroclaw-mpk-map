@@ -18,10 +18,18 @@ import Material from "./components/Material";
 import PressableScale from "./components/PressableScale";
 import StatusPill from "./components/StatusPill";
 import DeparturesSheet from "./components/DeparturesSheet";
+import VehicleSheet from "./components/VehicleSheet";
 import LinesSelection from "./modals/LinesSelection";
 import SettingsModal from "./modals/SettingsModal";
 import AlertsModal from "./modals/AlertsModal";
-import { fetchAlerts, fetchLines, fetchVehicles, normaliseLines } from "./api";
+import {
+  fetchAlerts,
+  fetchLines,
+  fetchVehicle,
+  fetchVehicles,
+  normaliseLines,
+  normaliseTrip,
+} from "./api";
 import { color, layout, radius, shadow, space, type } from "./theme";
 
 const VEHICLE_REFRESH_MS = 10_000;
@@ -79,6 +87,8 @@ function Shell() {
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [followUser, setFollowUser] = useState(false);
   const [selectedStop, setSelectedStop] = useState(null);
+  const [selectedVehicleId, setSelectedVehicleId] = useState(null);
+  const [vehicleTrip, setVehicleTrip] = useState({ status: "loading", trip: null });
 
   const [linesSelectionVisible, setLinesSelectionVisible] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
@@ -213,6 +223,70 @@ function Shell() {
     [vehicles, selectedSet],
   );
 
+  // Read back out of the live list rather than held in state, so the selected
+  // vehicle keeps moving — and disappears with the rest when it stops
+  // reporting or its line is switched off.
+  const selectedVehicle = useMemo(
+    () => visibleVehicles.find((vehicle) => vehicle.id === selectedVehicleId) ?? null,
+    [visibleVehicles, selectedVehicleId],
+  );
+
+  /**
+   * The stops the selected vehicle has left to serve.
+   *
+   * /locations already carries its destination and next stop for the banner;
+   * this is the full board, and it is only worth a request while someone is
+   * looking at one vehicle.
+   */
+  const loadVehicleTrip = useCallback(
+    async (signal, quiet) => {
+      if (!selectedVehicleId) return;
+      if (!quiet) setVehicleTrip((previous) => ({ ...previous, status: "loading" }));
+
+      try {
+        const payload = await fetchVehicle(selectedVehicleId, { signal, retries: 1 });
+        setVehicleTrip({ status: "ready", trip: normaliseTrip(payload) });
+      } catch (error) {
+        if (error.name !== "AbortError") setVehicleTrip({ status: "error", trip: null });
+      }
+    },
+    [selectedVehicleId],
+  );
+
+  useEffect(() => {
+    if (!selectedVehicleId) {
+      setVehicleTrip({ status: "loading", trip: null });
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    loadVehicleTrip(controller.signal, false);
+    // In step with the positions themselves: the answer changes when the
+    // vehicle moves and not before.
+    const id = setInterval(() => loadVehicleTrip(controller.signal, true), VEHICLE_REFRESH_MS);
+
+    return () => {
+      controller.abort();
+      clearInterval(id);
+    };
+  }, [selectedVehicleId, loadVehicleTrip]);
+
+  // A vehicle that stopped reporting takes its sheet with it.
+  useEffect(() => {
+    if (selectedVehicleId && !selectedVehicle) setSelectedVehicleId(null);
+  }, [selectedVehicleId, selectedVehicle]);
+
+  // The two sheets share the bottom of the screen, so only one can be up.
+  const selectStop = useCallback((stop) => {
+    setSelectedStop(stop);
+    if (stop) setSelectedVehicleId(null);
+  }, []);
+
+  const selectVehicle = useCallback((vehicle) => {
+    setSelectedVehicleId(vehicle?.id ?? null);
+    if (vehicle) setSelectedStop(null);
+  }, []);
+
   // Alerts touching a line you follow matter more than the rest.
   const rankedAlerts = useMemo(() => {
     const relevant = (alert) => alert.affected?.some((line) => selectedSet.has(line));
@@ -233,8 +307,11 @@ function Shell() {
         initialRegion={INITIAL_REGION}
         vehicles={visibleVehicles}
         showsUserLocation={followUser}
-        onSelectStop={setSelectedStop}
+        onSelectStop={selectStop}
         selectedStopId={selectedStop?.id}
+        onSelectVehicle={selectVehicle}
+        selectedVehicleId={selectedVehicleId}
+        vehicleTrip={vehicleTrip.trip}
         topOffset={topSpace + STATUS_PILL_HEIGHT + space.sm}
         bottomOffset={tabBarSpace + space.sm}
       />
@@ -266,6 +343,8 @@ function Shell() {
         </View>
       )}
 
+      {/* No lines followed means no vehicles on the map, so neither sheet can
+          be up and this cannot collide with them. */}
       {preferencesLoaded && lines !== null && selectedLines.length === 0 && !selectedStop && (
         <View style={[styles.callToAction, { bottom: tabBarSpace }]} pointerEvents="box-none">
           <PressableScale
@@ -282,6 +361,15 @@ function Shell() {
       <DeparturesSheet
         stop={selectedStop}
         onClose={() => setSelectedStop(null)}
+        bottomOffset={tabBarSpace}
+      />
+
+      <VehicleSheet
+        vehicle={selectedVehicle}
+        trip={vehicleTrip.trip}
+        status={vehicleTrip.status}
+        onRetry={() => loadVehicleTrip(undefined, false)}
+        onClose={() => setSelectedVehicleId(null)}
         bottomOffset={tabBarSpace}
       />
 

@@ -57,7 +57,9 @@ change still needs a new build.
 | `theme.js` | Colours, iOS type scale, spacing, materials, springs |
 | `components/MapView.jsx` | Map, vehicle markers, route polyline, route card, locate button |
 | `components/Modal.jsx` | Bottom sheet: grabber, sheet header, swipe-to-dismiss |
+| `components/BottomSheet.jsx` | The dark board over the map: spring, drag-to-dismiss, tab-bar clearance |
 | `components/DeparturesSheet.jsx` | The amber departure board for a tapped stop |
+| `components/VehicleSheet.jsx` | Where a tapped vehicle is going, and its remaining stops with times |
 | `components/StatusPill.jsx` | Data-freshness pill, and the shortcut into the line picker |
 | `components/Material.jsx` | Translucent surface (real backdrop blur on the web) |
 | `components/PressableScale.jsx` | Press-to-shrink touchable with haptics |
