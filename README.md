@@ -77,7 +77,7 @@ Base URL: your deployment, or `http://localhost:3000`.
 | `GET /stop/:id/departures` | Next departures, filtered to services running today. `?limit=` `?within=` (minutes) |
 | `GET /alerts` | Disruption notices. `?since=` (ms epoch) `?line=` |
 | `GET /health` | Status of every upstream source and index |
-| `GET /map`, `GET /status` | Browser map (with a service-alert panel) and status dashboard |
+| `GET /map`, `GET /status` | Browser map — vehicle directions, the stops each has left and a service-alert panel — and the status dashboard |
 
 `/shapes/:line` returns the verbose legacy payload by default so app builds already on
 people's phones keep working; `?format=compact` is what the current app requests.

@@ -322,47 +322,69 @@
             100% { transform: rotate(360deg); }
         }
 
-        .vehicle-popup {
-            text-align: center;
-            font-family: inherit;
-            color: #333;
+        /* Vehicle markers: the line badge, plus a tip pointing the way it is
+           travelling. The arrow sits in a full-size box that is what actually
+           rotates, so it orbits the badge instead of spinning in place. */
+        .vehicle-pin {
+            position: relative;
+            width: 40px;
+            height: 40px;
         }
 
-        .vehicle-popup .line-number {
-            font-size: 1.3rem;
-            font-weight: 800;
-            margin-bottom: 8px;
-        }
-
-        .vehicle-popup .vehicle-type {
-            font-size: 0.9rem;
-            color: #666;
-            text-transform: capitalize;
-            font-weight: 600;
-        }
-
-        .vehicle-popup .direction {
-            font-size: 1rem;
+        .vehicle-badge {
+            position: absolute;
+            inset: 4px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
             font-weight: 700;
-            margin-bottom: 6px;
+            font-size: 12px;
+            border: 2px solid rgba(255, 255, 255, 0.9);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
         }
 
-        .vehicle-popup .next-stop {
-            font-size: 0.85rem;
-            color: #444;
-            margin-top: 6px;
+        .vehicle-pin.selected .vehicle-badge {
+            border-color: #fff;
+            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35), 0 4px 14px rgba(0, 0, 0, 0.55);
         }
 
-        .vehicle-popup .delay {
+        /* Wider than the pin on purpose: the tip has to clear the badge it
+           orbits, or it hides behind its own shadow. */
+        .vehicle-arrow {
+            position: absolute;
+            inset: -8px;
+        }
+
+        .vehicle-arrow::before {
+            content: '';
+            position: absolute;
+            top: -1px;
+            left: 50%;
+            margin-left: -5px;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-bottom: 9px solid currentColor;
+        }
+
+        .vehicle-tooltip {
+            background: #1e1e1e;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: #fff;
             font-size: 0.8rem;
-            color: #C2410C;
-            font-weight: 600;
+            padding: 4px 8px;
         }
+
+        .vehicle-tooltip::before { border-top-color: #1e1e1e; }
 
         .route-info {
             position: absolute;
             top: 20px;
             right: 20px;
+            width: 300px;
+            max-width: calc(100% - 40px);
             background: linear-gradient(145deg, #2a2a2a 0%, #1e1e1e 100%);
             color: white;
             padding: 15px 20px;
@@ -393,6 +415,7 @@
             margin: 0 0 5px 0;
             font-size: 1.1rem;
             font-weight: 700;
+            color: #fff;
         }
 
         .route-info p {
@@ -400,6 +423,115 @@
             font-size: 0.85rem;
             color: #B0B0B0;
         }
+
+        /* The selected vehicle: where it is going, and the stops it has left.
+           Sized so a long route scrolls inside the panel rather than running
+           off the bottom of the map. */
+        .route-head {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding-right: 20px;
+        }
+
+        .route-badge {
+            color: #fff;
+            width: 34px;
+            height: 34px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.95rem;
+            flex: none;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        }
+
+        /* The panel carries the line's colour so the stop dots can inherit it;
+           everything with words in it says its own colour, or the whole card
+           turns into one long stretch of line blue. */
+        .route-status {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            margin-top: 10px;
+            font-size: 0.8rem;
+            color: #fff;
+        }
+
+        .route-status .muted { color: #B0B0B0; }
+        .route-status .warn { color: #FFB020; font-weight: 600; }
+
+        .route-stops {
+            margin-top: 10px;
+            max-height: 320px;
+            overflow-y: auto;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .stop-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 2px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .stop-row:last-child { border-bottom: none; }
+        .stop-row.passed { opacity: 0.5; }
+
+        .stop-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: currentColor;
+            flex: none;
+        }
+
+        .stop-row.passed .stop-dot {
+            background: transparent;
+            border: 2px solid currentColor;
+        }
+
+        .stop-name {
+            flex: 1;
+            color: #fff;
+            font-size: 0.85rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .stop-name i {
+            display: block;
+            font-style: normal;
+            font-size: 0.7rem;
+            color: #B0B0B0;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Amber is the countdown, and only the countdown. */
+        .stop-eta {
+            font-weight: 700;
+            font-size: 1rem;
+            color: #FFB020;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .stop-eta i {
+            font-style: normal;
+            font-size: 0.7rem;
+            opacity: 0.75;
+            margin-left: 2px;
+        }
+
+        .stop-ago, .route-empty {
+            font-size: 0.75rem;
+            color: #B0B0B0;
+        }
+
+        .route-empty { padding: 12px 2px; }
 
         .close-route {
             position: absolute;
@@ -436,11 +568,24 @@
                 flex-direction: column;
             }
 
+            /* The sidebar owns the top 60% of a phone screen, so the panel
+               goes to the bottom — where a sheet belongs anyway — instead of
+               sitting underneath it. */
             .route-info {
-                top: 10px;
-                right: 10px;
+                top: auto;
+                bottom: 10px;
                 left: 10px;
                 right: 10px;
+                width: auto;
+                max-width: none;
+                /* The map is only the 40% of the screen the sidebar leaves;
+                   the panel has to fit inside that, not reach up behind it. */
+                max-height: calc(40vh - 20px);
+                overflow: hidden;
+            }
+
+            .route-stops {
+                max-height: calc(40vh - 150px);
             }
         }
     </style>
@@ -490,9 +635,16 @@
             </div>
             
             <div class="route-info" id="routeInfo">
-                <button class="close-route" onclick="hideRoute()">×</button>
-                <h3 id="routeTitle">Linia X</h3>
-                <p id="routeType">Typ pojazdu</p>
+                <button class="close-route" onclick="clearSelection()">×</button>
+                <div class="route-head">
+                    <div class="route-badge" id="routeBadge">4</div>
+                    <div>
+                        <h3 id="routeTitle">Linia X</h3>
+                        <p id="routeType">Typ pojazdu</p>
+                    </div>
+                </div>
+                <div class="route-status" id="routeStatus"></div>
+                <div class="route-stops" id="routeStops"></div>
             </div>
         </div>
     </div>
@@ -501,6 +653,13 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     
     <script>
+        // Anything that reaches innerHTML goes through this: line names, stop
+        // names and alert text all come from upstream feeds, not from us.
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[<>&"]/g, (c) =>
+                ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+        }
+
         // Colors matching your React Native app
         const Colors = {
             tram: "#0075FF",
@@ -547,146 +706,314 @@
         }).addTo(map);
 
         // Store markers, routes, and current selections
-        let vehicleMarkers = [];
+        /** @type {Map<string, {marker: L.Marker, look: string}>} vehicle id -> marker */
+        const vehicleMarkers = new Map();
         let selectedLines = [];
         let vehicleData = [];
-        let linesData = {};
         let currentRoute = null;
+        /** The drawn route's layers, so progress along it can be updated in place. */
+        let routeLayers = null;
+        /** The vehicle being followed: { id, line, type, shapeId, trip, stale }. */
+        let selection = null;
 
         // Create custom vehicle marker
-        function createVehicleMarker(vehicle) {
-            const color = Colors[vehicle.type] || Colors.unknown;
-            
-            const customIcon = L.divIcon({
-                html: `
-                    <div style="
-                        background: ${color};
-                        color: white;
-                        border-radius: 8px;
-                        width: 32px;
-                        height: 32px;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        font-weight: 700;
-                        font-size: 12px;
-                        border: 2px solid rgba(255,255,255,0.9);
-                        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-                        text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-                    ">${vehicle.line}</div>
-                `,
+        function vehicleIcon(vehicle, selected) {
+            const colour = Colors[vehicle.type] || Colors.unknown;
+            // No heading until a vehicle has visibly moved, so the arrow is
+            // omitted rather than pointed at an arbitrary north.
+            const arrow = Number.isFinite(vehicle.heading)
+                ? `<div class="vehicle-arrow" style="color:${colour}; transform: rotate(${Math.round(vehicle.heading)}deg)"></div>`
+                : '';
+
+            return L.divIcon({
+                html: `<div class="vehicle-pin${selected ? ' selected' : ''}">${arrow}` +
+                    `<div class="vehicle-badge" style="background:${colour}">${escapeHtml(vehicle.line)}</div></div>`,
                 className: 'custom-vehicle-icon',
-                iconSize: [32, 32],
-                iconAnchor: [16, 16]
+                iconSize: [40, 40],
+                iconAnchor: [20, 20]
             });
-
-            const marker = L.marker([vehicle.lat, vehicle.lon], { icon: customIcon });
-            
-            marker.bindPopup(`
-                <div class="vehicle-popup">
-                    <div class="line-number">Linia ${vehicle.line}</div>
-                    ${describeTrip(vehicle.trip)}
-                    <div class="vehicle-type">${translations[vehicle.type]?.name || vehicle.type}</div>
-                </div>
-            `);
-
-            // Add click handler to show route
-            marker.on('click', () => {
-                // The heading is what tells the two directions of a line apart;
-                // without it the route drawn is a coin flip.
-                fetchRouteShape(vehicle.line, vehicle.type, vehicle.lat, vehicle.lon, vehicle.heading);
-            });
-
-            return marker;
         }
 
-        // Where the vehicle is headed and when it reaches the next stop, as the
-        // server worked it out from the timetable. Absent for a vehicle it
-        // could not place on a route, so every part of it is optional.
-        function describeTrip(trip) {
-            if (!trip) return '';
-
-            const parts = [];
-            if (trip.towards) parts.push(`<div class="direction">→ ${trip.towards}</div>`);
-
-            if (trip.nextStop) {
-                const minutes = Math.round((trip.nextStop.etaSeconds ?? 0) / 60);
-                const when = minutes <= 0 ? 'dojeżdża' : `za ${minutes} min`;
-                parts.push(`<div class="next-stop">Następny: ${trip.nextStop.name} (${when})</div>`);
-            }
-
-            const delayMinutes = Math.round((trip.delaySeconds ?? 0) / 60);
-            if (trip.delaySeconds != null && delayMinutes >= 1) {
-                parts.push(`<div class="delay">Spóźniony ${delayMinutes} min</div>`);
-            }
-
-            return parts.join('');
+        function vehicleTooltip(vehicle) {
+            const towards = vehicle.trip?.towards || vehicle.trip?.headsign;
+            const tail = towards
+                ? '→ ' + escapeHtml(towards)
+                : escapeHtml(translations[vehicle.type]?.name || vehicle.type);
+            return '<strong>' + escapeHtml(vehicle.line) + '</strong> ' + tail;
         }
+
+        function visibleVehicles() {
+            return selectedLines.length === 0
+                ? vehicleData
+                : vehicleData.filter(vehicle => selectedLines.includes(vehicle.line));
+        }
+
+        /**
+         * Bring the markers in line with the latest positions.
+         *
+         * Markers are moved, not rebuilt. Clearing the layer and recreating
+         * every marker each poll made the whole fleet blink every ten seconds,
+         * closed whatever was open, and dropped the selection ring — and it
+         * costs more, not less, than moving the ones that are already there.
+         */
+        function renderVehicles() {
+            const wanted = new Map(visibleVehicles().map(vehicle => [vehicle.id, vehicle]));
+
+            for (const [id, entry] of vehicleMarkers) {
+                if (wanted.has(id)) continue;
+                map.removeLayer(entry.marker);
+                vehicleMarkers.delete(id);
+            }
+
+            for (const [id, vehicle] of wanted) {
+                const selected = selection?.id === id;
+                // Heading is bucketed: a marker redrawn for every degree of
+                // GPS jitter is a marker redrawn constantly.
+                const look = [vehicle.line, vehicle.type, Math.round((vehicle.heading ?? -1) / 15), selected].join('|');
+                const existing = vehicleMarkers.get(id);
+
+                if (existing) {
+                    existing.marker.setLatLng([vehicle.lat, vehicle.lon]);
+                    existing.marker.setTooltipContent(vehicleTooltip(vehicle));
+                    if (existing.look !== look) {
+                        existing.marker.setIcon(vehicleIcon(vehicle, selected));
+                        existing.marker.setZIndexOffset(selected ? 1000 : 0);
+                        existing.look = look;
+                    }
+                    continue;
+                }
+
+                const marker = L.marker([vehicle.lat, vehicle.lon], {
+                    icon: vehicleIcon(vehicle, selected),
+                    zIndexOffset: selected ? 1000 : 0
+                })
+                    .bindTooltip(vehicleTooltip(vehicle), {
+                        direction: 'top',
+                        offset: [0, -14],
+                        className: 'vehicle-tooltip'
+                    })
+                    // By id, not by this object: the vehicle is looked up again
+                    // on click, so the route is drawn from where it is now and
+                    // not from where it was when the marker was created.
+                    .on('click', () => selectVehicle(id));
+
+                marker.addTo(map);
+                vehicleMarkers.set(id, { marker, look });
+            }
+
+            updateStats();
+        }
+
+        /** Follow a vehicle: draw the direction it is running and list its stops. */
+        async function selectVehicle(id) {
+            if (selection?.id === id) {
+                clearSelection();
+                return;
+            }
+
+            const vehicle = vehicleData.find(entry => entry.id === id);
+            if (!vehicle) return;
+
+            selection = { id, line: vehicle.line, type: vehicle.type, shapeId: null, trip: null, stale: false };
+            renderVehicles();
+            renderVehiclePanel();
+
+            await drawRoute(vehicle);
+            await refreshTrip();
+        }
+
+        function clearSelection() {
+            selection = null;
+            hideRoute();
+            renderVehicles();
+            document.getElementById('routeInfo').classList.remove('visible');
+        }
+
+        // Clicking the map itself, away from any marker, drops the selection.
+        map.on('click', () => {
+            if (selection) clearSelection();
+        });
 
         // Fetch and display route shape
-        async function fetchRouteShape(routeId, type, lat, lon, heading) {
+        async function drawRoute(vehicle) {
             try {
                 // The compact format returns [lat, lon] pairs directly; the
                 // default response is the verbose one kept for old app builds.
                 const params = new URLSearchParams({ format: 'compact' });
-                if (Number.isFinite(lat) && Number.isFinite(lon)) {
-                    params.set('lat', lat);
-                    params.set('lon', lon);
+                if (Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lon)) {
+                    params.set('lat', vehicle.lat);
+                    params.set('lon', vehicle.lon);
                 }
-                if (Number.isFinite(heading)) params.set('heading', Math.round(heading));
+                // The heading is what tells the two directions of a line apart.
+                // Without it the server answers with whichever variant happens
+                // to be nearer, and the route drawn is the one going the other
+                // way — with the wrong terminus named on it.
+                if (Number.isFinite(vehicle.heading)) params.set('heading', Math.round(vehicle.heading));
 
-                const response = await fetch(`/shapes/${encodeURIComponent(routeId)}?${params}`);
+                const response = await fetch(`/shapes/${encodeURIComponent(vehicle.line)}?${params}`);
                 if (!response.ok) {
                     throw new Error(`Failed to fetch route shape (${response.status})`);
                 }
 
                 const data = await response.json();
-                const routeCoords = data.points || [];
-                if (!routeCoords.length) throw new Error('Route has no shape points');
+                const points = data.points || [];
+                if (!points.length) throw new Error('Route has no shape points');
 
                 hideRoute();
 
-                const routeColor = Colors[type] || Colors.unknown;
+                const colour = Colors[vehicle.type] || Colors.unknown;
                 currentRoute = L.layerGroup().addTo(map);
 
-                const polyline = L.polyline(routeCoords, {
-                    color: routeColor,
-                    weight: 4,
-                    opacity: 0.85,
-                    lineJoin: 'round'
-                }).addTo(currentRoute);
+                // Two lines, one route: the part already travelled stays for
+                // context but recedes, so what is left reads as what is left.
+                const behind = L.polyline([], { color: colour, weight: 4, opacity: 0.25, lineJoin: 'round' })
+                    .addTo(currentRoute);
+                const ahead = L.polyline(points, { color: colour, weight: 4, opacity: 0.9, lineJoin: 'round' })
+                    .addTo(currentRoute);
 
+                const stops = new Map();
                 for (const stop of data.stops || []) {
-                    L.circleMarker([stop.lat, stop.lon], {
+                    const dot = L.circleMarker([stop.lat, stop.lon], {
                         radius: 4,
-                        color: routeColor,
+                        color: colour,
                         fillColor: '#fff',
                         fillOpacity: 1,
                         weight: 2
-                    })
-                        .bindPopup(`<strong>${stop.name}</strong><br>${stop.departure || ''}`)
-                        .addTo(currentRoute);
+                    }).addTo(currentRoute);
+                    // The stop's own name only: the time in the shape payload
+                    // belongs to the sample trip it was described from, not to
+                    // the vehicle you just clicked.
+                    dot.bindTooltip(escapeHtml(stop.name), { direction: 'top' });
+                    stops.set(String(stop.id), dot);
                 }
 
-                showRouteInfo(routeId, type, data.direction);
-                map.fitBounds(polyline.getBounds(), { padding: [20, 20] });
+                routeLayers = { ahead, behind, stops, points, colour };
+                if (selection) selection.shapeId = data.shapeId ?? null;
+                map.fitBounds(ahead.getBounds(), { padding: [30, 30] });
 
             } catch (error) {
                 console.error('Error fetching route shape:', error);
             }
         }
 
-        // Show route information panel
-        function showRouteInfo(lineNumber, type, direction) {
-            const routeInfo = document.getElementById('routeInfo');
-            const routeTitle = document.getElementById('routeTitle');
-            const routeType = document.getElementById('routeType');
+        /** Split the drawn route at the vehicle, and mark the stop it is heading for. */
+        function applyProgress(trip) {
+            if (!routeLayers) return;
 
-            routeTitle.textContent = `Linia ${lineNumber}`;
-            routeType.textContent = direction || translations[type]?.name || type;
-            routeInfo.style.color = Colors[type] || Colors.unknown;
-            
-            routeInfo.classList.add('visible');
+            const onSameVariant = trip && selection && trip.shapeId === selection.shapeId;
+            const index = onSameVariant && Number.isFinite(trip.shapeIndex)
+                ? Math.min(Math.max(trip.shapeIndex, 0), routeLayers.points.length - 1)
+                : null;
+
+            routeLayers.behind.setLatLngs(index === null ? [] : routeLayers.points.slice(0, index + 1));
+            routeLayers.ahead.setLatLngs(index === null ? routeLayers.points : routeLayers.points.slice(index));
+
+            const nextId = trip?.nextStop ? String(trip.nextStop.id) : null;
+            for (const [id, dot] of routeLayers.stops) {
+                const isNext = id === nextId;
+                dot.setStyle({
+                    radius: isNext ? 7 : 4,
+                    weight: isNext ? 3 : 2,
+                    fillColor: isNext ? routeLayers.colour : '#fff'
+                });
+            }
+        }
+
+        /** The stops still ahead of the selected vehicle, and how late it is. */
+        async function refreshTrip() {
+            if (!selection) return;
+
+            try {
+                const response = await fetch(`/vehicle/${encodeURIComponent(selection.id)}`);
+                if (response.status === 404) {
+                    // Tracked vehicles time out; say so rather than showing a
+                    // stop list that stopped being true minutes ago.
+                    selection.stale = true;
+                    selection.trip = null;
+                } else if (response.ok) {
+                    const data = await response.json();
+                    selection.trip = data.trip;
+                    selection.stale = false;
+                    applyProgress(data.trip);
+                } else {
+                    throw new Error('HTTP ' + response.status);
+                }
+            } catch (error) {
+                console.error('Error fetching vehicle trip:', error);
+            }
+
+            renderVehiclePanel();
+        }
+
+        function delayText(trip) {
+            if (!trip || trip.delaySeconds === null || trip.delaySeconds === undefined) {
+                return 'Rozkład tego kursu nieznany';
+            }
+            const minutes = Math.round(trip.delaySeconds / 60);
+            if (minutes >= 1) return 'Spóźniony ' + minutes + ' min';
+            if (minutes <= -1) return 'Przed czasem ' + Math.abs(minutes) + ' min';
+            return 'Zgodnie z rozkładem';
+        }
+
+        function stopRow(stop, passed) {
+            const minutes = Math.round((stop.etaSeconds ?? 0) / 60);
+            const ago = Math.round((stop.agoSeconds ?? 0) / 60);
+            const when = passed
+                ? '<span class="stop-ago">' + (ago <= 0 ? 'przed chwilą' : ago + ' min temu') + '</span>'
+                : '<span class="stop-eta">' + (minutes <= 0 ? 'teraz' : minutes + '<i>min</i>') + '</span>';
+
+            return '<div class="stop-row' + (passed ? ' passed' : '') + '">' +
+                '<span class="stop-dot"></span>' +
+                '<span class="stop-name">' + escapeHtml(stop.name) +
+                (stop.scheduled ? '<i>' + escapeHtml(stop.scheduled.slice(0, 5)) + '</i>' : '') +
+                '</span>' + when + '</div>';
+        }
+
+        // Show the selected vehicle's panel
+        function renderVehiclePanel() {
+            const panel = document.getElementById('routeInfo');
+            if (!selection) {
+                panel.classList.remove('visible');
+                return;
+            }
+
+            // The detail if it has arrived, otherwise the summary /locations
+            // already carries — both name the destination and the next stop.
+            const vehicle = vehicleData.find(entry => entry.id === selection.id);
+            const trip = selection.trip || vehicle?.trip || null;
+            const colour = Colors[selection.type] || Colors.unknown;
+
+            const badge = document.getElementById('routeBadge');
+            badge.textContent = selection.line;
+            badge.style.background = colour;
+            panel.style.color = colour;
+
+            document.getElementById('routeTitle').textContent =
+                trip?.towards ? '→ ' + trip.towards : 'Linia ' + selection.line;
+            // The full "A → B" when we know it; the vehicle's category is only
+            // a fallback, since "Tramwaje" says nothing about this vehicle.
+            document.getElementById('routeType').textContent =
+                trip?.direction || translations[selection.type]?.name || selection.type;
+
+            const status = selection.stale
+                ? '<span class="warn">Pojazd przestał nadawać</span>'
+                : '<span>' + escapeHtml(delayText(trip)) + '</span>';
+            const where = trip?.atStop
+                ? 'Na przystanku ' + trip.atStop.name
+                : trip?.previousStop ? 'Minął ' + trip.previousStop.name : '';
+            document.getElementById('routeStatus').innerHTML =
+                status + (where ? '<span class="muted">' + escapeHtml(where) + '</span>' : '');
+
+            const rows = (trip?.previousStops || []).map(stop => stopRow(stop, true))
+                .concat((trip?.nextStops || []).map(stop => stopRow(stop, false)));
+
+            document.getElementById('routeStops').innerHTML = rows.length
+                ? rows.join('')
+                : '<div class="route-empty">' + (trip && trip.onRoute === false
+                    ? 'Pojazd jest poza trasą, więc nie znamy kolejnych przystanków.'
+                    : 'Brak danych o kolejnych przystankach.') + '</div>';
+
+            panel.classList.add('visible');
         }
 
         // Hide route
@@ -695,7 +1022,7 @@
                 map.removeLayer(currentRoute);
                 currentRoute = null;
             }
-            document.getElementById('routeInfo').classList.remove('visible');
+            routeLayers = null;
         }
 
         // Create line selection interface
@@ -748,48 +1075,55 @@
                 selectedLines.push(line);
                 buttonElement.classList.add('selected');
             }
-            filterVehicles();
+            renderVehicles();
             renderAlerts();
-        }
-
-        // Filter vehicles based on selected lines
-        function filterVehicles() {
-            vehicleMarkers.forEach(marker => map.removeLayer(marker));
-            vehicleMarkers = [];
-
-            const filteredVehicles = selectedLines.length === 0 
-                ? vehicleData 
-                : vehicleData.filter(vehicle => selectedLines.includes(vehicle.line));
-
-            filteredVehicles.forEach(vehicle => {
-                const marker = createVehicleMarker(vehicle);
-                marker.addTo(map);
-                vehicleMarkers.push(marker);
-            });
-
-            updateStats();
         }
 
         // Update statistics
         function updateStats() {
-            const visibleVehicles = selectedLines.length === 0 ? vehicleData : 
-                vehicleData.filter(vehicle => selectedLines.includes(vehicle.line));
-                
-            const tramCount = visibleVehicles.filter(v => v.type.startsWith('tram')).length;
-            const busCount = visibleVehicles.filter(v => v.type.startsWith('bus')).length;
-            
+            const visible = visibleVehicles();
+            const tramCount = visible.filter(v => v.type.startsWith('tram')).length;
+            const busCount = visible.filter(v => v.type.startsWith('bus')).length;
+
             document.getElementById('tramCount').textContent = tramCount;
             document.getElementById('busCount').textContent = busCount;
         }
 
-        // Fetch lines data
-        async function fetchLines() {
+        /** The line index, or null when the payload is not that. */
+        function normaliseLines(payload) {
+            if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+
+            const lines = {};
+            for (const [key, value] of Object.entries(payload)) {
+                if (Array.isArray(value)) lines[key] = value;
+            }
+            return Object.keys(lines).length ? lines : null;
+        }
+
+        /**
+         * Fetch lines data.
+         *
+         * The server answers 503 with `{error, state}` for up to a minute after
+         * boot while it ingests the feed. Reading that body as the line index
+         * threw on the first `.sort()` and left the page stuck on "Ładowanie
+         * pojazdów…" forever — so the payload is checked, and a cold start is
+         * waited out instead of failed.
+         */
+        async function fetchLines(attempt = 0) {
             try {
                 const response = await fetch('/lines');
-                linesData = await response.json();
-                createLineFilters(linesData);
+                const payload = response.ok ? normaliseLines(await response.json()) : null;
+                if (payload) {
+                    createLineFilters(payload);
+                    return;
+                }
+                throw new Error(response.ok ? 'unexpected payload' : 'HTTP ' + response.status);
             } catch (error) {
-                console.error('Error fetching lines:', error);
+                if (attempt >= 5) {
+                    console.error('Error fetching lines:', error);
+                    return;
+                }
+                setTimeout(() => fetchLines(attempt + 1), Math.min(2000 * (attempt + 1), 8000));
             }
         }
 
@@ -797,14 +1131,25 @@
         async function fetchVehicles() {
             try {
                 const response = await fetch('/locations');
+                if (!response.ok) throw new Error('HTTP ' + response.status);
                 const data = await response.json();
-                
-                vehicleData = (data.locations || []).filter(v => 
+
+                vehicleData = (data.locations || []).filter(v =>
                     v.lat !== 0 && v.lon !== 0 && !isNaN(v.lat) && !isNaN(v.lon)
                 );
-                
-                filterVehicles();
-                
+
+                renderVehicles();
+
+                // The vehicle being followed has moved, so where it is on its
+                // route and when it reaches the stops ahead have both changed.
+                if (selection) {
+                    if (vehicleData.some(entry => entry.id === selection.id)) refreshTrip();
+                    else {
+                        selection.stale = true;
+                        renderVehiclePanel();
+                    }
+                }
+
                 if (data.lastUpdated) {
                     const lastUpdate = new Date(data.lastUpdated);
                     document.getElementById('lastUpdate').textContent = lastUpdate.toLocaleTimeString();
@@ -824,11 +1169,6 @@
 
         // Service alerts
         let alertsData = [];
-
-        function escapeHtml(value) {
-            return String(value ?? '').replace(/[<>&"]/g, (c) =>
-                ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-        }
 
         function alertAge(timestamp) {
             const minutes = Math.floor((Date.now() - timestamp) / 60000);
@@ -898,17 +1238,26 @@
 
         // Initialize app
         async function initApp() {
-            await fetchLines();
+            // Positions do not wait on the line list: the map is useful before
+            // the filters are, and on a cold start the list retries on its own.
+            fetchLines();
             await fetchVehicles();
             await fetchAlerts();
-            setInterval(fetchVehicles, 10000); // Refresh every 10 seconds
-            setInterval(fetchAlerts, 5 * 60000);
+
+            // A tab nobody is looking at does not need ten-second updates, and
+            // catches up the moment it comes back.
+            setInterval(() => { if (!document.hidden) fetchVehicles(); }, 10000);
+            setInterval(() => { if (!document.hidden) fetchAlerts(); }, 5 * 60000);
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) fetchVehicles();
+            });
         }
 
         // Start the application
         initApp();
-        
-        window.hideRoute = hideRoute;
+
+        // Reached from the panel's close button.
+        window.clearSelection = clearSelection;
     </script>
 </body>
 </html>
