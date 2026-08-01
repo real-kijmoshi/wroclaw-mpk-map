@@ -40,15 +40,16 @@ const VEHICLE_SOURCES = list(process.env.VEHICLE_POSITION_URLS, [
 /**
  * Pages carrying live service disruptions.
  *
- * Deliberately just the one. `mpk.wroc.pl/komunikaty` was a guess and 404s, and
+ * Empty by default — @AlertMPK on X is the sole default source (see
+ * `twitterScrape` below). `mpk.wroc.pl/komunikaty` was a guess and 404s, and
  * `/o-mpk/aktualnosci` exists but is corporate news — adding it produced
- * "MPK kupuje nowe tramwaje" as a service alert. Before adding a source, check
- * that it carries dated disruptions rather than press releases; `npm run doctor`
+ * "MPK kupuje nowe tramwaje" as a service alert. `ALERT_PAGE_URLS` still works
+ * for anyone who wants to add `wroclaw.pl/komunikacja/zmiany-w-komunikacji` (or
+ * another page) back as an extra source; before adding one, check that it
+ * carries dated disruptions rather than press releases — `npm run doctor`
  * prints the headlines each one yields so that is easy to eyeball.
  */
-const ALERT_PAGES = list(process.env.ALERT_PAGE_URLS, [
-  'https://www.wroclaw.pl/komunikacja/zmiany-w-komunikacji',
-]);
+const ALERT_PAGES = list(process.env.ALERT_PAGE_URLS, []);
 
 module.exports = {
   port: num(process.env.PORT, 3000),
@@ -114,11 +115,14 @@ module.exports = {
     refreshIntervalMs: num(process.env.ALERTS_REFRESH_INTERVAL_MS, 5 * 60_000),
     timeoutMs: num(process.env.ALERTS_TIMEOUT_MS, 15_000),
     maxItems: num(process.env.ALERTS_MAX_ITEMS, 100),
-    // Optional and off by default: reads @AlertMPK's public posts with a
+    // The default alerts source: reads @AlertMPK's public posts with a
     // headless browser instead of the paid X API. See src/twitterScrape.js for
-    // why this is a separate, heavier, more fragile provider than the others.
+    // why this is a heavier, more fragile provider than a plain page fetch —
+    // it needs a real Chromium on disk (see TWITTER_SCRAPE_EXECUTABLE_PATH
+    // below and `npm run scrape:twitter`). Set to false to turn it off, e.g.
+    // on a box with no Chromium and no way to install one.
     twitterScrape: {
-      enabled: bool(process.env.TWITTER_SCRAPE_ENABLED, false),
+      enabled: bool(process.env.TWITTER_SCRAPE_ENABLED, true),
       username: process.env.TWITTER_SCRAPE_USERNAME || 'AlertMPK',
       maxPosts: num(process.env.TWITTER_SCRAPE_MAX_POSTS, 10),
       timeoutMs: num(process.env.TWITTER_SCRAPE_TIMEOUT_MS, 30_000),
