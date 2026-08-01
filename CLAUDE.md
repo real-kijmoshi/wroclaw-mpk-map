@@ -168,25 +168,42 @@ organizacji ruchu na ulicy X" and only list the affected lines in the body.
 The X API is not usable as a source: reading someone else's timeline needs a
 paid tier, which is what silently emptied `/alerts` for a year in the first
 place. `@AlertMPK` posts real disruptions, though, so `server/src/twitterScrape.js`
-reads the same public HTML a logged-out visitor sees instead, with a headless
-Chromium (`playwright-core`) rather than the API — this is `TwitterScrapeProvider`
-in `alerts.js`, and it is the default and, out of the box, only alerts source
-(`TWITTER_SCRAPE_ENABLED` defaults to `true`; set it to `false` to turn it off).
-It is still exactly as fragile as scraping a page you don't control ever is —
-X can change the markup, add a login wall, or rate-limit the IP with no
+reads public HTML instead, one of two ways (`TwitterScrapeProvider` in
+`alerts.js`, `TWITTER_SCRAPE_MODE`), and it is the default and, out of the
+box, only alerts source (`TWITTER_SCRAPE_ENABLED` defaults to `true`; set it
+to `false` to turn it off):
+
+- `http` (the default) fetches `syndication.twitter.com`'s legacy "Embedded
+  Timelines" endpoint — the server-rendered HTML `widgets.js` falls back to
+  for logged-out embeds — and regex-parses the `timeline-Tweet` cards out of
+  it. No browser needed, which is the whole reason it's the default: a deploy
+  gets a working alerts source without an extra install step. The tradeoff is
+  that this endpoint is undocumented and unversioned — it could 404, redirect,
+  or start requiring a token with no warning, and this markup shape has not
+  been confirmed against a live response (this sandbox has no path to x.com).
+- `browser` drives a real headless Chromium (`playwright-core`) instead,
+  reading the same public HTML a logged-out visitor sees via the rendered
+  page's `schema.org/SocialMediaPosting` markup. Heavier to run — needs its
+  own Chromium on disk (`npx --yes playwright install chromium`, or point
+  `TWITTER_SCRAPE_EXECUTABLE_PATH` at one that already exists), since
+  `playwright-core` does not download one for you — but more likely to keep
+  working, since it renders whatever the site actually serves rather than
+  depending on one specific undocumented URL. Switch to this mode
+  (`TWITTER_SCRAPE_MODE=browser`) if `http` mode's endpoint stops answering.
+
+Both are exactly as fragile as scraping a page you don't control ever is — X
+can change either markup, add a login wall, or rate-limit the IP with no
 warning — and because a broken login wall reads as "zero posts," not a crash,
 a silent failure here is easy to miss; that is why `parsePage()` above stays
-available as a fallback/extra source via `ALERT_PAGE_URLS`. It needs its own
-Chromium on disk (`npx --yes playwright install chromium`, or point
-`TWITTER_SCRAPE_EXECUTABLE_PATH` at one that already exists) since
-`playwright-core` does not download one for you — **a deploy that skips this
-step gets zero alerts, with no page-scrape source configured to fall back on,
-until either step is done.** `npm run scrape:twitter` (and `npm run doctor`,
-which now checks the X source too) are manual, non-test ways to check it
-against the real profile before relying on it — the automated suite can't:
-this sandbox has no path to x.com and CI doesn't install a browser, so
-`test/twitterScrape.test.js` only covers the pure `normalizeScrapedPosts()`
-parsing, not the browser orchestration.
+available as a fallback/extra source via `ALERT_PAGE_URLS`. **A deploy running
+`http` mode against a retired endpoint, with no page-scrape source configured,
+gets zero alerts until someone notices and switches mode or adds a page.**
+`npm run scrape:twitter` (and `npm run doctor`, which now checks the X source
+too) are manual, non-test ways to check either mode against the real profile
+before relying on it — the automated suite can't: this sandbox has no path to
+x.com and CI doesn't install a browser, so `test/twitterScrape.test.js` only
+covers the pure `normalizeScrapedPosts()`/`parseSyndicationHtml()` parsing,
+not the network or browser orchestration around them.
 
 `parseFileListing()` is deliberately shape-agnostic — it walks the JSON looking
 for url-ish and name-ish fields rather than hardcoding a schema, because the CUI

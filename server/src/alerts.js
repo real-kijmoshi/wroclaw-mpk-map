@@ -6,27 +6,10 @@ const config = require('./config');
 const logger = require('./logger');
 const { fetchWithTimeout } = require('./http');
 const { lineToType } = require('./lines');
-const { scrapePosts } = require('./twitterScrape');
+const { scrapePosts, scrapePostsHttp } = require('./twitterScrape');
+const { stripHtml } = require('./html');
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
-
-const stripHtml = (value) =>
-  String(value ?? '')
-    // Tag AND content: page builders (Tilda, among others) embed a per-tile
-    // <style> block inside the anchor itself for responsive image sizing, so
-    // stripping only the tags left raw CSS text sitting in the notice title —
-    // "@media screen and (max-width: 767px) { ... }" showing up as content.
-    .replace(/<(style|script)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
 
 const asArray = (value) => (Array.isArray(value) ? value : value ? [value] : []);
 
@@ -274,7 +257,8 @@ class NoticeProvider {
 }
 
 /**
- * Reads @AlertMPK's public posts with a headless browser.
+ * Reads @AlertMPK's public posts — see src/twitterScrape.js for the two ways
+ * this can happen and why "http" (no browser) is the more fragile of the two.
  *
  * The account is dedicated entirely to service alerts, unlike the corporate
  * news page rejected earlier — so unlike `parsePage()`, a post here does not
@@ -283,24 +267,32 @@ class NoticeProvider {
  * other provider.
  */
 class TwitterScrapeProvider {
-  constructor({ username, maxPosts, timeoutMs, headless, executablePath }) {
+  constructor({ username, maxPosts, timeoutMs, headless, executablePath, mode }) {
     this.username = username;
     this.maxPosts = maxPosts;
     this.timeoutMs = timeoutMs;
     this.headless = headless;
     this.executablePath = executablePath;
+    this.mode = mode;
     this.url = `https://x.com/${username}`;
-    this.name = `twitter-scrape:@${username}`;
+    this.name = `twitter-scrape:@${username} (${mode})`;
   }
 
   async fetch() {
-    const posts = await scrapePosts({
-      url: this.url,
-      limit: this.maxPosts,
-      timeoutMs: this.timeoutMs,
-      headless: this.headless,
-      executablePath: this.executablePath,
-    });
+    const posts =
+      this.mode === 'browser'
+        ? await scrapePosts({
+            url: this.url,
+            limit: this.maxPosts,
+            timeoutMs: this.timeoutMs,
+            headless: this.headless,
+            executablePath: this.executablePath,
+          })
+        : await scrapePostsHttp({
+            username: this.username,
+            limit: this.maxPosts,
+            timeoutMs: this.timeoutMs,
+          });
 
     if (!posts.length) throw new Error('no posts found — the profile markup may have changed');
 
