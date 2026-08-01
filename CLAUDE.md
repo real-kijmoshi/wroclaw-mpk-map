@@ -171,6 +171,16 @@ substitute the variant's own sample times there; they belong to some other
 departure. This all rests on every trip of a shape sharing one relative profile,
 which is true of this feed and is what makes the offsets reusable.
 
+**19. `views/map.html` moves its markers; it does not rebuild them.**
+The browser map used to clear the marker layer and recreate every vehicle on
+each ten-second poll. The whole fleet blinked, anything open closed, and the
+selection was lost — and it costs more than moving the markers that are already
+there. `renderVehicles()` keeps a `Map` of id → marker, moves what moved, and
+only touches the icon when the look actually changes (heading is bucketed to
+15°, or a marker redraws on every degree of GPS jitter). The page also has no
+build step and no framework: everything reaching `innerHTML` goes through
+`escapeHtml()`, because line and stop names come from upstream feeds.
+
 ## Fragile by nature
 
 The default (and, out of the box, only) alerts source is `@AlertMPK` on X —
