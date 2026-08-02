@@ -52,9 +52,39 @@ function useMarkerRedraw(look) {
   return tracking;
 }
 
+/**
+ * Which way the vehicle is pointing.
+ *
+ * The arrow sits at the top of a box that is bigger than the badge, and it is
+ * that whole box which rotates — so the arrow orbits the number instead of
+ * spinning on the spot, and clears it at every angle. Two stacked triangles:
+ * a white one behind for the same reason the badge has a white hairline, since
+ * a coloured arrow alone disappears over a road of the same colour.
+ *
+ * Bearings are compass degrees and the map is locked north-up (`rotateEnabled`
+ * is off), so the rotation is the bearing, unadjusted.
+ */
+function HeadingArrow({ heading, tint }) {
+  if (!Number.isFinite(heading)) return null;
+
+  return (
+    <View
+      style={[styles.arrowOrbit, { transform: [{ rotate: `${Math.round(heading)}deg` }] }]}
+      pointerEvents="none"
+    >
+      <View style={styles.arrowOutline} />
+      <View style={[styles.arrowTip, { borderBottomColor: tint }]} />
+    </View>
+  );
+}
+
 function VehicleMarker({ vehicle, dimmed, selected, onPress }) {
   const towards = vehicle.trip?.towards ?? vehicle.trip?.headsign ?? null;
-  const tracking = useMarkerRedraw(`${dimmed}-${selected}`);
+  // Heading is bucketed to 15°: redrawing the marker for every degree of GPS
+  // jitter is redrawing it constantly, and no one can see 5° anyway.
+  const tracking = useMarkerRedraw(
+    `${dimmed}-${selected}-${Math.round((vehicle.heading ?? -1) / 15)}`,
+  );
 
   return (
     <Marker
@@ -65,6 +95,7 @@ function VehicleMarker({ vehicle, dimmed, selected, onPress }) {
       accessibilityLabel={towards ? `Linia ${vehicle.line} do ${towards}` : `Linia ${vehicle.line}`}
     >
       <View style={[styles.vehicle, dimmed && styles.vehicleDimmed]}>
+        <HeadingArrow heading={vehicle.heading} tint={colorForType(vehicle.type)} />
         <LineBadge
           line={vehicle.line}
           type={vehicle.type}
@@ -411,8 +442,36 @@ function progressLine(trip) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  vehicle: { alignItems: "center", justifyContent: "center", padding: 4 },
+  // Fixed and square so the arrow's orbit is the same at every angle, and so
+  // the badge stays centred on the vehicle's actual position.
+  vehicle: { width: 46, height: 46, alignItems: "center", justifyContent: "center" },
   vehicleDimmed: { opacity: 0.35 },
+  arrowOrbit: { ...StyleSheet.absoluteFillObject, alignItems: "center" },
+  arrowTip: {
+    position: "absolute",
+    top: 1,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 5,
+    borderRightWidth: 5,
+    borderBottomWidth: 9,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+    backgroundColor: "transparent",
+  },
+  arrowOutline: {
+    position: "absolute",
+    top: 0,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 6.5,
+    borderRightWidth: 6.5,
+    borderBottomWidth: 11,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+    borderBottomColor: "rgba(255, 255, 255, 0.92)",
+    backgroundColor: "transparent",
+  },
   // A hairline of white around the badge keeps the number readable where the
   // map underneath happens to be the same colour as the line.
   vehicleBadge: {
