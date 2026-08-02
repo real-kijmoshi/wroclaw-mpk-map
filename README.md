@@ -30,6 +30,11 @@ API_URL=http://localhost:3000 npm start
 Open <http://localhost:3000/map> for a browser map and <http://localhost:3000/status> for a
 dashboard showing which upstream sources are live.
 
+`/map` is built for a phone: the map is the whole screen and a draggable sheet holds the
+line picker, the alerts and — when you tap a stop on a drawn route — the next departures.
+On a wide window the same sheet becomes a side panel. It needs no build step and no
+framework; it is one file, `server/views/map.html`.
+
 ## Why things break, and how this handles it
 
 Both upstream sources have moved before — the city migrated its open-data portal, and the
@@ -77,7 +82,7 @@ Base URL: your deployment, or `http://localhost:3000`.
 | `GET /stop/:id/departures` | Next departures, filtered to services running today. `?limit=` `?within=` (minutes) |
 | `GET /alerts` | Disruption notices. `?since=` (ms epoch) `?line=` |
 | `GET /health` | Status of every upstream source and index |
-| `GET /map`, `GET /status` | Browser map — vehicle directions, the stops each has left and a service-alert panel — and the status dashboard |
+| `GET /map`, `GET /status` | Mobile-first browser map — lines, alerts, departures, and a tapped vehicle's direction and remaining stops — and the status dashboard |
 
 `/shapes/:line` returns the verbose legacy payload by default so app builds already on
 people's phones keep working; `?format=compact` is what the current app requests.

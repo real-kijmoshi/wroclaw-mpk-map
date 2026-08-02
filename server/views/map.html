@@ -1,965 +1,1301 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wrocław Public Transport Live Map</title>
-    
-    <!-- Leaflet CSS -->
+    <!--
+      viewport-fit=cover is what makes env(safe-area-inset-*) report real
+      numbers; without it the sheet's grabber sits under the home indicator on
+      an iPhone and the status pill sits under the notch.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <title>MPK Wrocław — mapa na żywo</title>
+    <meta name="description" content="Tramwaje i autobusy MPK Wrocław na żywo, trasy linii, najbliższe odjazdy i komunikaty o utrudnieniach.">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b5fbf'/%3E%3Cg fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='7' width='14' height='13' rx='2'/%3E%3Cpath d='M9 13h14M13 7v6M19 7v6M12 25l2-4M20 25l-2-4'/%3E%3C/g%3E%3C/svg%3E">
+
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
-    
+
     <style>
-        * {
+        /*
+         * The phone is the primary target: this is a page you open standing at a
+         * stop. The map is the whole screen and everything else floats over it —
+         * a status pill at the top and an iOS-style bottom sheet you drag between
+         * a peek, a half and a full detent.
+         *
+         * The previous layout gave the sidebar `position: absolute; height: 60vh;
+         * overflow: hidden` under 768px: it covered the top half of the screen
+         * permanently, could not be dismissed, and clipped its own scroll
+         * container, so most of the line list was simply unreachable on a phone.
+         *
+         * Colours are the app's (app/theme.js), not the old rainbow. That is not
+         * cosmetic: the palette here used to put white text on #F8E71C at about
+         * 1.4:1 for the yellow categories, which is unreadable in the sunlight
+         * you are standing in. Every value below clears 4.5:1 against white.
+         */
+
+        :root {
+            color-scheme: light dark;
+
+            /* Brand + the departure board */
+            --rail: #0B5FBF;
+            --rail-dark: #084A96;
+            --ink: #0E141B;
+            --ink-raised: #1A2430;
+            --ink-line: #26333F;
+            --amber: #FFB020;
+            --live: #16A34A;
+            --stale: #B45309;
+            --disruption: #C2410C;
+
+            /* iOS system surfaces, light */
+            --bg: #F2F2F7;
+            --surface: #FFFFFF;
+            --surface-blur: rgba(255, 255, 255, 0.72);
+            --text: #0F172A;
+            --muted: #64748B;
+            --separator: rgba(60, 60, 67, 0.18);
+            --fill: rgba(120, 120, 128, 0.12);
+            --fill-strong: rgba(120, 120, 128, 0.20);
+            --hairline: rgba(255, 255, 255, 0.55);
+            --shadow-float: 0 8px 30px rgba(15, 23, 42, 0.18);
+            --shadow-chip: 0 2px 10px rgba(15, 23, 42, 0.14);
+
+            --radius-sheet: 22px;
+            --radius-card: 16px;
+            --radius-control: 12px;
+            --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+            --safe-top: env(safe-area-inset-top, 0px);
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
+            --safe-left: env(safe-area-inset-left, 0px);
+            --safe-right: env(safe-area-inset-right, 0px);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #000000;
+                --surface: #1C1C1E;
+                --surface-blur: rgba(28, 28, 30, 0.74);
+                --text: #F5F5F7;
+                --muted: #98989F;
+                --separator: rgba(255, 255, 255, 0.14);
+                --fill: rgba(120, 120, 128, 0.24);
+                --fill-strong: rgba(120, 120, 128, 0.36);
+                --hairline: rgba(255, 255, 255, 0.10);
+                --shadow-float: 0 8px 30px rgba(0, 0, 0, 0.6);
+                --shadow-chip: 0 2px 10px rgba(0, 0, 0, 0.5);
+            }
+        }
+
+        *, *::before, *::after { box-sizing: border-box; }
+
+        html, body {
             margin: 0;
             padding: 0;
-            box-sizing: border-box;
+            height: 100%;
+            /* 100vh on iOS Safari measures the viewport with the toolbar
+               collapsed, so the bottom of a 100vh layout is cut off until you
+               scroll. dvh follows the toolbar. */
+            height: 100dvh;
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: #121212;
-            height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+                Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
             overflow: hidden;
-            color: #FFFFFF;
-        }
-
-        .container {
-            display: flex;
-            height: 100vh;
-        }
-
-        .sidebar {
-            width: 380px;
-            background: linear-gradient(145deg, #1e1e1e 0%, #2a2a2a 100%);
-            backdrop-filter: blur(20px);
-            border-right: 1px solid rgba(255, 255, 255, 0.1);
-            display: flex;
-            flex-direction: column;
-            z-index: 1000;
-            box-shadow: 4px 0 20px rgba(0, 0, 0, 0.3);
-        }
-
-        .header {
-            padding: 25px 20px;
-            background: linear-gradient(135deg, #0075FF 0%, #4A90E2 100%);
-            color: white;
-            text-align: center;
-            position: relative;
-        }
-
-        .header h1 {
-            font-size: 1.6rem;
-            font-weight: 700;
-            margin-bottom: 8px;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
-        }
-
-        .header p {
-            opacity: 0.9;
-            font-size: 0.95rem;
-            font-weight: 500;
-        }
-
-        .stats {
-            padding: 25px 20px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .stat-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-        }
-
-        .stat-card {
-            background: linear-gradient(145deg, #2a2a2a 0%, #1e1e1e 100%);
-            padding: 20px 15px;
-            border-radius: 16px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
-            text-align: center;
-            border: 1px solid rgba(255, 255, 255, 0.05);
-        }
-
-        .stat-number {
-            font-size: 2rem;
-            font-weight: 800;
-            color: #0075FF;
-            margin-bottom: 8px;
-            text-shadow: 0 2px 4px rgba(0, 117, 255, 0.3);
-        }
-
-        .stat-label {
-            font-size: 0.85rem;
-            color: #E0E0E0;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            font-weight: 600;
-        }
-
-        .filters {
-            padding: 25px 20px;
-            flex-grow: 1;
-            overflow-y: auto;
-        }
-
-        .filters::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        .filters::-webkit-scrollbar-track {
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 3px;
-        }
-
-        .filters::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.2);
-            border-radius: 3px;
-        }
-
-        .category-container {
-            margin-bottom: 30px;
-        }
-
-        .category-title {
-            font-size: 1.1rem;
-            font-weight: 700;
-            margin-bottom: 15px;
-            color: #E0E0E0;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .lines-row {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            justify-content: flex-start;
-        }
-
-        .line-button {
-            min-width: 50px;
-            height: 40px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            font-size: 0.9rem;
-            font-weight: 700;
-            color: white;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            overscroll-behavior: none;
+            -webkit-font-smoothing: antialiased;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-text-size-adjust: 100%;
+            text-size-adjust: 100%;
+            -webkit-user-select: none;
             user-select: none;
-            border: 2px solid transparent;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-            position: relative;
-            overflow: hidden;
+            touch-action: manipulation;
         }
 
-        .line-button::before {
-            content: '';
-            position: absolute;
+        button { font: inherit; color: inherit; border: none; background: none; cursor: pointer; }
+
+        /* ---------- Map ---------- */
+
+        #map {
+            position: fixed;
+            inset: 0;
+            background: var(--bg);
+            z-index: 0;
+        }
+
+        /* Attribution is a licence condition of both OpenStreetMap and CARTO —
+           the control used to be switched off entirely. Kept, but sized so it
+           does not compete with the chrome. */
+        .leaflet-control-attribution {
+            background: var(--surface-blur) !important;
+            -webkit-backdrop-filter: blur(12px);
+            backdrop-filter: blur(12px);
+            color: var(--muted) !important;
+            font-size: 10px !important;
+            padding: 2px 6px !important;
+            border-radius: 6px 0 0 0;
+        }
+        .leaflet-control-attribution a { color: var(--muted) !important; }
+        .leaflet-control-zoom { border: none !important; box-shadow: var(--shadow-chip) !important; }
+        .leaflet-control-zoom a {
+            background: var(--surface) !important;
+            color: var(--text) !important;
+            border-color: var(--separator) !important;
+        }
+        .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+            background: var(--surface);
+            color: var(--text);
+            box-shadow: var(--shadow-float);
+        }
+        .leaflet-tooltip {
+            background: var(--surface);
+            color: var(--text);
+            border: none;
+            box-shadow: var(--shadow-chip);
+            font-size: 12px;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 8px;
+        }
+        .leaflet-tooltip::before { display: none; }
+
+        /* ---------- Floating chrome ---------- */
+
+        .chrome {
+            position: fixed;
             top: 0;
             left: 0;
             right: 0;
-            bottom: 0;
-            background: linear-gradient(45deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 100%);
-            opacity: 0;
-            transition: opacity 0.3s ease;
-        }
-
-        .line-button:hover::before {
-            opacity: 1;
-        }
-
-        .line-button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
-        }
-
-        .line-button.selected {
-            border-color: #BB86FC;
-            box-shadow: 0 0 0 2px #BB86FC, 0 4px 15px rgba(187, 134, 252, 0.3);
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { 
-                box-shadow: 0 0 0 2px #BB86FC, 0 4px 15px rgba(187, 134, 252, 0.3);
-            }
-            50% { 
-                box-shadow: 0 0 0 4px rgba(187, 134, 252, 0.5), 0 4px 20px rgba(187, 134, 252, 0.4);
-            }
-        }
-
-        .alerts {
-            border-top: 1px solid rgba(255, 255, 255, 0.08);
-            max-height: 42vh;
-            overflow-y: auto;
-            padding: 14px 20px 4px;
-        }
-
-        .alerts-header {
+            z-index: 500;
             display: flex;
+            flex-direction: column;
             align-items: center;
-            justify-content: space-between;
-            font-size: 0.78rem;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: rgba(255, 255, 255, 0.55);
-            margin-bottom: 10px;
+            gap: 8px;
+            padding: calc(var(--safe-top) + 10px) calc(var(--safe-right) + 12px) 0
+                     calc(var(--safe-left) + 12px);
+            /* The map has to stay draggable between the pill and the card. */
+            pointer-events: none;
+        }
+        .chrome > * { pointer-events: auto; }
+
+        .glass {
+            background: var(--surface-blur);
+            -webkit-backdrop-filter: saturate(180%) blur(20px);
+            backdrop-filter: saturate(180%) blur(20px);
+            border: 1px solid var(--hairline);
+            box-shadow: var(--shadow-chip);
         }
 
-        .alerts-count {
-            background: #C2410C;
-            color: #fff;
-            border-radius: 999px;
-            padding: 1px 8px;
-            font-size: 0.72rem;
-        }
-
-        .alerts-count.zero { background: rgba(255, 255, 255, 0.12); }
-
-        .alert-item {
-            display: block;
-            text-decoration: none;
-            color: inherit;
-            background: rgba(255, 255, 255, 0.05);
-            border-left: 3px solid transparent;
-            border-radius: 8px;
-            padding: 10px 12px;
-            margin-bottom: 8px;
-        }
-
-        .alert-item:hover { background: rgba(255, 255, 255, 0.09); }
-
-        /* Anything touching a line you have on screen is why you looked. */
-        .alert-item.relevant { border-left-color: #C2410C; }
-
-        .alert-title {
-            font-size: 0.86rem;
-            font-weight: 600;
-            color: #fff;
-            line-height: 1.35;
-        }
-
-        .alert-meta {
-            font-size: 0.7rem;
-            color: rgba(255, 255, 255, 0.45);
-            margin-top: 4px;
-        }
-
-        .alert-lines {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 4px;
-            margin-top: 8px;
-        }
-
-        .alert-line {
-            font-size: 0.7rem;
-            font-weight: 700;
-            color: #fff;
-            border-radius: 4px;
-            padding: 1px 6px;
-        }
-
-        .alerts-empty {
-            font-size: 0.8rem;
-            color: rgba(255, 255, 255, 0.45);
-            padding-bottom: 10px;
-        }
-
-        .last-update {
-            padding: 20px;
-            background: linear-gradient(145deg, #1a1a1a 0%, #0d0d0d 100%);
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
-            font-size: 0.85rem;
-            color: #B0B0B0;
-            text-align: center;
-        }
-
-        .update-time {
-            font-weight: 700;
-            color: #0075FF;
-        }
-
-        #map {
-            flex-grow: 1;
-            position: relative;
-            background: #1a1a1a;
-        }
-
-        .loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: linear-gradient(145deg, #2a2a2a 0%, #1e1e1e 100%);
-            color: white;
-            padding: 25px 35px;
-            border-radius: 16px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-            z-index: 1000;
-            display: flex;
+        .pill {
+            display: inline-flex;
             align-items: center;
-            gap: 20px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .spinner {
-            width: 24px;
-            height: 24px;
-            border: 3px solid rgba(255, 255, 255, 0.2);
-            border-top: 3px solid #0075FF;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        /* Vehicle markers: the line badge, plus a tip pointing the way it is
-           travelling. The arrow sits in a full-size box that is what actually
-           rotates, so it orbits the badge instead of spinning in place. */
-        .vehicle-pin {
-            position: relative;
-            width: 40px;
+            gap: 8px;
             height: 40px;
+            padding: 0 16px;
+            border-radius: 999px;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            max-width: 100%;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            transition: transform 0.18s var(--ease);
         }
+        .pill:active { transform: scale(0.97); }
 
+        .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
+        .dot.live { background: var(--live); animation: breathe 1.8s ease-in-out infinite; }
+        .dot.stale { background: var(--stale); }
+        @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+        /*
+         * Vehicle markers: the line badge, plus an arrow pointing the way it is
+         * travelling. The arrow sits at the top of a box bigger than the badge,
+         * and that whole box is what rotates — so it orbits the number instead
+         * of spinning in place, clearing it at every angle. Two stacked
+         * triangles, white behind the tint, for the same reason the badge has a
+         * white hairline: a coloured arrow alone disappears over a road drawn in
+         * roughly that colour. There is no heading until a vehicle has visibly
+         * moved, so `iconFor()` only emits the wrapper when one exists.
+         */
+        .vehicle-pin { position: relative; width: 40px; height: 40px; }
         .vehicle-badge {
             position: absolute;
-            inset: 4px;
+            inset: 5px;
             border-radius: 8px;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: white;
-            font-weight: 700;
-            font-size: 12px;
-            border: 2px solid rgba(255, 255, 255, 0.9);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+            color: #fff;
+            font: 700 12px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+            letter-spacing: -0.02em;
+            border: 1.5px solid rgba(255, 255, 255, 0.92);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
         }
-
         .vehicle-pin.selected .vehicle-badge {
             border-color: #fff;
-            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35), 0 4px 14px rgba(0, 0, 0, 0.55);
+            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.4), 0 4px 14px rgba(0, 0, 0, 0.5);
         }
-
-        /* Wider than the pin on purpose: the tip has to clear the badge it
-           orbits, or it hides behind its own shadow. */
-        .vehicle-arrow {
-            position: absolute;
-            inset: -8px;
-        }
-
+        /* pointer-events: none — purely decorative, and its -7px inset would
+           otherwise widen the marker's hit area past the badge, letting a
+           vehicle's arrow shadow a neighbour's badge in a cluster at a stop. */
+        .vehicle-arrow { position: absolute; inset: -7px; pointer-events: none; }
         .vehicle-arrow::before,
         .vehicle-arrow::after {
             content: '';
             position: absolute;
+            top: -1px;
             left: 50%;
             width: 0;
             height: 0;
             border-style: solid;
             border-color: transparent;
         }
+        .vehicle-arrow::before { margin-left: -6.5px; border-width: 0 6.5px 11px; border-bottom-color: rgba(255, 255, 255, 0.92); }
+        .vehicle-arrow::after { top: 0; margin-left: -5px; border-width: 0 5px 9px; border-bottom-color: currentColor; }
 
-        /* White behind, the line's colour on top — the same reason the badge
-           has a white hairline: a coloured arrow on its own disappears over a
-           road drawn in roughly that colour. */
-        .vehicle-arrow::before {
-            top: -2px;
-            margin-left: -6.5px;
-            border-width: 0 6.5px 11px;
-            border-bottom-color: rgba(255, 255, 255, 0.92);
-        }
-
-        .vehicle-arrow::after {
-            top: -1px;
-            margin-left: -5px;
-            border-width: 0 5px 9px;
-            border-bottom-color: currentColor;
-        }
-
-        .vehicle-tooltip {
-            background: #1e1e1e;
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            color: #fff;
-            font-size: 0.8rem;
-            padding: 4px 8px;
-        }
-
-        .vehicle-tooltip::before { border-top-color: #1e1e1e; }
-
-        .route-info {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            width: 300px;
-            max-width: calc(100% - 40px);
-            background: linear-gradient(145deg, #2a2a2a 0%, #1e1e1e 100%);
-            color: white;
-            padding: 15px 20px;
-            border-radius: 12px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
-            z-index: 999;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+        /* Route card: what you get after tapping a vehicle. */
+        .routecard {
             display: none;
-        }
-
-        .route-info.visible {
-            display: block;
-            animation: slideIn 0.3s ease-out;
-        }
-
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateX(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateX(0);
-            }
-        }
-
-        .route-info h3 {
-            margin: 0 0 5px 0;
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: #fff;
-        }
-
-        .route-info p {
-            margin: 0;
-            font-size: 0.85rem;
-            color: #B0B0B0;
-        }
-
-        /* The selected vehicle: where it is going, and the stops it has left.
-           Sized so a long route scrolls inside the panel rather than running
-           off the bottom of the map. */
-        .route-head {
-            display: flex;
+            width: 100%;
+            max-width: 460px;
             align-items: center;
             gap: 12px;
-            padding-right: 20px;
+            padding: 10px 12px;
+            border-radius: var(--radius-card);
+        }
+        .routecard.visible { display: flex; }
+        .routecard__text { flex: 1; min-width: 0; }
+        .routecard__title {
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .routecard__sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 30px;
+            height: 30px;
+            padding: 0 6px;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            flex: none;
+        }
+        .badge--sm { min-width: 24px; height: 24px; font-size: 12px; border-radius: 6px; }
+
+        .icon-btn {
+            display: grid;
+            place-items: center;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            flex: none;
+            transition: transform 0.18s var(--ease);
+        }
+        .icon-btn:active { transform: scale(0.92); }
+        .icon-btn svg { width: 20px; height: 20px; }
+        .icon-btn--plain {
+            width: 30px;
+            height: 30px;
+            background: var(--fill);
+            border: none;
+            box-shadow: none;
+        }
+        .icon-btn--plain svg { width: 15px; height: 15px; color: var(--muted); }
+
+        /* Locate sits above the sheet's peek, on the side the thumb reaches. */
+        #locate {
+            position: fixed;
+            right: calc(var(--safe-right) + 12px);
+            bottom: calc(var(--sheet-peek, 120px) + 12px);
+            z-index: 500;
+            transition: bottom 0.28s var(--ease), transform 0.18s var(--ease);
+        }
+        #locate.busy svg { animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ---------- Bottom sheet ---------- */
+
+        .sheet {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 600;
+            height: 92dvh;
+            display: flex;
+            flex-direction: column;
+            background: var(--surface);
+            border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+            box-shadow: 0 -6px 30px rgba(0, 0, 0, 0.22);
+            /* --y is the distance the sheet is pushed down; the drag handler and
+               the detent snapping both write to it. */
+            transform: translateY(var(--y, 100%));
+            transition: transform 0.34s var(--ease);
+            overscroll-behavior: contain;
+        }
+        .sheet.dragging { transition: none; }
+
+        .sheet__grab {
+            flex: none;
+            padding: 8px 16px 4px;
+            /* The drag lives here, not on the whole sheet: when the pan covered
+               everything, a flick inside the line list raced the scroll and threw
+               the sheet closed instead of scrolling it. */
+            touch-action: none;
+            cursor: grab;
+        }
+        .sheet__grab:active { cursor: grabbing; }
+        .grabber {
+            width: 36px;
+            height: 5px;
+            margin: 0 auto 10px;
+            border-radius: 3px;
+            background: var(--fill-strong);
         }
 
-        .route-badge {
-            color: #fff;
-            width: 34px;
-            height: 34px;
+        /* iOS segmented control */
+        .segmented {
+            display: flex;
+            gap: 2px;
+            padding: 2px;
+            border-radius: 10px;
+            background: var(--fill);
+        }
+        .segmented button {
+            flex: 1;
+            min-height: 32px;
             border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-weight: 700;
-            font-size: 0.95rem;
-            flex: none;
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+            gap: 6px;
+            transition: background-color 0.18s var(--ease), transform 0.18s var(--ease);
         }
-
-        /* The panel carries the line's colour so the stop dots can inherit it;
-           everything with words in it says its own colour, or the whole card
-           turns into one long stretch of line blue. */
-        .route-status {
-            display: flex;
-            justify-content: space-between;
-            gap: 12px;
-            margin-top: 10px;
-            font-size: 0.8rem;
+        .segmented button:active { transform: scale(0.97); }
+        .segmented button[aria-selected="true"] {
+            background: var(--surface);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+        }
+        .count-pill {
+            min-width: 18px;
+            padding: 0 5px;
+            border-radius: 999px;
+            background: var(--disruption);
             color: #fff;
+            font-size: 11px;
+            line-height: 17px;
+            font-weight: 700;
         }
+        .count-pill.zero { background: var(--fill-strong); color: var(--muted); }
 
-        .route-status .muted { color: #B0B0B0; }
-        .route-status .warn { color: #FFB020; font-weight: 600; }
-
-        .route-stops {
-            margin-top: 10px;
-            max-height: 320px;
+        .sheet__body {
+            flex: 1;
+            min-height: 0;
             overflow-y: auto;
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
+            padding: 4px 16px calc(var(--safe-bottom) + 20px);
+        }
+        .sheet__body::-webkit-scrollbar { width: 8px; }
+        .sheet__body::-webkit-scrollbar-thumb {
+            background: var(--fill-strong);
+            border-radius: 4px;
         }
 
-        .stop-row {
+        .pane { display: none; }
+        .pane.active { display: block; }
+
+        /* ---------- Lines pane ---------- */
+
+        .search {
             display: flex;
             align-items: center;
+            gap: 8px;
+            height: 38px;
+            margin: 10px 0 6px;
+            padding: 0 12px;
+            border-radius: var(--radius-control);
+            background: var(--fill);
+        }
+        .search svg { width: 16px; height: 16px; color: var(--muted); flex: none; }
+        .search input {
+            flex: 1;
+            min-width: 0;
+            border: none;
+            outline: none;
+            background: none;
+            color: var(--text);
+            /* 16px or iOS Safari zooms the page in when the field takes focus. */
+            font-size: 16px;
+            font-weight: 500;
+        }
+        .search input::placeholder { color: var(--muted); }
+
+        .stats {
+            display: flex;
             gap: 10px;
-            padding: 8px 2px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            margin: 10px 0 4px;
+        }
+        .stat {
+            flex: 1;
+            padding: 10px 12px;
+            border-radius: var(--radius-card);
+            background: var(--fill);
+        }
+        .stat__n { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+        .stat__l {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-top: 2px;
         }
 
-        .stop-row:last-child { border-bottom: none; }
-        .stop-row.passed { opacity: 0.5; }
+        .group { margin-top: 18px; }
+        .group__head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .group__title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            min-width: 0;
+        }
+        .swatch { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+        .group__action {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--rail);
+            white-space: nowrap;
+            padding: 4px 0 4px 8px;
+        }
 
-        .stop-dot {
+        .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+        /* 44px minimum: these were 40px and, unselected, white-on-yellow. */
+        .chip {
+            min-width: 56px;
+            height: 44px;
+            padding: 0 12px;
+            border-radius: var(--radius-control);
+            background: var(--fill);
+            color: var(--text);
+            font-size: 17px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.16s var(--ease), background-color 0.16s var(--ease);
+        }
+        .chip:active { transform: scale(0.92); }
+        .chip[aria-pressed="true"] { color: #fff; }
+
+        .empty {
+            padding: 28px 4px;
+            text-align: center;
+            font-size: 15px;
+            color: var(--muted);
+        }
+
+        /* ---------- Alerts pane ---------- */
+
+        .alert {
+            display: block;
+            margin-top: 10px;
+            padding: 14px;
+            border-radius: var(--radius-card);
+            background: var(--fill);
+            border-left: 3px solid transparent;
+            color: inherit;
+            text-decoration: none;
+        }
+        /* Something touching a line you have on screen is why you looked. */
+        .alert.relevant { border-left-color: var(--disruption); }
+        .alert__meta {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--muted);
+        }
+        .alert__tag {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: var(--disruption);
+            margin-top: 6px;
+        }
+        .alert__title { font-size: 15px; font-weight: 600; margin-top: 4px; letter-spacing: -0.01em; }
+        .alert__body { font-size: 13px; color: var(--muted); margin-top: 4px; line-height: 1.45; }
+        .alert__lines { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
+
+        /* ---------- Departures pane: the board ---------- */
+
+        .board {
+            margin: 10px 0 0;
+            border-radius: var(--radius-card);
+            background: var(--ink);
+            overflow: hidden;
+        }
+        .board__head {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 14px 14px 12px;
+        }
+        .board__eyebrow {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: #94A3B8;
+        }
+        .board__stop {
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: #F8FAFC;
+            margin-top: 2px;
+        }
+        .row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 14px;
+            border-top: 1px solid var(--ink-line);
+        }
+        .row__text { flex: 1; min-width: 0; }
+        .row__headsign {
+            font-size: 15px;
+            color: #F8FAFC;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .row__time {
+            font-size: 12px;
+            color: #94A3B8;
+            margin-top: 1px;
+            font-variant-numeric: tabular-nums;
+        }
+        /*
+         * Amber is spent here and nowhere else on the page. It is the countdown
+         * that decides whether you run, and it works because nothing competes
+         * with it.
+         */
+        .row__min {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--amber);
+            letter-spacing: -0.02em;
+            font-variant-numeric: tabular-nums;
+        }
+        .row__unit { font-size: 12px; font-weight: 600; color: var(--amber); opacity: 0.7; margin-left: -4px; }
+        .board__msg { padding: 22px 14px; text-align: center; color: #94A3B8; font-size: 14px; }
+
+        /* ---------- Vehicle pane: where it is going, and what is left ---------- */
+
+        .board__status {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 0 14px 12px;
+            margin-top: -4px;
+            font-size: 13px;
+        }
+        .board__status span:first-child { color: #F8FAFC; font-weight: 600; }
+        .board__status span:last-child { color: #94A3B8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .board__status.warn span:first-child { color: var(--amber); }
+
+        /* A rail of dots down the row, standing in for the line badge a
+           departures row has: this list is all one line, so repeating it would
+           say nothing a stop name doesn't already. */
+        .row__dot {
             width: 9px;
             height: 9px;
             border-radius: 50%;
             background: currentColor;
             flex: none;
         }
+        .row--passed { opacity: 0.5; }
+        .row--passed .row__dot { background: transparent; border: 2px solid currentColor; width: 5px; height: 5px; }
+        .row__ago { font-size: 12px; color: #94A3B8; }
 
-        .stop-row.passed .stop-dot {
-            background: transparent;
-            border: 2px solid currentColor;
+        .backlink {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--rail);
         }
+        .backlink svg { width: 16px; height: 16px; }
 
-        .stop-name {
-            flex: 1;
-            color: #fff;
-            font-size: 0.85rem;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
+        /* ---------- Boot / error state ---------- */
 
-        .stop-name i {
-            display: block;
-            font-style: normal;
-            font-size: 0.7rem;
-            color: #B0B0B0;
-            font-variant-numeric: tabular-nums;
-        }
-
-        /* Amber is the countdown, and only the countdown. */
-        .stop-eta {
-            font-weight: 700;
-            font-size: 1rem;
-            color: #FFB020;
-            font-variant-numeric: tabular-nums;
-        }
-
-        .stop-eta i {
-            font-style: normal;
-            font-size: 0.7rem;
-            opacity: 0.75;
-            margin-left: 2px;
-        }
-
-        .stop-ago, .route-empty {
-            font-size: 0.75rem;
-            color: #B0B0B0;
-        }
-
-        .route-empty { padding: 12px 2px; }
-
-        .close-route {
-            position: absolute;
-            top: 8px;
-            right: 12px;
-            background: none;
-            border: none;
-            color: #B0B0B0;
-            font-size: 1.2rem;
-            cursor: pointer;
-            padding: 0;
-            width: 20px;
-            height: 20px;
+        .notice {
             display: flex;
             align-items: center;
-            justify-content: center;
+            gap: 12px;
+            margin: 12px 0;
+            padding: 14px;
+            border-radius: var(--radius-card);
+            background: var(--fill);
+            font-size: 14px;
+            color: var(--muted);
+        }
+        .spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid var(--fill-strong);
+            border-top-color: var(--rail);
+            border-radius: 50%;
+            animation: spin 0.9s linear infinite;
+            flex: none;
         }
 
-        .close-route:hover {
-            color: white;
+        /* ---------- Desktop: the sheet becomes a side panel ---------- */
+
+        @media (min-width: 900px) {
+            .sheet {
+                top: 16px;
+                bottom: 16px;
+                left: calc(var(--safe-left) + 16px);
+                right: auto;
+                width: 380px;
+                height: auto;
+                border-radius: 20px;
+                transform: none !important;
+                box-shadow: var(--shadow-float);
+            }
+            .sheet__grab { padding-top: 14px; cursor: default; }
+            .grabber { display: none; }
+            .chrome { left: 412px; }
+            #locate { bottom: calc(var(--safe-bottom) + 20px); }
         }
 
-        /* Mobile responsiveness */
-        @media (max-width: 768px) {
-            .sidebar {
-                width: 100%;
-                position: absolute;
-                height: 60vh;
-                z-index: 1001;
-                overflow: hidden;
-            }
-
-            .container {
-                flex-direction: column;
-            }
-
-            /* The sidebar owns the top 60% of a phone screen, so the panel
-               goes to the bottom — where a sheet belongs anyway — instead of
-               sitting underneath it. */
-            .route-info {
-                top: auto;
-                bottom: 10px;
-                left: 10px;
-                right: 10px;
-                width: auto;
-                max-width: none;
-                /* The map is only the 40% of the screen the sidebar leaves;
-                   the panel has to fit inside that, not reach up behind it. */
-                max-height: calc(40vh - 20px);
-                overflow: hidden;
-            }
-
-            .route-stops {
-                max-height: calc(40vh - 150px);
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
             }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="sidebar">
-            <div class="header">
-                <h1>🚋 Wrocław Transit</h1>
-                <p>Live vehicle tracking system</p>
-            </div>
-            
-            <div class="stats">
-                <div class="stat-grid">
-                    <div class="stat-card">
-                        <div class="stat-number" id="tramCount">0</div>
-                        <div class="stat-label">Tramwaje</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number" id="busCount">0</div>
-                        <div class="stat-label">Autobusy</div>
-                    </div>
-                </div>
-            </div>
+    <div id="map"></div>
 
-            <div class="filters" id="filtersContainer">
-                <!-- Categories will be populated dynamically -->
-            </div>
+    <div class="chrome">
+        <button class="pill glass" id="statusPill" type="button">
+            <span class="dot" id="statusDot"></span>
+            <span id="statusText">Łączenie…</span>
+        </button>
 
-            <div class="alerts" id="alertsPanel">
-                <div class="alerts-header">
-                    <span>Komunikaty</span>
-                    <span class="alerts-count zero" id="alertsCount">0</span>
-                </div>
-                <div id="alertsList"></div>
+        <div class="routecard glass" id="routeCard">
+            <span class="badge" id="routeBadge">0</span>
+            <div class="routecard__text">
+                <div class="routecard__title" id="routeTitle">Linia</div>
+                <div class="routecard__sub" id="routeSub"></div>
             </div>
-
-            <div class="last-update">
-                Ostatnia aktualizacja: <span class="update-time" id="lastUpdate">Nigdy</span>
-            </div>
-        </div>
-
-        <div id="map">
-            <div class="loading" id="loading">
-                <div class="spinner"></div>
-                <span>Ładowanie pojazdów...</span>
-            </div>
-            
-            <div class="route-info" id="routeInfo">
-                <button class="close-route" onclick="clearSelection()">×</button>
-                <div class="route-head">
-                    <div class="route-badge" id="routeBadge">4</div>
-                    <div>
-                        <h3 id="routeTitle">Linia X</h3>
-                        <p id="routeType">Typ pojazdu</p>
-                    </div>
-                </div>
-                <div class="route-status" id="routeStatus"></div>
-                <div class="route-stops" id="routeStops"></div>
-            </div>
+            <button class="icon-btn icon-btn--plain" id="routeClose" type="button" aria-label="Ukryj trasę">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
         </div>
     </div>
 
-    <!-- Leaflet JS -->
+    <button class="icon-btn glass" id="locate" type="button" aria-label="Pokaż moją lokalizację">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--rail)">
+            <circle cx="12" cy="12" r="7"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/>
+        </svg>
+    </button>
+
+    <section class="sheet" id="sheet" aria-label="Panel linii i komunikatów">
+        <div class="sheet__grab" id="sheetGrab">
+            <div class="grabber"></div>
+            <div class="segmented" role="tablist">
+                <button type="button" role="tab" aria-selected="true" data-pane="lines">Linie</button>
+                <button type="button" role="tab" aria-selected="false" data-pane="alerts">
+                    Komunikaty <span class="count-pill zero" id="alertsCount">0</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="sheet__body" id="sheetBody">
+            <div class="pane active" id="paneLines">
+                <div class="search">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                    <input id="lineSearch" type="search" inputmode="search" autocomplete="off"
+                           placeholder="Szukaj linii…" aria-label="Szukaj linii">
+                </div>
+
+                <div class="stats">
+                    <div class="stat"><div class="stat__n" id="tramCount">0</div><div class="stat__l">Tramwaje</div></div>
+                    <div class="stat"><div class="stat__n" id="busCount">0</div><div class="stat__l">Autobusy</div></div>
+                </div>
+
+                <div id="filters"></div>
+            </div>
+
+            <div class="pane" id="paneAlerts">
+                <div id="alertsList"></div>
+            </div>
+
+            <div class="pane" id="paneStop">
+                <div class="board" id="board"></div>
+                <button class="backlink" id="stopBack" type="button">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                    Wróć do linii
+                </button>
+            </div>
+
+            <!-- The stops still ahead of a tapped vehicle, with the times a
+                 rider actually plans around: not the timetable alone, but that
+                 timetable read against where the vehicle really is right now. -->
+            <div class="pane" id="paneVehicle">
+                <div class="board" id="vehicleBoard"></div>
+                <button class="backlink" id="vehicleBack" type="button">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                    Wróć do linii
+                </button>
+            </div>
+        </div>
+    </section>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-    
     <script>
-        // Anything that reaches innerHTML goes through this: line names, stop
-        // names and alert text all come from upstream feeds, not from us.
-        function escapeHtml(value) {
-            return String(value ?? '').replace(/[<>&"]/g, (c) =>
-                ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+    (function () {
+        'use strict';
+
+        /*
+         * Line colours and labels, kept in step with app/theme.js.
+         *
+         * The old table here was the app's original palette, which was replaced
+         * precisely because several categories were white-on-yellow at about
+         * 1.4:1. If you add a category, check it clears 4.5:1 on white first.
+         */
+        const LINE_COLOR = {
+            tram: '#0B5FBF',
+            tramSpecial: '#0E7490',
+            tramTemporary: '#7C3AED',
+            bus: '#B91C1C',
+            busNight: '#3730A3',
+            busSuburban: '#15803D',
+            busTemporary: '#A16207',
+            busZone: '#9D174D',
+            busExpress: '#C2410C',
+            busSpecial: '#334155',
+            unknown: '#475569'
+        };
+
+        const LINE_LABEL = {
+            tram: 'Tramwaje',
+            tramSpecial: 'Tramwaje specjalne',
+            tramTemporary: 'Tramwaje tymczasowe',
+            bus: 'Autobusy',
+            busNight: 'Autobusy nocne',
+            busSuburban: 'Autobusy podmiejskie',
+            busTemporary: 'Autobusy tymczasowe',
+            busZone: 'Autobusy strefowe',
+            busExpress: 'Autobusy pospieszne',
+            busSpecial: 'Autobusy specjalne',
+            unknown: 'Pozostałe'
+        };
+
+        const HIDDEN_CATEGORIES = new Set(['allBuses', 'allTrams']);
+        const STORAGE_KEY = 'wromapa.selectedLines';
+        const VEHICLE_REFRESH_MS = 10000;
+        const ALERT_REFRESH_MS = 5 * 60000;
+        const DEPARTURE_REFRESH_MS = 30000;
+
+        const colourFor = (type) => LINE_COLOR[type] || LINE_COLOR.unknown;
+        const $ = (id) => document.getElementById(id);
+
+        const escapeHtml = (value) => String(value ?? '').replace(/[<>&"']/g, (c) =>
+            ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
+
+        /*
+         * Alerts are scraped from pages nobody here controls, so a link out of one
+         * is untrusted input: anything that is not plain http(s) — javascript:,
+         * data: — is dropped rather than written into an href.
+         */
+        const safeUrl = (value) => {
+            try {
+                const url = new URL(String(value), window.location.origin);
+                return (url.protocol === 'http:' || url.protocol === 'https:') ? url.href : '';
+            } catch { return ''; }
+        };
+
+        /* Lines are not numbers: "A", "0L" and "100" all have to sort sensibly. */
+        const byLine = (a, b) => String(a).localeCompare(String(b), 'pl', { numeric: true });
+
+        /** Polish counts take three forms; teens always take the last one. */
+        function plural(count, one, few, many) {
+            if (count === 1) return one;
+            const last = count % 10;
+            const teen = count % 100 >= 12 && count % 100 <= 14;
+            return (!teen && last >= 2 && last <= 4) ? few : many;
         }
 
-        // Colors matching your React Native app
-        const Colors = {
-            tram: "#0075FF",
-            tramSpecial: "#50E3C2", 
-            tramTemporary: "#F8E71C",
-            bus: "#E85D75",
-            busSpecial: "#F5A623",
-            busNight: "#9013FE",
-            busTemporary: "#B8E986", 
-            busSuburban: "#7ED321",
-            busZone: "#F8E71C",
-            busExpress: "#F5A623",
-            unknown: "#D0021B"
+        /* ---------------------------------------------------------------- API */
+
+        /**
+         * The server answers 503 with a Retry-After for up to a minute after boot
+         * while it ingests the GTFS feed. This page used to hand that body
+         * straight to the renderer, which then drew categories out of
+         * `{error, state}`. Wait it out instead, the way the app does.
+         */
+        async function apiGet(path, { retries = 4 } = {}) {
+            let attempt = 0;
+            for (;;) {
+                let response;
+                try {
+                    response = await fetch(path, { headers: { accept: 'application/json' } });
+                } catch (error) {
+                    if (attempt >= retries) throw error;
+                    attempt += 1;
+                    await new Promise((r) => setTimeout(r, Math.min(2000 * attempt, 8000)));
+                    continue;
+                }
+
+                if (response.status === 503 && attempt < retries) {
+                    attempt += 1;
+                    booting = true;
+                    renderStatus();
+                    await new Promise((r) => setTimeout(r, Math.min(2000 * attempt, 8000)));
+                    continue;
+                }
+                if (!response.ok) throw new Error(path + ' → ' + response.status);
+                booting = false;
+                return response.json();
+            }
+        }
+
+        /* -------------------------------------------------------------- State */
+
+        let linesData = {};
+        let vehicles = [];
+        let alerts = [];
+        let selected = new Set();
+        let lastUpdated = null;
+        let booting = false;
+        let query = '';
+        let activePane = 'lines';
+        let currentStop = null;
+        let departuresTimer = null;
+        /** The vehicle a route is currently drawn for, and its timetable match. */
+        let currentVehicleId = null;
+        let currentTrip = null;
+        let tripStale = false;
+
+        try {
+            const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+            if (Array.isArray(stored)) selected = new Set(stored);
+        } catch { /* A corrupt value must not stop the page from starting. */ }
+
+        const persist = () => {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify([...selected]));
+            } catch { /* Private mode; the selection just will not survive a reload. */ }
         };
 
-        // Translations matching your React Native app
-        const translations = {
-            tram: { name: "Tramwaje", color: "#0075FF" },
-            tramSpecial: { name: "Tramwaje Specjalne", color: "#50E3C2" },
-            tramTemporary: { name: "Tramwaje Tymczasowe", color: "#F8E71C" },
-            bus: { name: "Autobusy", color: "#E85D75" },
-            busNight: { name: "Autobusy Nocne", color: "#9013FE" },
-            busSuburban: { name: "Autobusy Podmiejskie", color: "#7ED321" },
-            busTemporary: { name: "Autobusy Tymczasowe", color: "#B8E986" },
-            busZone: { name: "Autobusy Strefowe", color: "#F8E71C" },
-            busExpress: { name: "Autobusy Ekspresowe", color: "#F5A623" },
-            busSpecial: { name: "Autobusy Specjalne", color: "#D0021B" },
-            unknown: { name: "Nieznane", color: "#D0021B" }
-        };
+        /* ---------------------------------------------------------------- Map */
 
-        // Initialize map centered on Wrocław with dark theme
+        const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+        const tileUrl = (dark) =>
+            'https://{s}.basemaps.cartocdn.com/' + (dark ? 'dark_all' : 'light_all') + '/{z}/{x}/{y}{r}.png';
+
         const map = L.map('map', {
             center: [51.1079, 17.0385],
             zoom: 12,
-            zoomControl: true,
-            attributionControl: false
+            zoomControl: false,
+            attributionControl: true
         });
-        
-        // Add dark theme map tiles
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '© OpenStreetMap contributors, © CARTO',
+        map.attributionControl.setPrefix(false);
+
+        // Pinch does this on a phone, so the buttons are only worth their space
+        // on a pointer device — and they go top right, because Leaflet's default
+        // top left is underneath the desktop panel.
+        if (window.matchMedia('(min-width: 900px)').matches) {
+            L.control.zoom({ position: 'topright' }).addTo(map);
+        }
+
+        let tiles = L.tileLayer(tileUrl(darkQuery.matches), {
+            attribution: '&copy; OpenStreetMap, &copy; CARTO',
             subdomains: 'abcd',
             maxZoom: 19
         }).addTo(map);
 
-        // Store markers, routes, and current selections
-        /** @type {Map<string, {marker: L.Marker, look: string}>} vehicle id -> marker */
-        const vehicleMarkers = new Map();
-        let selectedLines = [];
-        let vehicleData = [];
-        let currentRoute = null;
-        /** The drawn route's layers, so progress along it can be updated in place. */
-        let routeLayers = null;
-        /** The vehicle being followed: { id, line, type, shapeId, trip, stale }. */
-        let selection = null;
+        // The whole page follows the system appearance, so the basemap has to as
+        // well — a light UI over dark tiles reads as a rendering fault.
+        darkQuery.addEventListener('change', (event) => {
+            map.removeLayer(tiles);
+            tiles = L.tileLayer(tileUrl(event.matches), {
+                attribution: '&copy; OpenStreetMap, &copy; CARTO',
+                subdomains: 'abcd',
+                maxZoom: 19
+            }).addTo(map);
+        });
 
-        // Create custom vehicle marker
-        function vehicleIcon(vehicle, selected) {
-            const colour = Colors[vehicle.type] || Colors.unknown;
-            // No heading until a vehicle has visibly moved, so the arrow is
-            // omitted rather than pointed at an arbitrary north.
+        /* ------------------------------------------------------------ Markers */
+
+        /*
+         * Markers are kept and moved, not destroyed and rebuilt.
+         *
+         * Every refresh used to remove all ~700 markers and construct new divIcons
+         * for them, which visibly flashed the whole map every ten seconds and shut
+         * any open popup. Keyed reuse means a vehicle just slides.
+         */
+        const markers = new Map();
+        let routeLayer = null;
+        let routeLine = null;
+        let routeBehindLine = null;
+        let routePoints = null;
+        let routeShapeId = null;
+
+        /**
+         * The line badge, plus an arrow pointing the way the vehicle is
+         * travelling — omitted until a vehicle has visibly moved and actually
+         * has a heading, rather than pointed at an arbitrary north.
+         */
+        const iconFor = (vehicle, selected) => {
             const arrow = Number.isFinite(vehicle.heading)
-                ? `<div class="vehicle-arrow" style="color:${colour}; transform: rotate(${Math.round(vehicle.heading)}deg)"></div>`
+                ? '<div class="vehicle-arrow" style="color:' + colourFor(vehicle.type) +
+                    ';transform:rotate(' + Math.round(vehicle.heading) + 'deg)"></div>'
                 : '';
-
             return L.divIcon({
-                html: `<div class="vehicle-pin${selected ? ' selected' : ''}">${arrow}` +
-                    `<div class="vehicle-badge" style="background:${colour}">${escapeHtml(vehicle.line)}</div></div>`,
-                className: 'custom-vehicle-icon',
+                className: 'vehicle-icon',
+                html: '<div class="vehicle-pin' + (selected ? ' selected' : '') + '">' + arrow +
+                    '<div class="vehicle-badge" style="background:' + colourFor(vehicle.type) + '">' +
+                    escapeHtml(vehicle.line) + '</div></div>',
                 iconSize: [40, 40],
                 iconAnchor: [20, 20]
             });
-        }
+        };
 
-        function vehicleTooltip(vehicle) {
-            const towards = vehicle.trip?.towards || vehicle.trip?.headsign;
-            const tail = towards
-                ? '→ ' + escapeHtml(towards)
-                : escapeHtml(translations[vehicle.type]?.name || vehicle.type);
-            return '<strong>' + escapeHtml(vehicle.line) + '</strong> ' + tail;
-        }
+        /** Destination on hover, same as the routecard names once you tap it. */
+        const vehicleTooltip = (vehicle) => {
+            const towards = vehicle.trip && (vehicle.trip.towards || vehicle.trip.headsign);
+            return '<strong>' + escapeHtml(vehicle.line) + '</strong>' +
+                (towards ? ' → ' + escapeHtml(towards) : '');
+        };
 
-        function visibleVehicles() {
-            return selectedLines.length === 0
-                ? vehicleData
-                : vehicleData.filter(vehicle => selectedLines.includes(vehicle.line));
-        }
+        /** Same identity a vehicle keeps across polls, so a marker can be moved instead of rebuilt. */
+        const vehicleKey = (vehicle) => vehicle.id != null
+            ? String(vehicle.id)
+            : vehicle.line + '@' + vehicle.lat + ',' + vehicle.lon;
 
-        /**
-         * Bring the markers in line with the latest positions.
-         *
-         * Markers are moved, not rebuilt. Clearing the layer and recreating
-         * every marker each poll made the whole fleet blink every ten seconds,
-         * closed whatever was open, and dropped the selection ring — and it
-         * costs more, not less, than moving the ones that are already there.
-         */
         function renderVehicles() {
-            const wanted = new Map(visibleVehicles().map(vehicle => [vehicle.id, vehicle]));
+            const visible = selected.size === 0
+                ? vehicles
+                : vehicles.filter((vehicle) => selected.has(vehicle.line));
+            const seen = new Set();
 
-            for (const [id, entry] of vehicleMarkers) {
-                if (wanted.has(id)) continue;
-                map.removeLayer(entry.marker);
-                vehicleMarkers.delete(id);
-            }
+            for (const vehicle of visible) {
+                const key = vehicleKey(vehicle);
+                seen.add(key);
 
-            for (const [id, vehicle] of wanted) {
-                const selected = selection?.id === id;
-                // Heading is bucketed: a marker redrawn for every degree of
-                // GPS jitter is a marker redrawn constantly.
-                const look = [vehicle.line, vehicle.type, Math.round((vehicle.heading ?? -1) / 15), selected].join('|');
-                const existing = vehicleMarkers.get(id);
+                const isSelected = currentVehicleId === key;
+                // Heading is bucketed to 15°: redrawing the icon for every
+                // degree of GPS jitter is redrawing it constantly, and no one
+                // can see 5° of difference anyway.
+                const headingBucket = Number.isFinite(vehicle.heading) ? Math.round(vehicle.heading / 15) : -1;
+                const look = vehicle.line + '|' + vehicle.type + '|' + headingBucket + '|' + isSelected;
 
+                const existing = markers.get(key);
                 if (existing) {
                     existing.marker.setLatLng([vehicle.lat, vehicle.lon]);
                     existing.marker.setTooltipContent(vehicleTooltip(vehicle));
                     if (existing.look !== look) {
-                        existing.marker.setIcon(vehicleIcon(vehicle, selected));
-                        existing.marker.setZIndexOffset(selected ? 1000 : 0);
+                        existing.marker.setIcon(iconFor(vehicle, isSelected));
+                        existing.marker.setZIndexOffset(isSelected ? 1000 : 0);
                         existing.look = look;
                     }
+                    existing.marker.off('click').on('click', (event) => {
+                        L.DomEvent.stopPropagation(event);
+                        selectVehicle(vehicle, key);
+                    });
                     continue;
                 }
 
                 const marker = L.marker([vehicle.lat, vehicle.lon], {
-                    icon: vehicleIcon(vehicle, selected),
-                    zIndexOffset: selected ? 1000 : 0
+                    icon: iconFor(vehicle, isSelected),
+                    zIndexOffset: isSelected ? 1000 : 0,
+                    keyboard: false
                 })
-                    .bindTooltip(vehicleTooltip(vehicle), {
-                        direction: 'top',
-                        offset: [0, -14],
-                        className: 'vehicle-tooltip'
-                    })
-                    // By id, not by this object: the vehicle is looked up again
-                    // on click, so the route is drawn from where it is now and
-                    // not from where it was when the marker was created.
-                    .on('click', () => selectVehicle(id));
-
-                marker.addTo(map);
-                vehicleMarkers.set(id, { marker, look });
+                    .bindTooltip(vehicleTooltip(vehicle), { direction: 'top', offset: [0, -16] })
+                    .addTo(map);
+                marker.on('click', (event) => {
+                    L.DomEvent.stopPropagation(event);
+                    selectVehicle(vehicle, key);
+                });
+                markers.set(key, { marker, look });
             }
 
-            updateStats();
-        }
-
-        /** Follow a vehicle: draw the direction it is running and list its stops. */
-        async function selectVehicle(id) {
-            if (selection?.id === id) {
-                clearSelection();
-                return;
+            for (const [key, entry] of markers) {
+                if (seen.has(key)) continue;
+                map.removeLayer(entry.marker);
+                markers.delete(key);
             }
 
-            const vehicle = vehicleData.find(entry => entry.id === id);
-            if (!vehicle) return;
+            // The vehicle being followed stopped reporting: say so rather than
+            // leaving a stop list up that stopped being true. Checked against
+            // the raw feed, not `visible` — a vehicle merely hidden by the line
+            // filter is not the same thing, and is handled where the filter
+            // itself changes.
+            if (currentVehicleId && !vehicles.some((vehicle) => vehicleKey(vehicle) === currentVehicleId)) {
+                tripStale = true;
+                renderVehicleBoard();
+            }
 
-            selection = { id, line: vehicle.line, type: vehicle.type, shapeId: null, trip: null, stale: false };
-            renderVehicles();
-            renderVehiclePanel();
-
-            await drawRoute(vehicle);
-            await refreshTrip();
+            const trams = visible.filter((v) => String(v.type).startsWith('tram')).length;
+            $('tramCount').textContent = trams;
+            $('busCount').textContent = visible.length - trams;
+            renderStatus();
         }
 
-        function clearSelection() {
-            selection = null;
-            hideRoute();
-            renderVehicles();
-            document.getElementById('routeInfo').classList.remove('visible');
+        /* ------------------------------------------------------------- Routes */
+
+        /**
+         * Every piece of chrome floats over the map, so fitting a route to the
+         * raw viewport buries most of it: on a phone under the sheet, on a
+         * desktop under the side panel. The padding is measured from what is
+         * actually covering the edges.
+         */
+        function fitPadding() {
+            const top = $('routeCard').classList.contains('visible') ? 150 : 90;
+            if (window.matchMedia('(min-width: 900px)').matches) {
+                return { paddingTopLeft: [412, top], paddingBottomRight: [40, 60] };
+            }
+            const sheetVisible = parseFloat(
+                getComputedStyle(document.documentElement).getPropertyValue('--sheet-peek')) || 140;
+            return { paddingTopLeft: [28, top], paddingBottomRight: [28, sheetVisible + 24] };
         }
 
-        // Clicking the map itself, away from any marker, drops the selection.
-        map.on('click', () => {
-            if (selection) clearSelection();
-        });
+        /** id -> stop circleMarker of the currently drawn route, for marking the next one. */
+        let routeStops = new Map();
+        let currentVehicleLine = null;
+        let currentVehicleTint = null;
 
-        // Fetch and display route shape
-        async function drawRoute(vehicle) {
+        function removeRouteLayer() {
+            if (routeLayer) map.removeLayer(routeLayer);
+            routeLayer = null;
+            routeLine = null;
+            routeBehindLine = null;
+            routePoints = null;
+            routeShapeId = null;
+            routeStops = new Map();
+            $('routeCard').classList.remove('visible');
+        }
+
+        async function showRoute(vehicle) {
             try {
-                // The compact format returns [lat, lon] pairs directly; the
-                // default response is the verbose one kept for old app builds.
                 const params = new URLSearchParams({ format: 'compact' });
                 if (Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lon)) {
                     params.set('lat', vehicle.lat);
                     params.set('lon', vehicle.lon);
                 }
-                // The heading is what tells the two directions of a line apart.
-                // Without it the server answers with whichever variant happens
-                // to be nearer, and the route drawn is the one going the other
-                // way — with the wrong terminus named on it.
+                // Both directions of a line run down the same street, so the
+                // position alone resolves to whichever variant happens to be a
+                // few metres nearer — the heading is what tells them apart, and
+                // without it the route drawn can be the one going the other way.
                 if (Number.isFinite(vehicle.heading)) params.set('heading', Math.round(vehicle.heading));
 
-                const response = await fetch(`/shapes/${encodeURIComponent(vehicle.line)}?${params}`);
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch route shape (${response.status})`);
+                const data = await apiGet('/shapes/' + encodeURIComponent(vehicle.line) + '?' + params,
+                    { retries: 1 });
+
+                // The compact format is [lat, lon] pairs; the legacy one is objects.
+                // Both are accepted so this page keeps working either way.
+                const points = (data.points || []).map((point) => Array.isArray(point)
+                    ? [Number(point[0]), Number(point[1])]
+                    : [Number(point.lat ?? point.shape_pt_lat), Number(point.lon ?? point.shape_pt_lon)])
+                    .filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]));
+                if (!points.length) throw new Error('Trasa bez punktów');
+
+                removeRouteLayer();
+                const tint = colourFor(vehicle.type);
+                routePoints = points;
+                routeShapeId = data.shapeId || null;
+                routeLayer = L.layerGroup().addTo(map);
+                // The part already travelled, kept for context but faded; drawn
+                // first so the active part paints over it where they touch.
+                routeBehindLine = L.polyline([], {
+                    color: tint, weight: 5, opacity: 0.25, lineJoin: 'round', lineCap: 'round'
+                }).addTo(routeLayer);
+                routeLine = L.polyline(points, {
+                    color: tint, weight: 5, opacity: 0.9, lineJoin: 'round', lineCap: 'round'
+                }).addTo(routeLayer);
+
+                for (const entry of data.stops || []) {
+                    const stop = entry.stop || entry;
+                    const lat = Number(stop.lat), lon = Number(stop.lon);
+                    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+                    const dot = L.circleMarker([lat, lon], {
+                        className: 'stop-marker',
+                        radius: 5, color: tint, fillColor: '#fff', fillOpacity: 1, weight: 3
+                    })
+                        .bindTooltip(escapeHtml(String(stop.name || '')), { direction: 'top', offset: [0, -6] })
+                        // Without stopping it here the tap reaches the map's own
+                        // click handler, which clears the very route the stop
+                        // belongs to — the board opened and the line vanished.
+                        .on('click', (event) => {
+                            L.DomEvent.stopPropagation(event);
+                            openStop(stop);
+                        })
+                        .addTo(routeLayer);
+
+                    const id = stop.id != null ? String(stop.id) : (stop.stop_id != null ? String(stop.stop_id) : null);
+                    if (id != null) routeStops.set(id, dot);
                 }
 
-                const data = await response.json();
-                const points = data.points || [];
-                if (!points.length) throw new Error('Route has no shape points');
+                currentVehicleLine = data.line || vehicle.line;
+                currentVehicleTint = tint;
+                $('routeBadge').textContent = currentVehicleLine;
+                $('routeBadge').style.background = tint;
+                $('routeTitle').textContent = data.direction || ('Linia ' + vehicle.line);
+                const stopCount = (data.stops || []).length;
+                $('routeSub').textContent = stopCount + ' ' +
+                    plural(stopCount, 'przystanek', 'przystanki', 'przystanków') +
+                    ' · dotknij, aby zobaczyć kurs';
+                $('routeCard').classList.add('visible');
 
-                hideRoute();
-
-                const colour = Colors[vehicle.type] || Colors.unknown;
-                currentRoute = L.layerGroup().addTo(map);
-
-                // Two lines, one route: the part already travelled stays for
-                // context but recedes, so what is left reads as what is left.
-                const behind = L.polyline([], { color: colour, weight: 4, opacity: 0.25, lineJoin: 'round' })
-                    .addTo(currentRoute);
-                const ahead = L.polyline(points, { color: colour, weight: 4, opacity: 0.9, lineJoin: 'round' })
-                    .addTo(currentRoute);
-
-                const stops = new Map();
-                for (const stop of data.stops || []) {
-                    const dot = L.circleMarker([stop.lat, stop.lon], {
-                        radius: 4,
-                        color: colour,
-                        fillColor: '#fff',
-                        fillOpacity: 1,
-                        weight: 2
-                    }).addTo(currentRoute);
-                    // The stop's own name only: the time in the shape payload
-                    // belongs to the sample trip it was described from, not to
-                    // the vehicle you just clicked.
-                    dot.bindTooltip(escapeHtml(stop.name), { direction: 'top' });
-                    stops.set(String(stop.id), dot);
-                }
-
-                routeLayers = { ahead, behind, stops, points, colour };
-                if (selection) selection.shapeId = data.shapeId ?? null;
-                map.fitBounds(ahead.getBounds(), { padding: [30, 30] });
-
+                map.fitBounds(routeLine.getBounds(), fitPadding());
+                applyTripProgress(currentTrip);
             } catch (error) {
-                console.error('Error fetching route shape:', error);
+                $('routeBadge').textContent = '!';
+                $('routeBadge').style.background = 'var(--disruption)';
+                $('routeTitle').textContent = 'Nie udało się wczytać trasy';
+                $('routeSub').textContent = '';
+                $('routeCard').classList.add('visible');
             }
         }
 
-        /** Split the drawn route at the vehicle, and mark the stop it is heading for. */
-        function applyProgress(trip) {
-            if (!routeLayers) return;
+        /** Dismiss the route and forget the vehicle it belonged to. */
+        function deselectVehicle() {
+            removeRouteLayer();
+            currentVehicleId = null;
+            currentVehicleLine = null;
+            currentVehicleTint = null;
+            currentTrip = null;
+            tripStale = false;
+            if (activePane === 'vehicle') setPane('lines');
+            renderVehicles();
+        }
 
-            const onSameVariant = trip && selection && trip.shapeId === selection.shapeId;
+        // The routecard stays up while browsing lines or alerts; tapping it —
+        // anywhere but the close button — brings the vehicle's board back,
+        // the same way the status pill reopens the line list.
+        $('routeCard').addEventListener('click', (event) => {
+            if (event.target.closest('#routeClose') || !currentVehicleId) return;
+            setPane('vehicle');
+            snapTo(detents().half);
+        });
+        $('routeClose').addEventListener('click', deselectVehicle);
+        map.on('click', deselectVehicle);
+
+        /**
+         * Split the drawn route at the vehicle's real position and mark the
+         * stop it is heading for next. Only meaningful when the trip describes
+         * the same variant currently on screen — a vehicle re-matched to a
+         * different shape mid-poll would otherwise split the line at a point
+         * that belongs to a route no longer drawn.
+         */
+        function applyTripProgress(trip) {
+            if (!routeLine || !routePoints) return;
+
+            const onSameVariant = trip && routeShapeId && trip.shapeId === routeShapeId;
             const index = onSameVariant && Number.isFinite(trip.shapeIndex)
-                ? Math.min(Math.max(trip.shapeIndex, 0), routeLayers.points.length - 1)
+                ? Math.min(Math.max(trip.shapeIndex, 0), routePoints.length - 1)
                 : null;
 
-            routeLayers.behind.setLatLngs(index === null ? [] : routeLayers.points.slice(0, index + 1));
-            routeLayers.ahead.setLatLngs(index === null ? routeLayers.points : routeLayers.points.slice(index));
+            routeLine.setLatLngs(index === null ? routePoints : routePoints.slice(index));
+            if (routeBehindLine) routeBehindLine.setLatLngs(index === null ? [] : routePoints.slice(0, index + 1));
 
-            const nextId = trip?.nextStop ? String(trip.nextStop.id) : null;
-            for (const [id, dot] of routeLayers.stops) {
+            const nextId = trip && trip.nextStop && trip.nextStop.id != null ? String(trip.nextStop.id) : null;
+            for (const [id, dot] of routeStops) {
                 const isNext = id === nextId;
-                dot.setStyle({
-                    radius: isNext ? 7 : 4,
-                    weight: isNext ? 3 : 2,
-                    fillColor: isNext ? routeLayers.colour : '#fff'
-                });
+                dot.setStyle({ radius: isNext ? 8 : 5, weight: isNext ? 3 : 2, fillColor: isNext ? dot.options.color : '#fff' });
             }
         }
 
-        /** The stops still ahead of the selected vehicle, and how late it is. */
-        async function refreshTrip() {
-            if (!selection) return;
+        /* ---------------------------------------------------------- Vehicles */
 
-            try {
-                const response = await fetch(`/vehicle/${encodeURIComponent(selection.id)}`);
-                if (response.status === 404) {
-                    // Tracked vehicles time out; say so rather than showing a
-                    // stop list that stopped being true minutes ago.
-                    selection.stale = true;
-                    selection.trip = null;
-                } else if (response.ok) {
-                    const data = await response.json();
-                    selection.trip = data.trip;
-                    selection.stale = false;
-                    applyProgress(data.trip);
-                } else {
-                    throw new Error('HTTP ' + response.status);
-                }
-            } catch (error) {
-                console.error('Error fetching vehicle trip:', error);
+        /** Follow a vehicle: draw the direction it is running, and its board. */
+        function selectVehicle(vehicle, key) {
+            if (currentVehicleId === key) {
+                deselectVehicle();
+                return;
             }
 
-            renderVehiclePanel();
+            currentVehicleId = key;
+            currentTrip = null;
+            tripStale = false;
+            renderVehicles();
+
+            setPane('vehicle');
+            snapTo(detents().half);
+            renderVehicleBoard({ status: 'loading' });
+
+            showRoute(vehicle);
+            loadVehicleTrip();
+        }
+
+        /** The stops still ahead of the followed vehicle, and how late it is. */
+        async function loadVehicleTrip() {
+            if (!currentVehicleId) return;
+            const id = currentVehicleId;
+
+            try {
+                const data = await apiGet('/vehicle/' + encodeURIComponent(id), { retries: 1 });
+                if (currentVehicleId !== id) return;
+                currentTrip = data.trip;
+                tripStale = false;
+                applyTripProgress(currentTrip);
+            } catch (error) {
+                if (currentVehicleId !== id) return;
+                // A tracked vehicle that stopped reporting 404s here; anything
+                // else is a network blip, and the last known trip stays on screen.
+                if (String(error && error.message || '').indexOf('404') !== -1) {
+                    tripStale = true;
+                    currentTrip = null;
+                }
+            }
+            renderVehicleBoard();
         }
 
         function delayText(trip) {
@@ -972,220 +1308,222 @@
             return 'Zgodnie z rozkładem';
         }
 
-        function stopRow(stop, passed) {
-            const minutes = Math.round((stop.etaSeconds ?? 0) / 60);
-            const ago = Math.round((stop.agoSeconds ?? 0) / 60);
-            const when = passed
-                ? '<span class="stop-ago">' + (ago <= 0 ? 'przed chwilą' : ago + ' min temu') + '</span>'
-                : '<span class="stop-eta">' + (minutes <= 0 ? 'teraz' : minutes + '<i>min</i>') + '</span>';
+        function vehicleStopRow(stop, passed) {
+            const minutes = Math.round((stop.etaSeconds || 0) / 60);
+            const ago = Math.round((stop.agoSeconds || 0) / 60);
+            const right = passed
+                ? '<span class="row__ago">' + (ago <= 0 ? 'przed chwilą' : ago + ' min temu') + '</span>'
+                : (minutes <= 0
+                    ? '<span class="row__min">teraz</span>'
+                    : '<span class="row__min">' + minutes + '</span><span class="row__unit">min</span>');
 
-            return '<div class="stop-row' + (passed ? ' passed' : '') + '">' +
-                '<span class="stop-dot"></span>' +
-                '<span class="stop-name">' + escapeHtml(stop.name) +
-                (stop.scheduled ? '<i>' + escapeHtml(stop.scheduled.slice(0, 5)) + '</i>' : '') +
-                '</span>' + when + '</div>';
-        }
-
-        // Show the selected vehicle's panel
-        function renderVehiclePanel() {
-            const panel = document.getElementById('routeInfo');
-            if (!selection) {
-                panel.classList.remove('visible');
-                return;
-            }
-
-            // The detail if it has arrived, otherwise the summary /locations
-            // already carries — both name the destination and the next stop.
-            const vehicle = vehicleData.find(entry => entry.id === selection.id);
-            const trip = selection.trip || vehicle?.trip || null;
-            const colour = Colors[selection.type] || Colors.unknown;
-
-            const badge = document.getElementById('routeBadge');
-            badge.textContent = selection.line;
-            badge.style.background = colour;
-            panel.style.color = colour;
-
-            document.getElementById('routeTitle').textContent =
-                trip?.towards ? '→ ' + trip.towards : 'Linia ' + selection.line;
-            // The full "A → B" when we know it; the vehicle's category is only
-            // a fallback, since "Tramwaje" says nothing about this vehicle.
-            document.getElementById('routeType').textContent =
-                trip?.direction || translations[selection.type]?.name || selection.type;
-
-            const status = selection.stale
-                ? '<span class="warn">Pojazd przestał nadawać</span>'
-                : '<span>' + escapeHtml(delayText(trip)) + '</span>';
-            const where = trip?.atStop
-                ? 'Na przystanku ' + trip.atStop.name
-                : trip?.previousStop ? 'Minął ' + trip.previousStop.name : '';
-            document.getElementById('routeStatus').innerHTML =
-                status + (where ? '<span class="muted">' + escapeHtml(where) + '</span>' : '');
-
-            const rows = (trip?.previousStops || []).map(stop => stopRow(stop, true))
-                .concat((trip?.nextStops || []).map(stop => stopRow(stop, false)));
-
-            document.getElementById('routeStops').innerHTML = rows.length
-                ? rows.join('')
-                : '<div class="route-empty">' + (trip && trip.onRoute === false
-                    ? 'Pojazd jest poza trasą, więc nie znamy kolejnych przystanków.'
-                    : 'Brak danych o kolejnych przystankach.') + '</div>';
-
-            panel.classList.add('visible');
-        }
-
-        // Hide route
-        function hideRoute() {
-            if (currentRoute) {
-                map.removeLayer(currentRoute);
-                currentRoute = null;
-            }
-            routeLayers = null;
-        }
-
-        // Create line selection interface
-        function createLineFilters(lines) {
-            const container = document.getElementById('filtersContainer');
-            container.innerHTML = '';
-            
-            Object.keys(lines)
-                .filter(cat => !['allBuses', 'allTrams'].includes(cat) && lines[cat].length > 0)
-                .forEach(category => {
-                    const categoryDiv = document.createElement('div');
-                    categoryDiv.className = 'category-container';
-                    
-                    const title = document.createElement('div');
-                    title.className = 'category-title';
-                    title.textContent = translations[category]?.name || category;
-                    categoryDiv.appendChild(title);
-                    
-                    const linesRow = document.createElement('div');
-                    linesRow.className = 'lines-row';
-                    
-                    lines[category]
-                        .sort((a, b) => parseInt(a) - parseInt(b))
-                        .forEach(line => {
-                            const lineButton = document.createElement('div');
-                            lineButton.className = 'line-button';
-                            lineButton.style.backgroundColor = Colors[category] || Colors.unknown;
-                            lineButton.textContent = line;
-                            lineButton.dataset.line = line;
-                            
-                            lineButton.addEventListener('click', () => {
-                                toggleLineSelection(line, lineButton);
-                            });
-                            
-                            linesRow.appendChild(lineButton);
-                        });
-                    
-                    categoryDiv.appendChild(linesRow);
-                    container.appendChild(categoryDiv);
-                });
-        }
-
-        // Toggle line selection
-        function toggleLineSelection(line, buttonElement) {
-            const index = selectedLines.indexOf(line);
-            if (index > -1) {
-                selectedLines.splice(index, 1);
-                buttonElement.classList.remove('selected');
-            } else {
-                selectedLines.push(line);
-                buttonElement.classList.add('selected');
-            }
-            renderVehicles();
-            renderAlerts();
-        }
-
-        // Update statistics
-        function updateStats() {
-            const visible = visibleVehicles();
-            const tramCount = visible.filter(v => v.type.startsWith('tram')).length;
-            const busCount = visible.filter(v => v.type.startsWith('bus')).length;
-
-            document.getElementById('tramCount').textContent = tramCount;
-            document.getElementById('busCount').textContent = busCount;
-        }
-
-        /** The line index, or null when the payload is not that. */
-        function normaliseLines(payload) {
-            if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
-
-            const lines = {};
-            for (const [key, value] of Object.entries(payload)) {
-                if (Array.isArray(value)) lines[key] = value;
-            }
-            return Object.keys(lines).length ? lines : null;
+            return '<div class="row' + (passed ? ' row--passed' : '') + '" style="color:' +
+                    (currentVehicleTint || LINE_COLOR.unknown) + '">' +
+                '<span class="row__dot"></span>' +
+                '<div class="row__text">' +
+                    '<div class="row__headsign">' + escapeHtml(stop.name) + '</div>' +
+                    (stop.scheduled ? '<div class="row__time">' + escapeHtml(String(stop.scheduled).slice(0, 5)) + '</div>' : '') +
+                '</div>' + right +
+            '</div>';
         }
 
         /**
-         * Fetch lines data.
-         *
-         * The server answers 503 with `{error, state}` for up to a minute after
-         * boot while it ingests the feed. Reading that body as the line index
-         * threw on the first `.sort()` and left the page stuck on "Ładowanie
-         * pojazdów…" forever — so the payload is checked, and a cold start is
-         * waited out instead of failed.
+         * @param {{ status: 'loading'|'ready', trip?: object|null }} [state]
+         *   Omit to render from the current polled state (`currentTrip` /
+         *   `tripStale`); pass `{status:'loading'}` for the instant right after
+         *   a vehicle is tapped, before the first fetch has answered.
          */
-        async function fetchLines(attempt = 0) {
+        function renderVehicleBoard(state) {
+            const trip = state ? state.trip : currentTrip;
+            const towards = trip && trip.towards;
+            const head =
+                '<div class="board__head"><div style="flex:1;min-width:0">' +
+                '<div class="board__eyebrow">Kierunek</div>' +
+                '<div class="board__stop">' + escapeHtml(towards || ('Linia ' + (currentVehicleLine || ''))) + '</div>' +
+                '</div></div>';
+
+            const status = tripStale
+                ? '<div class="board__status warn"><span>Pojazd przestał nadawać</span></div>'
+                : '<div class="board__status"><span>' + escapeHtml(delayText(trip)) + '</span>' +
+                    '<span>' + escapeHtml(vehicleWhereText(trip)) + '</span></div>';
+
+            let body;
+            const loading = (state ? state.status : 'ready') === 'loading' && !trip;
+            if (loading) {
+                body = '<div class="board__msg">Wczytywanie kursu…</div>';
+            } else {
+                const previous = (trip && trip.previousStops || []).map((stop) => vehicleStopRow(stop, true));
+                const next = (trip && trip.nextStops || []).map((stop) => vehicleStopRow(stop, false));
+                const rows = previous.concat(next);
+                body = rows.length ? rows.join('') : '<div class="board__msg">' +
+                    (trip && trip.onRoute === false
+                        ? 'Pojazd jest poza trasą, więc nie znamy kolejnych przystanków.'
+                        : 'Brak danych o kolejnych przystankach.') + '</div>';
+            }
+
+            $('vehicleBoard').innerHTML = head + status + body;
+        }
+
+        function vehicleWhereText(trip) {
+            if (trip && trip.atStop && trip.atStop.name) return 'Na przystanku ' + trip.atStop.name;
+            if (trip && trip.previousStop && trip.previousStop.name) return 'Minął ' + trip.previousStop.name;
+            return '';
+        }
+
+        $('vehicleBack').addEventListener('click', () => setPane('lines'));
+
+        /* --------------------------------------------------------- Departures */
+
+        function openStop(stop) {
+            currentStop = stop;
+            setPane('stop');
+            snapTo(detents().half);
+            renderBoard({ status: 'loading' });
+            loadDepartures();
+
+            clearInterval(departuresTimer);
+            departuresTimer = setInterval(loadDepartures, DEPARTURE_REFRESH_MS);
+        }
+
+        async function loadDepartures() {
+            if (!currentStop || currentStop.id == null) return;
+            const stopId = currentStop.id;
             try {
-                const response = await fetch('/lines');
-                const payload = response.ok ? normaliseLines(await response.json()) : null;
-                if (payload) {
-                    createLineFilters(payload);
-                    return;
-                }
-                throw new Error(response.ok ? 'unexpected payload' : 'HTTP ' + response.status);
-            } catch (error) {
-                if (attempt >= 5) {
-                    console.error('Error fetching lines:', error);
-                    return;
-                }
-                setTimeout(() => fetchLines(attempt + 1), Math.min(2000 * (attempt + 1), 8000));
+                const data = await apiGet(
+                    '/stop/' + encodeURIComponent(stopId) + '/departures?limit=10', { retries: 1 });
+                if (!currentStop || currentStop.id !== stopId) return;
+                renderBoard({ status: 'ready', departures: data.departures || [] });
+            } catch {
+                if (!currentStop || currentStop.id !== stopId) return;
+                renderBoard({ status: 'error' });
             }
         }
 
-        // Fetch vehicle locations
-        async function fetchVehicles() {
-            try {
-                const response = await fetch('/locations');
-                if (!response.ok) throw new Error('HTTP ' + response.status);
-                const data = await response.json();
+        function renderBoard(state) {
+            const head =
+                '<div class="board__head"><div style="flex:1;min-width:0">' +
+                '<div class="board__eyebrow">Najbliższe odjazdy</div>' +
+                '<div class="board__stop">' + escapeHtml(currentStop && currentStop.name || '—') + '</div>' +
+                '</div></div>';
 
-                vehicleData = (data.locations || []).filter(v =>
-                    v.lat !== 0 && v.lon !== 0 && !isNaN(v.lat) && !isNaN(v.lon)
-                );
-
-                renderVehicles();
-
-                // The vehicle being followed has moved, so where it is on its
-                // route and when it reaches the stops ahead have both changed.
-                if (selection) {
-                    if (vehicleData.some(entry => entry.id === selection.id)) refreshTrip();
-                    else {
-                        selection.stale = true;
-                        renderVehiclePanel();
-                    }
-                }
-
-                if (data.lastUpdated) {
-                    const lastUpdate = new Date(data.lastUpdated);
-                    document.getElementById('lastUpdate').textContent = lastUpdate.toLocaleTimeString();
-                }
-                
-                document.getElementById('loading').style.display = 'none';
-                
-            } catch (error) {
-                console.error('Error fetching vehicles:', error);
-                document.getElementById('loading').innerHTML = `
-                    <div style="color: #E85D75;">
-                        ❌ Błąd ładowania pojazdów
-                    </div>
-                `;
+            let body;
+            if (state.status === 'loading') {
+                body = '<div class="board__msg">Wczytywanie odjazdów…</div>';
+            } else if (state.status === 'error') {
+                body = '<div class="board__msg">Nie udało się pobrać odjazdów.</div>';
+            } else if (!state.departures.length) {
+                body = '<div class="board__msg">Brak odjazdów w ciągu najbliższych dwóch godzin.</div>';
+            } else {
+                body = state.departures.map((departure) => {
+                    const minutes = Math.round((departure.inSeconds || 0) / 60);
+                    const scheduled = String(departure.departure || '').slice(0, 5);
+                    return '<div class="row">' +
+                        '<span class="badge badge--sm" style="background:' + colourFor(departure.type) + '">' +
+                            escapeHtml(departure.line) + '</span>' +
+                        '<div class="row__text">' +
+                            '<div class="row__headsign">' + escapeHtml(departure.headsign || '—') + '</div>' +
+                            (scheduled ? '<div class="row__time">' + escapeHtml(scheduled) + '</div>' : '') +
+                        '</div>' +
+                        (minutes <= 0
+                            ? '<span class="row__min">teraz</span>'
+                            : '<span class="row__min">' + minutes + '</span><span class="row__unit">min</span>') +
+                        '</div>';
+                }).join('');
             }
+
+            $('board').innerHTML = head + body;
         }
 
-        // Service alerts
-        let alertsData = [];
+        $('stopBack').addEventListener('click', () => {
+            currentStop = null;
+            clearInterval(departuresTimer);
+            setPane('lines');
+        });
+
+        /* ---------------------------------------------------------- Rendering */
+
+        function renderStatus() {
+            const dot = $('statusDot');
+            const text = $('statusText');
+
+            if (booting) {
+                dot.className = 'dot';
+                text.textContent = 'Serwer wczytuje rozkłady…';
+                return;
+            }
+            if (lastUpdated == null) {
+                dot.className = 'dot';
+                text.textContent = 'Łączenie…';
+                return;
+            }
+
+            const age = Math.round((Date.now() - lastUpdated) / 1000);
+            if (age > 45) {
+                dot.className = 'dot stale';
+                text.textContent = 'Brak odświeżenia od ' + (Math.round(age / 60) || 1) + ' min';
+                return;
+            }
+
+            const visible = selected.size === 0
+                ? vehicles.length
+                : vehicles.filter((vehicle) => selected.has(vehicle.line)).length;
+            dot.className = 'dot live';
+            text.textContent = visible + ' w ruchu · ' + (selected.size === 0
+                ? 'wszystkie linie'
+                : selected.size + ' ' + plural(selected.size, 'linia', 'linie', 'linii'));
+        }
+
+        function renderFilters() {
+            const needle = query.trim().toUpperCase();
+            const container = $('filters');
+            const groups = Object.keys(linesData)
+                .filter((category) => !HIDDEN_CATEGORIES.has(category) &&
+                    Array.isArray(linesData[category]) && linesData[category].length)
+                .map((category) => [
+                    category,
+                    linesData[category]
+                        .filter((line) => !needle || String(line).toUpperCase().includes(needle))
+                        .slice()
+                        .sort(byLine)
+                ])
+                .filter((entry) => entry[1].length);
+
+            if (!Object.keys(linesData).length) {
+                container.innerHTML = booting
+                    ? '<div class="notice"><span class="spinner"></span>' +
+                      'Serwer wczytuje rozkład jazdy. Zaraz spróbuję ponownie.</div>'
+                    : '<div class="notice"><span class="spinner"></span>Wczytywanie linii…</div>';
+                return;
+            }
+
+            if (!groups.length) {
+                container.innerHTML = '<div class="empty">Brak linii pasujących do wyszukiwania.</div>';
+                return;
+            }
+
+            container.innerHTML = groups.map(([category, lines]) => {
+                const tint = colourFor(category);
+                const allSelected = lines.every((line) => selected.has(line));
+                const chips = lines.map((line) => {
+                    const on = selected.has(line);
+                    return '<button class="chip" type="button" data-line="' + escapeHtml(line) + '"' +
+                        ' aria-pressed="' + on + '"' +
+                        ' aria-label="Linia ' + escapeHtml(line) + '"' +
+                        (on ? ' style="background:' + tint + '"' : '') + '>' +
+                        escapeHtml(line) + '</button>';
+                }).join('');
+
+                return '<div class="group">' +
+                    '<div class="group__head">' +
+                        '<div class="group__title"><span class="swatch" style="background:' + tint + '"></span>' +
+                            escapeHtml(LINE_LABEL[category] || category) + '</div>' +
+                        '<button class="group__action" type="button" data-category="' + escapeHtml(category) + '">' +
+                            (allSelected ? 'Odznacz wszystkie' : 'Zaznacz wszystkie') + '</button>' +
+                    '</div>' +
+                    '<div class="chips">' + chips + '</div>' +
+                '</div>';
+            }).join('');
+        }
 
         function alertAge(timestamp) {
             const minutes = Math.floor((Date.now() - timestamp) / 60000);
@@ -1196,85 +1534,316 @@
             return Math.floor(minutes / 1440) + ' dni temu';
         }
 
+        const sourceLabel = (source) => {
+            const match = /^https?:\/\/(?:www\.)?([^/]+)/i.exec(String(source || ''));
+            return match ? match[1] : '';
+        };
+
         function renderAlerts() {
-            const list = document.getElementById('alertsList');
-            const count = document.getElementById('alertsCount');
+            const list = $('alertsList');
+            const count = $('alertsCount');
 
-            // An alert about a line you are not watching is noise; one about a
-            // line on screen is the reason you looked at the panel.
-            // With nothing selected the map shows every line, so every alert
-            // is relevant; otherwise only the ones you are watching.
-            const relevant = (alert) =>
-                selectedLines.length === 0 ||
-                (alert.affected || []).some((line) => selectedLines.includes(line));
+            // With nothing selected the map shows every line, so every alert is
+            // relevant; otherwise only the ones you are watching.
+            const relevant = (alert) => selected.size === 0 ||
+                (alert.affected || []).some((line) => selected.has(line));
 
-            const sorted = [...alertsData].sort(
-                (a, b) => (relevant(b) - relevant(a)) || (b.timestamp - a.timestamp));
+            const sorted = [...alerts].sort((a, b) =>
+                (relevant(b) - relevant(a)) || (b.timestamp - a.timestamp));
 
             count.textContent = sorted.length;
             count.classList.toggle('zero', sorted.length === 0);
 
             if (!sorted.length) {
-                list.innerHTML = '<div class="alerts-empty">Brak aktualnych utrudnień.</div>';
+                list.innerHTML = '<div class="empty">Brak aktualnych utrudnień.</div>';
                 return;
             }
 
             list.innerHTML = sorted.map((alert) => {
-                const badges = (alert.affected || []).slice(0, 10).map((line) => {
-                    const colour = Colors[(alert.types || {})[line]] || Colors.unknown;
-                    return '<span class="alert-line" style="background:' + colour + '">' +
-                        escapeHtml(line) + '</span>';
-                }).join('');
+                const href = safeUrl(alert.url);
+                const badges = (alert.affected || []).slice(0, 10).map((line) =>
+                    '<span class="badge badge--sm" style="background:' +
+                    colourFor((alert.types || {})[line]) + '">' + escapeHtml(line) + '</span>').join('');
+                const body = alert.content && alert.content !== alert.title
+                    ? '<div class="alert__body">' + escapeHtml(String(alert.content).slice(0, 220)) + '</div>'
+                    : '';
+                const tag = selected.size > 0 && relevant(alert)
+                    ? '<div class="alert__tag">Dotyczy Twojej linii</div>' : '';
 
-                const body = [escapeHtml(alertAge(alert.timestamp))]
-                    .concat(alert.content && alert.content !== alert.title
-                        ? [escapeHtml(alert.content.slice(0, 140))] : [])
-                    .join(' · ');
+                const open = href
+                    ? '<a class="alert' + (relevant(alert) ? ' relevant' : '') + '" href="' +
+                      escapeHtml(href) + '" target="_blank" rel="noopener noreferrer">'
+                    : '<div class="alert' + (relevant(alert) ? ' relevant' : '') + '">';
 
-                return '<a class="alert-item' + (relevant(alert) ? ' relevant' : '') + '"' +
-                    (alert.url ? ' href="' + escapeHtml(alert.url) + '" target="_blank" rel="noopener"' : '') +
-                    '><div class="alert-title">' + escapeHtml(alert.title || alert.content) + '</div>' +
-                    '<div class="alert-meta">' + body + '</div>' +
-                    (badges ? '<div class="alert-lines">' + badges + '</div>' : '') +
-                    '</a>';
+                return open +
+                    '<div class="alert__meta"><span>' + escapeHtml(sourceLabel(alert.source)) + '</span>' +
+                        '<span>' + escapeHtml(alertAge(alert.timestamp)) + '</span></div>' +
+                    tag +
+                    '<div class="alert__title">' + escapeHtml(alert.title || alert.content || '') + '</div>' +
+                    body +
+                    (badges ? '<div class="alert__lines">' + badges + '</div>' : '') +
+                    (href ? '</a>' : '</div>');
             }).join('');
         }
 
-        async function fetchAlerts() {
+        /* ------------------------------------------------------- Interactions */
+
+        /**
+         * A followed vehicle whose line the filter just hid is not "still
+         * there but off screen" — its marker is about to be removed below, so
+         * the board describing it has to go too, the same way the app closes
+         * a vehicle's sheet when its line is switched off.
+         */
+        function dropVehicleIfFiltered() {
+            if (currentVehicleId && selected.size > 0 && !selected.has(currentVehicleLine)) deselectVehicle();
+        }
+
+        $('filters').addEventListener('click', (event) => {
+            const chip = event.target.closest('.chip');
+            if (chip) {
+                const line = chip.dataset.line;
+                if (selected.has(line)) selected.delete(line); else selected.add(line);
+                persist();
+                renderFilters();
+                dropVehicleIfFiltered();
+                renderVehicles();
+                renderAlerts();
+                return;
+            }
+
+            const action = event.target.closest('.group__action');
+            if (!action) return;
+            const lines = (linesData[action.dataset.category] || []);
+            const allSelected = lines.every((line) => selected.has(line));
+            for (const line of lines) {
+                if (allSelected) selected.delete(line); else selected.add(line);
+            }
+            persist();
+            renderFilters();
+            dropVehicleIfFiltered();
+            renderVehicles();
+            renderAlerts();
+        });
+
+        $('lineSearch').addEventListener('input', (event) => {
+            query = event.target.value;
+            renderFilters();
+        });
+
+        document.querySelectorAll('.segmented button').forEach((button) => {
+            button.addEventListener('click', () => {
+                setPane(button.dataset.pane);
+                if (sheetY() > detents().half) snapTo(detents().half);
+            });
+        });
+
+        function setPane(name) {
+            activePane = name;
+            $('paneLines').classList.toggle('active', name === 'lines');
+            $('paneAlerts').classList.toggle('active', name === 'alerts');
+            $('paneStop').classList.toggle('active', name === 'stop');
+            $('paneVehicle').classList.toggle('active', name === 'vehicle');
+            document.querySelectorAll('.segmented button').forEach((button) => {
+                // The stop and vehicle boards are reached from the map, so
+                // neither tab is the active one while either is up.
+                button.setAttribute('aria-selected', String(button.dataset.pane === name));
+            });
+            $('sheetBody').scrollTop = 0;
+        }
+
+        $('statusPill').addEventListener('click', () => {
+            setPane('lines');
+            snapTo(sheetY() <= detents().half ? detents().peek : detents().half);
+        });
+
+        $('locate').addEventListener('click', () => {
+            if (!navigator.geolocation) return;
+            const button = $('locate');
+            button.classList.add('busy');
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    button.classList.remove('busy');
+                    map.flyTo([position.coords.latitude, position.coords.longitude], 15, { duration: 0.6 });
+                },
+                () => button.classList.remove('busy'),
+                { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+            );
+        });
+
+        /* --------------------------------------------------- The sheet itself */
+
+        /*
+         * Three detents, iOS-style: a peek that leaves the map usable, a half,
+         * and full. `--y` is how far the sheet is pushed down from full.
+         */
+        const sheet = $('sheet');
+        const isDesktop = () => window.matchMedia('(min-width: 900px)').matches;
+
+        function detents() {
+            const height = sheet.offsetHeight || 1;
+            const peekVisible = 116 + parseFloat(
+                getComputedStyle(document.documentElement).getPropertyValue('--safe-bottom') || 0);
+            return {
+                full: 0,
+                half: Math.max(0, height - Math.min(height, Math.max(280, window.innerHeight * 0.52))),
+                peek: Math.max(0, height - peekVisible)
+            };
+        }
+
+        let y = 0;
+        const sheetY = () => y;
+
+        function setY(value, animate) {
+            y = value;
+            sheet.classList.toggle('dragging', !animate);
+            sheet.style.setProperty('--y', value + 'px');
+            // The locate button rides above the sheet's peek, never under it.
+            const visible = (sheet.offsetHeight || 0) - value;
+            document.documentElement.style.setProperty('--sheet-peek', Math.max(0, visible) + 'px');
+        }
+
+        function snapTo(value) {
+            setY(value, true);
+        }
+
+        function applyDetents() {
+            if (isDesktop()) {
+                sheet.classList.remove('dragging');
+                document.documentElement.style.setProperty('--sheet-peek', '0px');
+                return;
+            }
+            snapTo(detents().peek);
+        }
+
+        // Pointer events cover mouse, touch and pen with one path.
+        const grab = $('sheetGrab');
+        let dragging = false;
+        let startPointer = 0;
+        let startY = 0;
+        let lastPointer = 0;
+        let lastTime = 0;
+        let velocity = 0;
+
+        grab.addEventListener('pointerdown', (event) => {
+            if (isDesktop()) return;
+            // Let the segmented control take its own taps.
+            if (event.target.closest('.segmented')) return;
+            dragging = true;
+            startPointer = lastPointer = event.clientY;
+            lastTime = event.timeStamp;
+            velocity = 0;
+            startY = y;
+            grab.setPointerCapture(event.pointerId);
+            sheet.classList.add('dragging');
+        });
+
+        grab.addEventListener('pointermove', (event) => {
+            if (!dragging) return;
+            const { full, peek } = detents();
+            const next = Math.min(peek, Math.max(full, startY + (event.clientY - startPointer)));
+            const dt = event.timeStamp - lastTime;
+            if (dt > 0) velocity = (event.clientY - lastPointer) / dt;
+            lastPointer = event.clientY;
+            lastTime = event.timeStamp;
+            setY(next, false);
+        });
+
+        const endDrag = () => {
+            if (!dragging) return;
+            dragging = false;
+
+            const { full, half, peek } = detents();
+            // A flick decides the direction on its own; a slow drag lands on
+            // whichever detent it is nearest.
+            let target;
+            if (velocity > 0.6) target = y < half ? half : peek;
+            else if (velocity < -0.6) target = y > half ? half : full;
+            else {
+                target = [full, half, peek].reduce((best, candidate) =>
+                    Math.abs(candidate - y) < Math.abs(best - y) ? candidate : best, full);
+            }
+            snapTo(target);
+        };
+
+        grab.addEventListener('pointerup', endDrag);
+        grab.addEventListener('pointercancel', endDrag);
+
+        // Tapping the grabber cycles, for anyone who would rather not drag.
+        grab.addEventListener('click', (event) => {
+            if (isDesktop() || event.target.closest('.segmented')) return;
+            const { full, half, peek } = detents();
+            if (y >= peek - 1) snapTo(half);
+            else if (y >= half - 1) snapTo(full);
+            else snapTo(peek);
+        });
+
+        window.addEventListener('resize', () => {
+            if (isDesktop()) { applyDetents(); return; }
+            const { full, half, peek } = detents();
+            snapTo([full, half, peek].reduce((best, candidate) =>
+                Math.abs(candidate - y) < Math.abs(best - y) ? candidate : best, peek));
+        });
+
+        /* --------------------------------------------------------- Data loops */
+
+        async function loadLines() {
             try {
-                const response = await fetch('/alerts');
-                if (!response.ok) throw new Error('HTTP ' + response.status);
-                const data = await response.json();
-                alertsData = Array.isArray(data.alerts) ? data.alerts : [];
-            } catch (error) {
-                console.error('Error fetching alerts:', error);
-                // Keep whatever was already on screen rather than blanking it.
+                const data = await apiGet('/lines');
+                // Only array-valued keys are categories: an error body would
+                // otherwise be rendered as if it were the line index.
+                const clean = {};
+                for (const [key, value] of Object.entries(data || {})) {
+                    if (Array.isArray(value)) clean[key] = value;
+                }
+                if (Object.keys(clean).length) linesData = clean;
+            } catch {
+                // Leave whatever is on screen; the retry below picks it up.
+                setTimeout(loadLines, 15000);
+            }
+            renderFilters();
+        }
+
+        async function loadVehicles() {
+            try {
+                const data = await apiGet('/locations', { retries: 1 });
+                vehicles = (data.locations || []).filter((vehicle) =>
+                    Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lon) &&
+                    vehicle.lat !== 0 && vehicle.lon !== 0);
+                lastUpdated = data.lastUpdated ? Date.parse(data.lastUpdated) : null;
+                renderVehicles();
+                // The followed vehicle has moved, so where it is on its route
+                // and when it reaches the stops ahead have both changed.
+                if (currentVehicleId) loadVehicleTrip();
+            } catch {
+                // Keep the last snapshot on screen; the pill reports it as stale.
+                renderStatus();
+            }
+        }
+
+        async function loadAlerts() {
+            try {
+                const data = await apiGet('/alerts', { retries: 1 });
+                alerts = Array.isArray(data.alerts) ? data.alerts : [];
+            } catch {
+                // Keep whatever was already there rather than blanking it.
             }
             renderAlerts();
         }
 
-        // Initialize app
-        async function initApp() {
-            // Positions do not wait on the line list: the map is useful before
-            // the filters are, and on a cold start the list retries on its own.
-            fetchLines();
-            await fetchVehicles();
-            await fetchAlerts();
+        renderStatus();
+        renderFilters();
+        renderAlerts();
+        applyDetents();
 
-            // A tab nobody is looking at does not need ten-second updates, and
-            // catches up the moment it comes back.
-            setInterval(() => { if (!document.hidden) fetchVehicles(); }, 10000);
-            setInterval(() => { if (!document.hidden) fetchAlerts(); }, 5 * 60000);
-            document.addEventListener('visibilitychange', () => {
-                if (!document.hidden) fetchVehicles();
-            });
-        }
+        loadLines();
+        loadVehicles();
+        loadAlerts();
 
-        // Start the application
-        initApp();
-
-        // Reached from the panel's close button.
-        window.clearSelection = clearSelection;
+        setInterval(loadVehicles, VEHICLE_REFRESH_MS);
+        setInterval(loadAlerts, ALERT_REFRESH_MS);
+        // The pill ages in place, so it has to re-render without new data.
+        setInterval(renderStatus, 5000);
+    })();
     </script>
 </body>
 </html>
