@@ -147,17 +147,52 @@ without it the build falls back to Expo Go, which cannot load
 `react-native-maps`. Both are pinned by `expo install`, so bump them with
 `npx expo install --fix` and not by hand.
 
-**17. `/map` is a second client, and the app's rules apply to it too.**
+**17. A vehicle's direction cannot be decided by distance alone.**
+Both directions of a line run down the same street, and a tram line runs on
+rails a few metres apart — so whichever variant `matchVariant()` finds nearer is
+decided by GPS noise, and half the time it is the one going the other way. That
+is not a cosmetic error: it announces the opposite terminus and a stop list the
+vehicle will never reach. The heading is folded into the score
+(`HEADING_PENALTY_METERS` in `server/src/gtfs/store.js`), which is why
+`/shapes/:line` takes `?heading=` and why both the app and `views/map.html` send
+it. The penalty is graded by the cosine of the angle rather than a cutoff at
+90°, because a heading is noisy and a hard threshold flips the answer on a bend.
+
+**18. MPK's feed has no trip id, so the run is inferred — and may be unknown.**
+`describeVehicle()` in `server/src/progress.js` projects the position onto the
+matched shape, turns metres into seconds through each stop's `alongMeters` /
+`arrivalOffset`, and then asks which of the shape's departures would be exactly
+there right now. Beyond `MAX_DELAY_SECONDS` (45 min) no run is claimed: the
+nearer explanation is a different departure, and guessing produces a confident
+"18 minut spóźnienia" that is really the next tram running on time. When no run
+matches, `scheduled` is null everywhere and only `etaSeconds` — remaining
+scheduled running time from the vehicle's real position — is served. Never
+substitute the variant's own sample times there; they belong to some other
+departure. This all rests on every trip of a shape sharing one relative profile,
+which is true of this feed and is what makes the offsets reusable.
+
+**19. `/map` is a second client, and the app's rules apply to it too.**
 `server/views/map.html` is a full client — line filters, alerts, routes,
-departures — that just happens to be one file with no build step. It has
-already reproduced two bugs from this list on its own: it kept the pre-2026
-rainbow palette long after invariant 11 retired it (white on `#F8E71C`, about
-1.4:1), and it parsed the boot-time 503 as data the way invariant 7 describes,
-rendering categories out of `{error, state}`. When you change `lineColor` in
-`app/theme.js`, change `LINE_COLOR` here; when you change a payload shape,
-check both readers. It also stops click propagation on its own markers by
-hand — without that a tap on a stop reaches the map's click handler, which
-clears the very route the stop belongs to.
+departures, a followed vehicle's direction and remaining stops — that just
+happens to be one file with no build step. It has already reproduced two bugs
+from this list on its own: it kept the pre-2026 rainbow palette long after
+invariant 11 retired it (white on `#F8E71C`, about 1.4:1), and it parsed the
+boot-time 503 as data the way invariant 7 describes, rendering categories out
+of `{error, state}`. When you change `lineColor` in `app/theme.js`, change
+`LINE_COLOR` here; when a payload shape changes, check both readers. It also
+stops click propagation on its own markers by hand — without that a tap on a
+stop reaches the map's click handler, which clears the very route the stop
+belongs to.
+
+**20. `views/map.html` moves its markers; it does not rebuild them.**
+The browser map used to clear the marker layer and recreate every vehicle on
+each ten-second poll. The whole fleet blinked, anything open closed, and the
+selection was lost — and it costs more than moving the markers that are already
+there. `renderVehicles()` keeps a `Map` of id → marker, moves what moved, and
+only touches the icon when the look actually changes (heading is bucketed to
+15°, or a marker redraws on every degree of GPS jitter). Everything reaching
+`innerHTML` goes through `escapeHtml()`, because line and stop names come from
+upstream feeds.
 
 ## Fragile by nature
 
@@ -302,7 +337,11 @@ cd app && API_URL=http://localhost:3000 npx expo export --platform web --output-
 python3 -m http.server 4620 --directory /tmp/web
 ```
 
-The map area will be an empty grey box. That is the stub, not a bug.
+The map area will be an empty grey box. That is the stub, not a bug. The
+markers are laid out as a strip of chips along the top of it, in no meaningful
+position — they exist so the things reached by *tapping* one (the route banner,
+the departures board, a vehicle's stop list) can be seen at all; rendering them
+as nothing meant half the UI was unreachable in the preview.
 
 ## Open work
 

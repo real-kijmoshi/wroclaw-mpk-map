@@ -7,11 +7,31 @@ const logger = require('../logger');
 const { categorizeLines, lineToType } = require('../lines');
 const { downloadGtfs } = require('./download');
 const { assertComplete, entryBuffer, findEntry, isInForce } = require('./archive');
-const { boundsOf, distanceMeters, distanceToPolyline, simplify } = require('./geo');
+const {
+  angleBetween,
+  boundsOf,
+  cumulativeDistances,
+  distanceMeters,
+  projectToPolyline,
+  simplify,
+} = require('./geo');
 const { parseTable, secondsToTime, streamTable, timeToSeconds } = require('./parse');
 
 const SHAPE_SIMPLIFY_METERS = 4;
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+/**
+ * How much a variant running the wrong way is penalised when matching a
+ * vehicle, in metres of apparent extra distance.
+ *
+ * Both directions of a line share the same street, and often the same few
+ * metres of track, so the distance to the polyline alone cannot say which way
+ * a vehicle is going — it picks whichever variant happens to be a couple of
+ * metres nearer, and the app then announces the opposite terminus. The
+ * reported heading is what actually distinguishes them, scaled here so a
+ * variant pointing backwards has to be 400 m closer to win.
+ */
+const HEADING_PENALTY_METERS = 400;
 
 /**
  * Parsed and indexed GTFS feed.
@@ -46,6 +66,14 @@ class GtfsStore {
     this.stopsById = new Map();
     /** @type {object[]} compact trip records, addressed by index */
     this.trips = [];
+    /** @type {Map<string, number>} trip_id -> index into this.trips */
+    this.tripIndexById = new Map();
+    /** @type {Map<string, number[]>} shape_id -> trip indices running it */
+    this.tripsByShape = new Map();
+    /** Seconds after midnight each trip leaves its first stop, by trip index. */
+    this.tripStart = new Int32Array(0);
+    /** Seconds after midnight each trip reaches its last stop, by trip index. */
+    this.tripEnd = new Int32Array(0);
     /** @type {Map<string, object>} service_id -> calendar */
     this.services = new Map();
     /** Parallel arrays holding one entry per stop_times row. */
@@ -141,12 +169,8 @@ class GtfsStore {
 
   #buildTrips(zip, routeIdToLine) {
     const rows = parseTable(entryBuffer(zip, 'trips.txt') ?? Buffer.from(''));
-    /** @type {Map<string, number>} trip_id -> index into this.trips */
-    this.tripIndexById = new Map();
     /** @type {Map<string, number>} shape_id -> index of the trip used to describe it */
     const representativeTripByShape = new Map();
-    /** @type {Map<string, number>} shape_id -> number of trips using it */
-    const tripsPerShape = new Map();
 
     for (const row of rows) {
       const line = routeIdToLine.get(row.route_id);
@@ -164,13 +188,18 @@ class GtfsStore {
       this.tripIndexById.set(row.trip_id, index);
 
       if (!row.shape_id) continue;
-      tripsPerShape.set(row.shape_id, (tripsPerShape.get(row.shape_id) ?? 0) + 1);
+      // Every trip on the shape is kept, not just a count: matching a live
+      // vehicle to the run it is on means asking which of today's departures
+      // would be here now, and that needs their start times.
+      const siblings = this.tripsByShape.get(row.shape_id);
+      if (siblings) siblings.push(index);
+      else this.tripsByShape.set(row.shape_id, [index]);
+
       if (!representativeTripByShape.has(row.shape_id)) {
         representativeTripByShape.set(row.shape_id, index);
       }
     }
 
-    this.tripsPerShape = tripsPerShape;
     return { representativeTripByShape };
   }
 
@@ -272,6 +301,12 @@ class GtfsStore {
     /** @type {Map<string, number[]>} stop_id -> row indices */
     const rowsByStop = new Map();
 
+    // One entry per trip rather than per row: cheap enough to keep for the
+    // whole feed, and it is what turns "this vehicle is 40% along the route"
+    // into "it is the 08:12 running four minutes late".
+    const tripStart = new Int32Array(this.trips.length).fill(-1);
+    const tripEnd = new Int32Array(this.trips.length).fill(-1);
+
     if (buffer) {
       await streamTable(buffer, (row) => {
         const tripIndex = this.tripIndexById.get(row.trip_id);
@@ -279,6 +314,13 @@ class GtfsStore {
 
         const arrival = timeToSeconds(row.arrival_time);
         const departure = timeToSeconds(row.departure_time);
+
+        const first = departure >= 0 ? departure : arrival;
+        if (first >= 0 && (tripStart[tripIndex] < 0 || first < tripStart[tripIndex])) {
+          tripStart[tripIndex] = first;
+        }
+        const last = arrival >= 0 ? arrival : departure;
+        if (last > tripEnd[tripIndex]) tripEnd[tripIndex] = last;
 
         const stops = representativeStops.get(tripIndex);
         if (stops) {
@@ -312,6 +354,8 @@ class GtfsStore {
       arrival: Int32Array.from(arrivalColumn),
       departure: Int32Array.from(departureColumn),
     };
+    this.tripStart = tripStart;
+    this.tripEnd = tripEnd;
 
     for (const [stopId, bucket] of rowsByStop) {
       bucket.sort((a, b) => this.stopTimes.departure[a] - this.stopTimes.departure[b]);
@@ -338,26 +382,51 @@ class GtfsStore {
       const points = shapePoints.get(shapeId);
       if (!points || points.length < 4) continue;
 
+      const cumulative = cumulativeDistances(points);
+      // Offsets are measured from the moment the trip leaves its first stop, so
+      // they hold for every run of the shape rather than only the one sampled
+      // here — that is what lets a live vehicle be timed against any departure.
+      const base = this.tripStart[tripIndex] >= 0 ? this.tripStart[tripIndex] : null;
+
+      // Stops are projected onto the shape in order, each search starting where
+      // the previous stop landed. A route that passes the same street twice
+      // would otherwise place its second visit back at the first one.
+      let searchFrom = 0;
+
       const stops = (representativeStops.get(tripIndex) ?? [])
         .sort((a, b) => a.sequence - b.sequence)
         .map((entry) => {
           const stop = this.stopsById.get(entry.stopId);
-          return stop
-            ? {
-                id: stop.id,
-                name: stop.name,
-                lat: stop.lat,
-                lon: stop.lon,
-                arrival: secondsToTime(entry.arrival),
-                departure: secondsToTime(entry.departure),
-                sequence: entry.sequence,
-              }
-            : null;
+          if (!stop) return null;
+
+          const projection = projectToPolyline(stop.lat, stop.lon, points, {
+            cumulative,
+            fromIndex: searchFrom,
+          });
+          if (projection) searchFrom = projection.index;
+
+          const arrival = entry.arrival >= 0 ? entry.arrival : entry.departure;
+          const departure = entry.departure >= 0 ? entry.departure : entry.arrival;
+
+          return {
+            id: stop.id,
+            name: stop.name,
+            lat: stop.lat,
+            lon: stop.lon,
+            arrival: secondsToTime(entry.arrival),
+            departure: secondsToTime(entry.departure),
+            sequence: entry.sequence,
+            alongMeters: projection ? projection.along : 0,
+            arrivalOffset: base !== null && arrival >= 0 ? arrival - base : null,
+            departureOffset: base !== null && departure >= 0 ? departure - base : null,
+          };
         })
         .filter(Boolean);
 
       const first = stops[0]?.name ?? '';
       const last = stops[stops.length - 1]?.name ?? '';
+
+      const tripIndices = this.tripsByShape.get(shapeId) ?? [tripIndex];
 
       const variant = {
         shapeId,
@@ -365,8 +434,16 @@ class GtfsStore {
         directionId: trip.directionId,
         headsign: trip.headsign || last || null,
         direction: first && last ? `${first} → ${last}` : trip.headsign || null,
-        tripCount: this.tripsPerShape.get(shapeId) ?? 1,
+        tripCount: tripIndices.length,
         points,
+        cumulative,
+        lengthMeters: cumulative[cumulative.length - 1],
+        // Sorted so the runs of this shape can be walked in departure order.
+        trips: Int32Array.from(
+          tripIndices
+            .filter((index) => this.tripStart[index] >= 0)
+            .sort((a, b) => this.tripStart[a] - this.tripStart[b]),
+        ),
         stops,
         bounds: boundsOf(points),
       };
@@ -391,34 +468,77 @@ class GtfsStore {
   }
 
   /**
-   * Pick the route variant a vehicle is most likely running, by proximity of
-   * its reported position to each variant's polyline.
+   * Pick the route variant a vehicle is most likely running, and say where on
+   * it the vehicle sits.
+   *
+   * Proximity alone is not enough to answer this. The two directions of a line
+   * run down the same street — sometimes the same rails — so the nearer
+   * polyline is decided by a few metres of GPS noise, and half the time that
+   * is the variant heading the other way. Where a heading is known it is
+   * folded into the score (`HEADING_PENALTY_METERS`), which is what makes the
+   * destination shown to a rider the one the vehicle is actually going to.
+   *
+   * @param {string} line
+   * @param {number} lat
+   * @param {number} lon
+   * @param {{ heading?: number|null }} options
+   * @returns {{ variant: object, projection: object|null } | null}
    */
-  getBestVariant(line, lat, lon) {
+  matchVariant(line, lat, lon, { heading = null } = {}) {
     const variants = this.getVariants(line);
     if (!variants.length) return null;
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return variants[0];
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      return { variant: variants[0], projection: null };
+    }
 
     let best = variants[0];
-    let bestDistance = Infinity;
+    let bestProjection = null;
+    let bestScore = Infinity;
 
     for (const variant of variants) {
       // Cheap rejection: a variant whose bounding box is already further away
-      // than the current best cannot contain a closer point.
+      // than the current best cannot score better, since the heading term only
+      // ever adds to the distance.
       if (variant.bounds) {
         const clampedLat = Math.min(Math.max(lat, variant.bounds.minLat), variant.bounds.maxLat);
         const clampedLon = Math.min(Math.max(lon, variant.bounds.minLon), variant.bounds.maxLon);
-        if (distanceMeters(lat, lon, clampedLat, clampedLon) > bestDistance) continue;
+        if (distanceMeters(lat, lon, clampedLat, clampedLon) > bestScore) continue;
       }
 
-      const distance = distanceToPolyline(lat, lon, variant.points);
-      if (distance < bestDistance) {
-        bestDistance = distance;
+      const projection = projectToPolyline(lat, lon, variant.points, {
+        cumulative: variant.cumulative,
+      });
+      if (!projection) continue;
+
+      let score = projection.distance;
+      if (Number.isFinite(heading) && projection.bearing !== null) {
+        // Full penalty for running backwards, none for agreeing, cosine in
+        // between — a heading is a noisy quantity and a hard cutoff at 90°
+        // flips the answer on a bend.
+        const off = angleBetween(heading, projection.bearing);
+        score += (HEADING_PENALTY_METERS * (1 - Math.cos((off * Math.PI) / 180))) / 2;
+      }
+
+      if (score < bestScore) {
+        bestScore = score;
+        bestProjection = projection;
         best = variant;
       }
     }
 
-    return best;
+    return { variant: best, projection: bestProjection };
+  }
+
+  /**
+   * The route variant a vehicle is most likely running.
+   *
+   * @param {string} line
+   * @param {number} lat
+   * @param {number} lon
+   * @param {{ heading?: number|null }} [options]
+   */
+  getBestVariant(line, lat, lon, options) {
+    return this.matchVariant(line, lat, lon, options)?.variant ?? null;
   }
 
   getStop(stopId) {

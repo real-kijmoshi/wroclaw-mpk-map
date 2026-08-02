@@ -4,7 +4,8 @@ const config = require('./config');
 const logger = require('./logger');
 const { fetchWithTimeout, tryEachSource } = require('./http');
 const { lineToType } = require('./lines');
-const { distanceMeters } = require('./gtfs/geo');
+const { describeVehicle, summarise } = require('./progress');
+const { bearingDegrees, distanceMeters } = require('./gtfs/geo');
 
 // Anything outside this box is a bad fix, not a vehicle in Wrocław.
 const BOUNDS = { minLat: 50.8, maxLat: 51.4, minLon: 16.6, maxLon: 17.5 };
@@ -92,26 +93,38 @@ const normalizeVehicle = (row) => {
   };
 };
 
-/** Compass bearing in degrees from one position to the next. */
-const bearing = (fromLat, fromLon, toLat, toLon) => {
-  const toRad = (value) => (value * Math.PI) / 180;
-  const dLon = toRad(toLon - fromLon);
-  const y = Math.sin(dLon) * Math.cos(toRad(toLat));
-  const x =
-    Math.cos(toRad(fromLat)) * Math.sin(toRad(toLat)) -
-    Math.sin(toRad(fromLat)) * Math.cos(toRad(toLat)) * Math.cos(dLon);
-  return (((Math.atan2(y, x) * 180) / Math.PI) + 360) % 360;
-};
+/**
+ * Compass bearing in degrees from one position to the next.
+ *
+ * The maths moved to `gtfs/geo` when the route matcher started needing it too —
+ * it compares this heading against the bearing of the route it is matching.
+ * Re-exported under the old name so the tracker's API is unchanged.
+ */
+const bearing = bearingDegrees;
 
 /**
  * Polls the live vehicle-position endpoint and keeps the last known fleet
- * state, enriched with heading and how long each vehicle has been standing
- * still. Never throws at the caller: a failed poll keeps the previous snapshot
- * and is reported through `status`.
+ * state, enriched with heading and, when a timetable is available, with where
+ * each vehicle is headed and which stops it reaches when. Never throws at the
+ * caller: a failed poll keeps the previous snapshot and is reported through
+ * `status`.
+ *
+ * The timetable match runs once per poll, here, rather than per request:
+ * /locations is polled by every open app every ten seconds, and projecting
+ * several hundred vehicles onto their route geometry on each of those would be
+ * the same work done over and over for an answer that only changes when a new
+ * position arrives.
  */
 class VehicleTracker {
-  constructor(getLines) {
+  /**
+   * @param {() => object} getLines
+   * @param {{ gtfs?: import('./gtfs/store').GtfsStore }} [services]
+   *   The store is optional: without it the tracker still serves positions,
+   *   just with no direction or stop information attached.
+   */
+  constructor(getLines, { gtfs = null } = {}) {
     this.getLines = getLines;
+    this.gtfs = gtfs;
     /** @type {Map<string, object>} vehicle id -> last known state */
     this.fleet = new Map();
     this.timer = null;
@@ -125,6 +138,10 @@ class VehicleTracker {
       lastError: null,
       consecutiveFailures: 0,
       count: 0,
+      // How many of them the timetable could place on a route. A number well
+      // below `count` means the feed and the shapes disagree — a stale
+      // snapshot, or lines running a diversion.
+      described: 0,
     };
   }
 
@@ -140,6 +157,7 @@ class VehicleTracker {
         lat: vehicle.lat,
         lon: vehicle.lon,
         heading: vehicle.heading,
+        trip: vehicle.trip ?? null,
         updatedAt: new Date(vehicle.updatedAt).toISOString(),
       });
     }
@@ -215,6 +233,37 @@ class VehicleTracker {
     throw new Error(errors.join('; '));
   }
 
+  /**
+   * Attach the timetable view — destination, delay, next stop — to every
+   * vehicle in the fleet.
+   *
+   * A vehicle the timetable cannot place keeps a null `trip` rather than the
+   * one from its previous position: a stale destination on a moving vehicle is
+   * worse than none, because nothing on screen says it is out of date.
+   *
+   * @returns {number} how many vehicles were placed
+   */
+  #describe() {
+    if (!this.gtfs?.isReady) return 0;
+
+    const now = new Date();
+    let described = 0;
+
+    for (const vehicle of this.fleet.values()) {
+      try {
+        // One stop ahead is all /locations carries; /vehicle/:id recomputes the
+        // full list when someone actually taps a vehicle.
+        vehicle.trip = summarise(describeVehicle(this.gtfs, vehicle, { now, limit: 1 }));
+        if (vehicle.trip) described += 1;
+      } catch (error) {
+        vehicle.trip = null;
+        logger.debug(`Could not place ${vehicle.id} on a route: ${error.message}`);
+      }
+    }
+
+    return described;
+  }
+
   /** Fetch once and merge into the fleet. Resolves even when the poll fails. */
   async poll() {
     const lines = this.getLines();
@@ -252,6 +301,8 @@ class VehicleTracker {
         if (vehicle.updatedAt < cutoff) this.fleet.delete(id);
       }
 
+      const described = this.#describe();
+
       this.status = {
         ...this.status,
         source: url,
@@ -260,6 +311,7 @@ class VehicleTracker {
         lastError: null,
         consecutiveFailures: 0,
         count: accepted,
+        described,
       };
 
       if (accepted === 0) logger.warn('Vehicle poll returned rows but none were usable');

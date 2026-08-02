@@ -217,6 +217,52 @@
         .dot.stale { background: var(--stale); }
         @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
+        /*
+         * Vehicle markers: the line badge, plus an arrow pointing the way it is
+         * travelling. The arrow sits at the top of a box bigger than the badge,
+         * and that whole box is what rotates — so it orbits the number instead
+         * of spinning in place, clearing it at every angle. Two stacked
+         * triangles, white behind the tint, for the same reason the badge has a
+         * white hairline: a coloured arrow alone disappears over a road drawn in
+         * roughly that colour. There is no heading until a vehicle has visibly
+         * moved, so `iconFor()` only emits the wrapper when one exists.
+         */
+        .vehicle-pin { position: relative; width: 40px; height: 40px; }
+        .vehicle-badge {
+            position: absolute;
+            inset: 5px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font: 700 12px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+            letter-spacing: -0.02em;
+            border: 1.5px solid rgba(255, 255, 255, 0.92);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+        }
+        .vehicle-pin.selected .vehicle-badge {
+            border-color: #fff;
+            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.4), 0 4px 14px rgba(0, 0, 0, 0.5);
+        }
+        /* pointer-events: none — purely decorative, and its -7px inset would
+           otherwise widen the marker's hit area past the badge, letting a
+           vehicle's arrow shadow a neighbour's badge in a cluster at a stop. */
+        .vehicle-arrow { position: absolute; inset: -7px; pointer-events: none; }
+        .vehicle-arrow::before,
+        .vehicle-arrow::after {
+            content: '';
+            position: absolute;
+            top: -1px;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-style: solid;
+            border-color: transparent;
+        }
+        .vehicle-arrow::before { margin-left: -6.5px; border-width: 0 6.5px 11px; border-bottom-color: rgba(255, 255, 255, 0.92); }
+        .vehicle-arrow::after { top: 0; margin-left: -5px; border-width: 0 5px 9px; border-bottom-color: currentColor; }
+
         /* Route card: what you get after tapping a vehicle. */
         .routecard {
             display: none;
@@ -579,6 +625,35 @@
         .row__unit { font-size: 12px; font-weight: 600; color: var(--amber); opacity: 0.7; margin-left: -4px; }
         .board__msg { padding: 22px 14px; text-align: center; color: #94A3B8; font-size: 14px; }
 
+        /* ---------- Vehicle pane: where it is going, and what is left ---------- */
+
+        .board__status {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 0 14px 12px;
+            margin-top: -4px;
+            font-size: 13px;
+        }
+        .board__status span:first-child { color: #F8FAFC; font-weight: 600; }
+        .board__status span:last-child { color: #94A3B8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .board__status.warn span:first-child { color: var(--amber); }
+
+        /* A rail of dots down the row, standing in for the line badge a
+           departures row has: this list is all one line, so repeating it would
+           say nothing a stop name doesn't already. */
+        .row__dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: currentColor;
+            flex: none;
+        }
+        .row--passed { opacity: 0.5; }
+        .row--passed .row__dot { background: transparent; border: 2px solid currentColor; width: 5px; height: 5px; }
+        .row__ago { font-size: 12px; color: #94A3B8; }
+
         .backlink {
             display: inline-flex;
             align-items: center;
@@ -707,6 +782,17 @@
                     Wróć do linii
                 </button>
             </div>
+
+            <!-- The stops still ahead of a tapped vehicle, with the times a
+                 rider actually plans around: not the timetable alone, but that
+                 timetable read against where the vehicle really is right now. -->
+            <div class="pane" id="paneVehicle">
+                <div class="board" id="vehicleBoard"></div>
+                <button class="backlink" id="vehicleBack" type="button">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                    Wróć do linii
+                </button>
+            </div>
         </div>
     </section>
 
@@ -831,6 +917,10 @@
         let activePane = 'lines';
         let currentStop = null;
         let departuresTimer = null;
+        /** The vehicle a route is currently drawn for, and its timetable match. */
+        let currentVehicleId = null;
+        let currentTrip = null;
+        let tripStale = false;
 
         try {
             const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
@@ -893,17 +983,41 @@
         const markers = new Map();
         let routeLayer = null;
         let routeLine = null;
+        let routeBehindLine = null;
+        let routePoints = null;
+        let routeShapeId = null;
 
-        const iconFor = (vehicle) => L.divIcon({
-            className: 'vehicle-icon',
-            html: '<div style="background:' + colourFor(vehicle.type) + ';color:#fff;' +
-                'width:30px;height:30px;border-radius:8px;display:flex;align-items:center;' +
-                'justify-content:center;font:700 12px/1 -apple-system,BlinkMacSystemFont,sans-serif;' +
-                'letter-spacing:-0.02em;border:1.5px solid rgba(255,255,255,0.92);' +
-                'box-shadow:0 2px 8px rgba(0,0,0,0.35)">' + escapeHtml(vehicle.line) + '</div>',
-            iconSize: [30, 30],
-            iconAnchor: [15, 15]
-        });
+        /**
+         * The line badge, plus an arrow pointing the way the vehicle is
+         * travelling — omitted until a vehicle has visibly moved and actually
+         * has a heading, rather than pointed at an arbitrary north.
+         */
+        const iconFor = (vehicle, selected) => {
+            const arrow = Number.isFinite(vehicle.heading)
+                ? '<div class="vehicle-arrow" style="color:' + colourFor(vehicle.type) +
+                    ';transform:rotate(' + Math.round(vehicle.heading) + 'deg)"></div>'
+                : '';
+            return L.divIcon({
+                className: 'vehicle-icon',
+                html: '<div class="vehicle-pin' + (selected ? ' selected' : '') + '">' + arrow +
+                    '<div class="vehicle-badge" style="background:' + colourFor(vehicle.type) + '">' +
+                    escapeHtml(vehicle.line) + '</div></div>',
+                iconSize: [40, 40],
+                iconAnchor: [20, 20]
+            });
+        };
+
+        /** Destination on hover, same as the routecard names once you tap it. */
+        const vehicleTooltip = (vehicle) => {
+            const towards = vehicle.trip && (vehicle.trip.towards || vehicle.trip.headsign);
+            return '<strong>' + escapeHtml(vehicle.line) + '</strong>' +
+                (towards ? ' → ' + escapeHtml(towards) : '');
+        };
+
+        /** Same identity a vehicle keeps across polls, so a marker can be moved instead of rebuilt. */
+        const vehicleKey = (vehicle) => vehicle.id != null
+            ? String(vehicle.id)
+            : vehicle.line + '@' + vehicle.lat + ',' + vehicle.lon;
 
         function renderVehicles() {
             const visible = selected.size === 0
@@ -912,41 +1026,60 @@
             const seen = new Set();
 
             for (const vehicle of visible) {
-                const key = vehicle.id != null
-                    ? String(vehicle.id)
-                    : vehicle.line + '@' + vehicle.lat + ',' + vehicle.lon;
+                const key = vehicleKey(vehicle);
                 seen.add(key);
+
+                const isSelected = currentVehicleId === key;
+                // Heading is bucketed to 15°: redrawing the icon for every
+                // degree of GPS jitter is redrawing it constantly, and no one
+                // can see 5° of difference anyway.
+                const headingBucket = Number.isFinite(vehicle.heading) ? Math.round(vehicle.heading / 15) : -1;
+                const look = vehicle.line + '|' + vehicle.type + '|' + headingBucket + '|' + isSelected;
 
                 const existing = markers.get(key);
                 if (existing) {
                     existing.marker.setLatLng([vehicle.lat, vehicle.lon]);
-                    if (existing.line !== vehicle.line || existing.type !== vehicle.type) {
-                        existing.marker.setIcon(iconFor(vehicle));
-                        existing.line = vehicle.line;
-                        existing.type = vehicle.type;
+                    existing.marker.setTooltipContent(vehicleTooltip(vehicle));
+                    if (existing.look !== look) {
+                        existing.marker.setIcon(iconFor(vehicle, isSelected));
+                        existing.marker.setZIndexOffset(isSelected ? 1000 : 0);
+                        existing.look = look;
                     }
                     existing.marker.off('click').on('click', (event) => {
                         L.DomEvent.stopPropagation(event);
-                        showRoute(vehicle);
+                        selectVehicle(vehicle, key);
                     });
                     continue;
                 }
 
                 const marker = L.marker([vehicle.lat, vehicle.lon], {
-                    icon: iconFor(vehicle),
+                    icon: iconFor(vehicle, isSelected),
+                    zIndexOffset: isSelected ? 1000 : 0,
                     keyboard: false
-                }).addTo(map);
+                })
+                    .bindTooltip(vehicleTooltip(vehicle), { direction: 'top', offset: [0, -16] })
+                    .addTo(map);
                 marker.on('click', (event) => {
                     L.DomEvent.stopPropagation(event);
-                    showRoute(vehicle);
+                    selectVehicle(vehicle, key);
                 });
-                markers.set(key, { marker, line: vehicle.line, type: vehicle.type });
+                markers.set(key, { marker, look });
             }
 
             for (const [key, entry] of markers) {
                 if (seen.has(key)) continue;
                 map.removeLayer(entry.marker);
                 markers.delete(key);
+            }
+
+            // The vehicle being followed stopped reporting: say so rather than
+            // leaving a stop list up that stopped being true. Checked against
+            // the raw feed, not `visible` — a vehicle merely hidden by the line
+            // filter is not the same thing, and is handled where the filter
+            // itself changes.
+            if (currentVehicleId && !vehicles.some((vehicle) => vehicleKey(vehicle) === currentVehicleId)) {
+                tripStale = true;
+                renderVehicleBoard();
             }
 
             const trams = visible.filter((v) => String(v.type).startsWith('tram')).length;
@@ -973,6 +1106,22 @@
             return { paddingTopLeft: [28, top], paddingBottomRight: [28, sheetVisible + 24] };
         }
 
+        /** id -> stop circleMarker of the currently drawn route, for marking the next one. */
+        let routeStops = new Map();
+        let currentVehicleLine = null;
+        let currentVehicleTint = null;
+
+        function removeRouteLayer() {
+            if (routeLayer) map.removeLayer(routeLayer);
+            routeLayer = null;
+            routeLine = null;
+            routeBehindLine = null;
+            routePoints = null;
+            routeShapeId = null;
+            routeStops = new Map();
+            $('routeCard').classList.remove('visible');
+        }
+
         async function showRoute(vehicle) {
             try {
                 const params = new URLSearchParams({ format: 'compact' });
@@ -980,6 +1129,12 @@
                     params.set('lat', vehicle.lat);
                     params.set('lon', vehicle.lon);
                 }
+                // Both directions of a line run down the same street, so the
+                // position alone resolves to whichever variant happens to be a
+                // few metres nearer — the heading is what tells them apart, and
+                // without it the route drawn can be the one going the other way.
+                if (Number.isFinite(vehicle.heading)) params.set('heading', Math.round(vehicle.heading));
+
                 const data = await apiGet('/shapes/' + encodeURIComponent(vehicle.line) + '?' + params,
                     { retries: 1 });
 
@@ -991,9 +1146,16 @@
                     .filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]));
                 if (!points.length) throw new Error('Trasa bez punktów');
 
-                clearRoute();
+                removeRouteLayer();
                 const tint = colourFor(vehicle.type);
+                routePoints = points;
+                routeShapeId = data.shapeId || null;
                 routeLayer = L.layerGroup().addTo(map);
+                // The part already travelled, kept for context but faded; drawn
+                // first so the active part paints over it where they touch.
+                routeBehindLine = L.polyline([], {
+                    color: tint, weight: 5, opacity: 0.25, lineJoin: 'round', lineCap: 'round'
+                }).addTo(routeLayer);
                 routeLine = L.polyline(points, {
                     color: tint, weight: 5, opacity: 0.9, lineJoin: 'round', lineCap: 'round'
                 }).addTo(routeLayer);
@@ -1003,11 +1165,11 @@
                     const lat = Number(stop.lat), lon = Number(stop.lon);
                     if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
 
-                    L.circleMarker([lat, lon], {
+                    const dot = L.circleMarker([lat, lon], {
                         className: 'stop-marker',
                         radius: 5, color: tint, fillColor: '#fff', fillOpacity: 1, weight: 3
                     })
-                        .bindTooltip(String(stop.name || ''), { direction: 'top', offset: [0, -6] })
+                        .bindTooltip(escapeHtml(String(stop.name || '')), { direction: 'top', offset: [0, -6] })
                         // Without stopping it here the tap reaches the map's own
                         // click handler, which clears the very route the stop
                         // belongs to — the board opened and the line vanished.
@@ -1016,18 +1178,24 @@
                             openStop(stop);
                         })
                         .addTo(routeLayer);
+
+                    const id = stop.id != null ? String(stop.id) : (stop.stop_id != null ? String(stop.stop_id) : null);
+                    if (id != null) routeStops.set(id, dot);
                 }
 
-                $('routeBadge').textContent = data.line || vehicle.line;
+                currentVehicleLine = data.line || vehicle.line;
+                currentVehicleTint = tint;
+                $('routeBadge').textContent = currentVehicleLine;
                 $('routeBadge').style.background = tint;
                 $('routeTitle').textContent = data.direction || ('Linia ' + vehicle.line);
                 const stopCount = (data.stops || []).length;
                 $('routeSub').textContent = stopCount + ' ' +
                     plural(stopCount, 'przystanek', 'przystanki', 'przystanków') +
-                    ' · dotknij przystanku, aby zobaczyć odjazdy';
+                    ' · dotknij, aby zobaczyć kurs';
                 $('routeCard').classList.add('visible');
 
                 map.fitBounds(routeLine.getBounds(), fitPadding());
+                applyTripProgress(currentTrip);
             } catch (error) {
                 $('routeBadge').textContent = '!';
                 $('routeBadge').style.background = 'var(--disruption)';
@@ -1037,15 +1205,172 @@
             }
         }
 
-        function clearRoute() {
-            if (routeLayer) map.removeLayer(routeLayer);
-            routeLayer = null;
-            routeLine = null;
-            $('routeCard').classList.remove('visible');
+        /** Dismiss the route and forget the vehicle it belonged to. */
+        function deselectVehicle() {
+            removeRouteLayer();
+            currentVehicleId = null;
+            currentVehicleLine = null;
+            currentVehicleTint = null;
+            currentTrip = null;
+            tripStale = false;
+            if (activePane === 'vehicle') setPane('lines');
+            renderVehicles();
         }
 
-        $('routeClose').addEventListener('click', clearRoute);
-        map.on('click', clearRoute);
+        // The routecard stays up while browsing lines or alerts; tapping it —
+        // anywhere but the close button — brings the vehicle's board back,
+        // the same way the status pill reopens the line list.
+        $('routeCard').addEventListener('click', (event) => {
+            if (event.target.closest('#routeClose') || !currentVehicleId) return;
+            setPane('vehicle');
+            snapTo(detents().half);
+        });
+        $('routeClose').addEventListener('click', deselectVehicle);
+        map.on('click', deselectVehicle);
+
+        /**
+         * Split the drawn route at the vehicle's real position and mark the
+         * stop it is heading for next. Only meaningful when the trip describes
+         * the same variant currently on screen — a vehicle re-matched to a
+         * different shape mid-poll would otherwise split the line at a point
+         * that belongs to a route no longer drawn.
+         */
+        function applyTripProgress(trip) {
+            if (!routeLine || !routePoints) return;
+
+            const onSameVariant = trip && routeShapeId && trip.shapeId === routeShapeId;
+            const index = onSameVariant && Number.isFinite(trip.shapeIndex)
+                ? Math.min(Math.max(trip.shapeIndex, 0), routePoints.length - 1)
+                : null;
+
+            routeLine.setLatLngs(index === null ? routePoints : routePoints.slice(index));
+            if (routeBehindLine) routeBehindLine.setLatLngs(index === null ? [] : routePoints.slice(0, index + 1));
+
+            const nextId = trip && trip.nextStop && trip.nextStop.id != null ? String(trip.nextStop.id) : null;
+            for (const [id, dot] of routeStops) {
+                const isNext = id === nextId;
+                dot.setStyle({ radius: isNext ? 8 : 5, weight: isNext ? 3 : 2, fillColor: isNext ? dot.options.color : '#fff' });
+            }
+        }
+
+        /* ---------------------------------------------------------- Vehicles */
+
+        /** Follow a vehicle: draw the direction it is running, and its board. */
+        function selectVehicle(vehicle, key) {
+            if (currentVehicleId === key) {
+                deselectVehicle();
+                return;
+            }
+
+            currentVehicleId = key;
+            currentTrip = null;
+            tripStale = false;
+            renderVehicles();
+
+            setPane('vehicle');
+            snapTo(detents().half);
+            renderVehicleBoard({ status: 'loading' });
+
+            showRoute(vehicle);
+            loadVehicleTrip();
+        }
+
+        /** The stops still ahead of the followed vehicle, and how late it is. */
+        async function loadVehicleTrip() {
+            if (!currentVehicleId) return;
+            const id = currentVehicleId;
+
+            try {
+                const data = await apiGet('/vehicle/' + encodeURIComponent(id), { retries: 1 });
+                if (currentVehicleId !== id) return;
+                currentTrip = data.trip;
+                tripStale = false;
+                applyTripProgress(currentTrip);
+            } catch (error) {
+                if (currentVehicleId !== id) return;
+                // A tracked vehicle that stopped reporting 404s here; anything
+                // else is a network blip, and the last known trip stays on screen.
+                if (String(error && error.message || '').indexOf('404') !== -1) {
+                    tripStale = true;
+                    currentTrip = null;
+                }
+            }
+            renderVehicleBoard();
+        }
+
+        function delayText(trip) {
+            if (!trip || trip.delaySeconds === null || trip.delaySeconds === undefined) {
+                return 'Rozkład tego kursu nieznany';
+            }
+            const minutes = Math.round(trip.delaySeconds / 60);
+            if (minutes >= 1) return 'Spóźniony ' + minutes + ' min';
+            if (minutes <= -1) return 'Przed czasem ' + Math.abs(minutes) + ' min';
+            return 'Zgodnie z rozkładem';
+        }
+
+        function vehicleStopRow(stop, passed) {
+            const minutes = Math.round((stop.etaSeconds || 0) / 60);
+            const ago = Math.round((stop.agoSeconds || 0) / 60);
+            const right = passed
+                ? '<span class="row__ago">' + (ago <= 0 ? 'przed chwilą' : ago + ' min temu') + '</span>'
+                : (minutes <= 0
+                    ? '<span class="row__min">teraz</span>'
+                    : '<span class="row__min">' + minutes + '</span><span class="row__unit">min</span>');
+
+            return '<div class="row' + (passed ? ' row--passed' : '') + '" style="color:' +
+                    (currentVehicleTint || LINE_COLOR.unknown) + '">' +
+                '<span class="row__dot"></span>' +
+                '<div class="row__text">' +
+                    '<div class="row__headsign">' + escapeHtml(stop.name) + '</div>' +
+                    (stop.scheduled ? '<div class="row__time">' + escapeHtml(String(stop.scheduled).slice(0, 5)) + '</div>' : '') +
+                '</div>' + right +
+            '</div>';
+        }
+
+        /**
+         * @param {{ status: 'loading'|'ready', trip?: object|null }} [state]
+         *   Omit to render from the current polled state (`currentTrip` /
+         *   `tripStale`); pass `{status:'loading'}` for the instant right after
+         *   a vehicle is tapped, before the first fetch has answered.
+         */
+        function renderVehicleBoard(state) {
+            const trip = state ? state.trip : currentTrip;
+            const towards = trip && trip.towards;
+            const head =
+                '<div class="board__head"><div style="flex:1;min-width:0">' +
+                '<div class="board__eyebrow">Kierunek</div>' +
+                '<div class="board__stop">' + escapeHtml(towards || ('Linia ' + (currentVehicleLine || ''))) + '</div>' +
+                '</div></div>';
+
+            const status = tripStale
+                ? '<div class="board__status warn"><span>Pojazd przestał nadawać</span></div>'
+                : '<div class="board__status"><span>' + escapeHtml(delayText(trip)) + '</span>' +
+                    '<span>' + escapeHtml(vehicleWhereText(trip)) + '</span></div>';
+
+            let body;
+            const loading = (state ? state.status : 'ready') === 'loading' && !trip;
+            if (loading) {
+                body = '<div class="board__msg">Wczytywanie kursu…</div>';
+            } else {
+                const previous = (trip && trip.previousStops || []).map((stop) => vehicleStopRow(stop, true));
+                const next = (trip && trip.nextStops || []).map((stop) => vehicleStopRow(stop, false));
+                const rows = previous.concat(next);
+                body = rows.length ? rows.join('') : '<div class="board__msg">' +
+                    (trip && trip.onRoute === false
+                        ? 'Pojazd jest poza trasą, więc nie znamy kolejnych przystanków.'
+                        : 'Brak danych o kolejnych przystankach.') + '</div>';
+            }
+
+            $('vehicleBoard').innerHTML = head + status + body;
+        }
+
+        function vehicleWhereText(trip) {
+            if (trip && trip.atStop && trip.atStop.name) return 'Na przystanku ' + trip.atStop.name;
+            if (trip && trip.previousStop && trip.previousStop.name) return 'Minął ' + trip.previousStop.name;
+            return '';
+        }
+
+        $('vehicleBack').addEventListener('click', () => setPane('lines'));
 
         /* --------------------------------------------------------- Departures */
 
@@ -1263,6 +1588,16 @@
 
         /* ------------------------------------------------------- Interactions */
 
+        /**
+         * A followed vehicle whose line the filter just hid is not "still
+         * there but off screen" — its marker is about to be removed below, so
+         * the board describing it has to go too, the same way the app closes
+         * a vehicle's sheet when its line is switched off.
+         */
+        function dropVehicleIfFiltered() {
+            if (currentVehicleId && selected.size > 0 && !selected.has(currentVehicleLine)) deselectVehicle();
+        }
+
         $('filters').addEventListener('click', (event) => {
             const chip = event.target.closest('.chip');
             if (chip) {
@@ -1270,6 +1605,7 @@
                 if (selected.has(line)) selected.delete(line); else selected.add(line);
                 persist();
                 renderFilters();
+                dropVehicleIfFiltered();
                 renderVehicles();
                 renderAlerts();
                 return;
@@ -1284,6 +1620,7 @@
             }
             persist();
             renderFilters();
+            dropVehicleIfFiltered();
             renderVehicles();
             renderAlerts();
         });
@@ -1305,9 +1642,10 @@
             $('paneLines').classList.toggle('active', name === 'lines');
             $('paneAlerts').classList.toggle('active', name === 'alerts');
             $('paneStop').classList.toggle('active', name === 'stop');
+            $('paneVehicle').classList.toggle('active', name === 'vehicle');
             document.querySelectorAll('.segmented button').forEach((button) => {
-                // The stop board is reached by tapping the map, so neither tab is
-                // the active one while it is up.
+                // The stop and vehicle boards are reached from the map, so
+                // neither tab is the active one while either is up.
                 button.setAttribute('aria-selected', String(button.dataset.pane === name));
             });
             $('sheetBody').scrollTop = 0;
@@ -1473,6 +1811,9 @@
                     vehicle.lat !== 0 && vehicle.lon !== 0);
                 lastUpdated = data.lastUpdated ? Date.parse(data.lastUpdated) : null;
                 renderVehicles();
+                // The followed vehicle has moved, so where it is on its route
+                // and when it reaches the stops ahead have both changed.
+                if (currentVehicleId) loadVehicleTrip();
             } catch {
                 // Keep the last snapshot on screen; the pill reports it as stale.
                 renderStatus();

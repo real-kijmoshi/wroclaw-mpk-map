@@ -13,7 +13,9 @@ const { shapeCache } = require('./src/routes');
 logger.setLevel(config.logLevel);
 
 const gtfs = new GtfsStore();
-const vehicles = new VehicleTracker(() => gtfs.lines);
+// The tracker reads the store to work out where each vehicle is headed and
+// which stops it has left to serve.
+const vehicles = new VehicleTracker(() => gtfs.lines, { gtfs });
 // Alerts match line numbers against the lines that actually exist in the
 // timetable, so the matcher reads them from the store on every refresh.
 const alerts = new AlertsService(
