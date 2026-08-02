@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import Maps, { Marker, Polyline } from "react-native-maps";
 import * as Location from "expo-location";
@@ -23,36 +23,109 @@ import {
 /** Below this zoom every stop label would overlap, so they are hidden. */
 const STOP_LABEL_MAX_DELTA = 0.03;
 
-function VehicleMarker({ vehicle, dimmed, onPress }) {
+/** The same colour, faded — react-native-maps has no stroke opacity of its own. */
+const fade = (hex, alpha) => {
+  const value = Number.parseInt(hex.replace("#", ""), 16);
+  if (!Number.isFinite(value)) return hex;
+  return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`;
+};
+
+/** How long a marker keeps redrawing after its appearance changes. */
+const MARKER_TRACK_MS = 300;
+
+/**
+ * A marker with a custom view keeps the first snapshot it took while
+ * `tracksViewChanges` is false — which is what makes hundreds of them
+ * affordable, and also means a style change never appears on screen. This
+ * turns tracking back on for a beat whenever `look` changes, and off again
+ * once the new appearance has been captured.
+ */
+function useMarkerRedraw(look) {
+  const [tracking, setTracking] = useState(true);
+
+  useEffect(() => {
+    setTracking(true);
+    const timer = setTimeout(() => setTracking(false), MARKER_TRACK_MS);
+    return () => clearTimeout(timer);
+  }, [look]);
+
+  return tracking;
+}
+
+/**
+ * Which way the vehicle is pointing.
+ *
+ * The arrow sits at the top of a box that is bigger than the badge, and it is
+ * that whole box which rotates — so the arrow orbits the number instead of
+ * spinning on the spot, and clears it at every angle. Two stacked triangles:
+ * a white one behind for the same reason the badge has a white hairline, since
+ * a coloured arrow alone disappears over a road of the same colour.
+ *
+ * Bearings are compass degrees and the map is locked north-up (`rotateEnabled`
+ * is off), so the rotation is the bearing, unadjusted.
+ */
+function HeadingArrow({ heading, tint }) {
+  if (!Number.isFinite(heading)) return null;
+
+  return (
+    <View
+      style={[styles.arrowOrbit, { transform: [{ rotate: `${Math.round(heading)}deg` }] }]}
+      pointerEvents="none"
+    >
+      <View style={styles.arrowOutline} />
+      <View style={[styles.arrowTip, { borderBottomColor: tint }]} />
+    </View>
+  );
+}
+
+function VehicleMarker({ vehicle, dimmed, selected, onPress }) {
+  const towards = vehicle.trip?.towards ?? vehicle.trip?.headsign ?? null;
+  // Heading is bucketed to 15°: redrawing the marker for every degree of GPS
+  // jitter is redrawing it constantly, and no one can see 5° anyway.
+  const tracking = useMarkerRedraw(
+    `${dimmed}-${selected}-${Math.round((vehicle.heading ?? -1) / 15)}`,
+  );
+
   return (
     <Marker
       coordinate={{ latitude: vehicle.lat, longitude: vehicle.lon }}
       anchor={{ x: 0.5, y: 0.5 }}
       onPress={() => onPress(vehicle)}
-      tracksViewChanges={false}
-      accessibilityLabel={`Linia ${vehicle.line}`}
+      tracksViewChanges={tracking}
+      accessibilityLabel={towards ? `Linia ${vehicle.line} do ${towards}` : `Linia ${vehicle.line}`}
     >
       <View style={[styles.vehicle, dimmed && styles.vehicleDimmed]}>
-        <LineBadge line={vehicle.line} type={vehicle.type} size="sm" style={styles.vehicleBadge} />
+        <HeadingArrow heading={vehicle.heading} tint={colorForType(vehicle.type)} />
+        <LineBadge
+          line={vehicle.line}
+          type={vehicle.type}
+          size="sm"
+          style={[styles.vehicleBadge, selected && styles.vehicleBadgeSelected]}
+        />
       </View>
     </Marker>
   );
 }
 
-function StopMarker({ stop, tint, selected, showLabel, onPress }) {
+function StopMarker({ stop, tint, selected, next, showLabel, onPress }) {
+  const tracking = useMarkerRedraw(`${tint}-${selected}-${next}-${showLabel}`);
+
   return (
     <Marker
       coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
       anchor={{ x: 0.5, y: 0.5 }}
       onPress={() => onPress(stop)}
-      tracksViewChanges={false}
-      accessibilityLabel={`Przystanek ${stop.name}`}
+      tracksViewChanges={tracking}
+      accessibilityLabel={next ? `Następny przystanek ${stop.name}` : `Przystanek ${stop.name}`}
     >
       <View style={styles.stopWrapper}>
         <View
           style={[
             styles.stopDot,
             { borderColor: tint },
+            // The stop the selected vehicle is heading for, filled so it reads
+            // as the next thing to happen rather than one dot among thirty.
+            next && [styles.stopDotNext, { backgroundColor: tint }],
             selected && [styles.stopDotSelected, { backgroundColor: tint }],
           ]}
         />
@@ -75,6 +148,9 @@ export default function MapView({
   showsUserLocation,
   onSelectStop,
   selectedStopId,
+  onSelectVehicle,
+  selectedVehicleId,
+  vehicleTrip,
   topOffset = 0,
   bottomOffset = 0,
 }) {
@@ -97,7 +173,8 @@ export default function MapView({
     setRouteError(null);
     setRouteLoading(false);
     onSelectStop?.(null);
-  }, [onSelectStop]);
+    onSelectVehicle?.(null);
+  }, [onSelectStop, onSelectVehicle]);
 
   const fitTo = useCallback(
     (coordinates) => {
@@ -119,7 +196,7 @@ export default function MapView({
 
   const selectVehicle = useCallback(
     async (vehicle) => {
-      if (route?.line === vehicle.line) {
+      if (selectedVehicleId === vehicle.id) {
         clearRoute();
         return;
       }
@@ -128,15 +205,23 @@ export default function MapView({
       requestRef.current = requestId;
       setRouteLoading(true);
       setRouteError(null);
+      onSelectVehicle?.(vehicle);
 
       try {
-        const data = await fetchShape(vehicle.line, { lat: vehicle.lat, lon: vehicle.lon });
+        const data = await fetchShape(vehicle.line, {
+          lat: vehicle.lat,
+          lon: vehicle.lon,
+          // Without this the server answers with whichever direction happens to
+          // be nearer, and the route drawn is the one going the other way.
+          heading: vehicle.heading,
+        });
         // A slower earlier request must not overwrite a newer selection.
         if (requestRef.current !== requestId) return;
 
         const coordinates = toCoordinates(data.points);
         setRoute({
           line: data.line ?? vehicle.line,
+          shapeId: data.shapeId ?? null,
           type: vehicle.type,
           direction: data.direction,
           tint: colorForType(vehicle.type),
@@ -152,7 +237,7 @@ export default function MapView({
         if (requestRef.current === requestId) setRouteLoading(false);
       }
     },
-    [clearRoute, fitTo, route],
+    [clearRoute, fitTo, onSelectVehicle, selectedVehicleId],
   );
 
   /**
@@ -185,6 +270,25 @@ export default function MapView({
 
   const showStopLabels = zoomDelta < STOP_LABEL_MAX_DELTA;
 
+  const selectedVehicle = useMemo(
+    () => validVehicles.find((vehicle) => vehicle.id === selectedVehicleId) ?? null,
+    [validVehicles, selectedVehicleId],
+  );
+
+  // Live summary from /locations if the detail has not arrived yet: both carry
+  // the destination and the next stop, and the list is refreshed anyway.
+  const trip = vehicleTrip ?? selectedVehicle?.trip ?? null;
+
+  // Where along the drawn shape the vehicle is, so the part already travelled
+  // can be drawn faded. Only meaningful when the detail describes the same
+  // variant the map is showing — otherwise the split lands anywhere.
+  const travelledTo =
+    route && vehicleTrip?.shapeId === route.shapeId && Number.isFinite(vehicleTrip?.shapeIndex)
+      ? Math.min(Math.max(vehicleTrip.shapeIndex, 0), route.coordinates.length - 1)
+      : null;
+
+  const nextStopId = trip?.nextStop?.id ?? null;
+
   return (
     <View style={styles.container}>
       <Maps
@@ -206,12 +310,24 @@ export default function MapView({
       >
         {route && route.coordinates.length > 1 && (
           <Polyline
-            coordinates={route.coordinates}
+            coordinates={travelledTo === null ? route.coordinates : route.coordinates.slice(travelledTo)}
             strokeColor={route.tint}
             strokeWidth={5}
             lineJoin="round"
             lineCap="round"
             zIndex={1}
+          />
+        )}
+
+        {/* The road already behind the vehicle, kept for context but quiet. */}
+        {route && travelledTo > 0 && (
+          <Polyline
+            coordinates={route.coordinates.slice(0, travelledTo + 1)}
+            strokeColor={fade(route.tint, 0.28)}
+            strokeWidth={5}
+            lineJoin="round"
+            lineCap="round"
+            zIndex={0}
           />
         )}
 
@@ -221,7 +337,8 @@ export default function MapView({
             stop={stop}
             tint={stop.id === selectedStopId ? color.amber : route.tint}
             selected={stop.id === selectedStopId}
-            showLabel={showStopLabels}
+            next={stop.id === nextStopId}
+            showLabel={showStopLabels || stop.id === nextStopId}
             onPress={onSelectStop}
           />
         ))}
@@ -231,6 +348,7 @@ export default function MapView({
             key={vehicle.id ?? `${vehicle.line}-${vehicle.lat}-${vehicle.lon}`}
             vehicle={vehicle}
             dimmed={Boolean(route) && route.line !== vehicle.line}
+            selected={vehicle.id === selectedVehicleId}
             onPress={selectVehicle}
           />
         ))}
@@ -253,10 +371,10 @@ export default function MapView({
                 <LineBadge line={route.line} type={route.type} size="md" />
                 <View style={styles.bannerText}>
                   <Text style={styles.bannerTitle} numberOfLines={1}>
-                    {route.direction ?? `Linia ${route.line}`}
+                    {trip?.direction ?? route.direction ?? `Linia ${route.line}`}
                   </Text>
                   <Text style={styles.bannerSubtitle} numberOfLines={1}>
-                    {`${route.stops.length} przystanków · dotknij przystanku`}
+                    {progressLine(trip) ?? `${route.stops.length} przystanków · dotknij przystanku`}
                   </Text>
                 </View>
                 <PressableScale
@@ -274,8 +392,8 @@ export default function MapView({
         </View>
       )}
 
-      {/* Hidden while the departures sheet is up: it occupies the same corner. */}
-      {showsUserLocation && !selectedStopId && (
+      {/* Hidden while a sheet is up: they occupy the same corner. */}
+      {showsUserLocation && !selectedStopId && !selectedVehicleId && (
         <View style={[styles.locateWrapper, { bottom: bottomOffset }]} pointerEvents="box-none">
           <PressableScale
             onPress={locate}
@@ -298,10 +416,62 @@ export default function MapView({
   );
 }
 
+/**
+ * The live half of the banner: where the selected vehicle is going next, and
+ * whether it is running to time. Null when nothing is known, so the caller can
+ * fall back to describing the route itself.
+ */
+function progressLine(trip) {
+  if (!trip?.nextStop) return null;
+
+  const parts = [];
+  const minutes = Math.round((trip.nextStop.etaSeconds ?? 0) / 60);
+  parts.push(
+    minutes <= 0
+      ? `Dojeżdża do: ${trip.nextStop.name}`
+      : `Następny: ${trip.nextStop.name} · ${minutes} min`,
+  );
+
+  const delayMinutes = Math.round((trip.delaySeconds ?? 0) / 60);
+  if (trip.delaySeconds !== null && trip.delaySeconds !== undefined && delayMinutes >= 1) {
+    parts.push(`spóźniony ${delayMinutes} min`);
+  }
+
+  return parts.join(" · ");
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  vehicle: { alignItems: "center", justifyContent: "center", padding: 4 },
+  // Fixed and square so the arrow's orbit is the same at every angle, and so
+  // the badge stays centred on the vehicle's actual position.
+  vehicle: { width: 46, height: 46, alignItems: "center", justifyContent: "center" },
   vehicleDimmed: { opacity: 0.35 },
+  arrowOrbit: { ...StyleSheet.absoluteFillObject, alignItems: "center" },
+  arrowTip: {
+    position: "absolute",
+    top: 1,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 5,
+    borderRightWidth: 5,
+    borderBottomWidth: 9,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+    backgroundColor: "transparent",
+  },
+  arrowOutline: {
+    position: "absolute",
+    top: 0,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 6.5,
+    borderRightWidth: 6.5,
+    borderBottomWidth: 11,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+    borderBottomColor: "rgba(255, 255, 255, 0.92)",
+    backgroundColor: "transparent",
+  },
   // A hairline of white around the badge keeps the number readable where the
   // map underneath happens to be the same colour as the line.
   vehicleBadge: {
@@ -309,6 +479,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255, 255, 255, 0.9)",
     ...shadow.chip,
   },
+  vehicleBadgeSelected: { borderWidth: 2.5, borderColor: color.paper, ...shadow.float },
   stopWrapper: { alignItems: "center" },
   stopDot: {
     width: 14,
@@ -318,6 +489,7 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     ...shadow.chip,
   },
+  stopDotNext: { width: 16, height: 16, borderRadius: 8 },
   stopDotSelected: { width: 18, height: 18, borderRadius: 9, borderColor: color.paper },
   stopLabel: {
     marginTop: 4,
