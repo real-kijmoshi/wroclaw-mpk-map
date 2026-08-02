@@ -171,15 +171,28 @@ substitute the variant's own sample times there; they belong to some other
 departure. This all rests on every trip of a shape sharing one relative profile,
 which is true of this feed and is what makes the offsets reusable.
 
-**19. `views/map.html` moves its markers; it does not rebuild them.**
+**19. `/map` is a second client, and the app's rules apply to it too.**
+`server/views/map.html` is a full client — line filters, alerts, routes,
+departures, a followed vehicle's direction and remaining stops — that just
+happens to be one file with no build step. It has already reproduced two bugs
+from this list on its own: it kept the pre-2026 rainbow palette long after
+invariant 11 retired it (white on `#F8E71C`, about 1.4:1), and it parsed the
+boot-time 503 as data the way invariant 7 describes, rendering categories out
+of `{error, state}`. When you change `lineColor` in `app/theme.js`, change
+`LINE_COLOR` here; when a payload shape changes, check both readers. It also
+stops click propagation on its own markers by hand — without that a tap on a
+stop reaches the map's click handler, which clears the very route the stop
+belongs to.
+
+**20. `views/map.html` moves its markers; it does not rebuild them.**
 The browser map used to clear the marker layer and recreate every vehicle on
 each ten-second poll. The whole fleet blinked, anything open closed, and the
 selection was lost — and it costs more than moving the markers that are already
 there. `renderVehicles()` keeps a `Map` of id → marker, moves what moved, and
 only touches the icon when the look actually changes (heading is bucketed to
-15°, or a marker redraws on every degree of GPS jitter). The page also has no
-build step and no framework: everything reaching `innerHTML` goes through
-`escapeHtml()`, because line and stop names come from upstream feeds.
+15°, or a marker redraws on every degree of GPS jitter). Everything reaching
+`innerHTML` goes through `escapeHtml()`, because line and stop names come from
+upstream feeds.
 
 ## Fragile by nature
 
