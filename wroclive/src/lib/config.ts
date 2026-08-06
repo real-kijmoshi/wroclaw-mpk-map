@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 const DEFAULT_PORT = 3000;
+const PRODUCTION_API_URL = 'https://api.wroclive.kijmoshi.xyz';
 
 const trimSlash = (url: string) => url.replace(/\/+$/, '');
 
@@ -30,8 +31,12 @@ function fromDevServer(): string | null {
  */
 export const API_URL = trimSlash(
   process.env.EXPO_PUBLIC_API_URL ||
-    fromDevServer() ||
-    (Platform.OS === 'web' ? `http://localhost:${DEFAULT_PORT}` : `http://127.0.0.1:${DEFAULT_PORT}`),
+    (__DEV__
+      ? fromDevServer() ||
+        (Platform.OS === 'web'
+          ? `http://localhost:${DEFAULT_PORT}`
+          : `http://127.0.0.1:${DEFAULT_PORT}`)
+      : PRODUCTION_API_URL),
 );
 
 /** How often each kind of data is re-fetched. Vehicles move; timetables do not. */

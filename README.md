@@ -5,9 +5,9 @@ Vehicle positions come from MPK Wrocław's public endpoint, timetables and route
 the city's GTFS feed, and disruption notices scraped from public city and MPK pages.
 
 <div style="display: flex; gap: 10px;">
-    <img src="images/screen1.jpg" alt="Map with tracked vehicles" width="260"/>
-    <img src="images/screen2.jpg" alt="Line selection" width="260"/>
-    <img src="images/screen3.jpg" alt="Service alerts" width="260"/>
+    <img src="landing/images/screens1.png" alt="Map with tracked vehicles" width="260"/>
+    <img src="landing/images/screens2.png" alt="Line selection" width="260"/>
+    <img src="landing/images/screens3.png" alt="Service alerts" width="260"/>
 </div>
 
 > Not affiliated with MPK Wrocław. It reads public data the city publishes as open data.
@@ -106,6 +106,10 @@ server/
   src/routes.js      HTTP endpoints
   scripts/doctor.js  Upstream connectivity check
   test/              Unit and HTTP tests, no network required
+landing/             Static Polish landing page (index.html + screenshots)
+  map.html           The same browser map as /map, statically served; the API
+                     defaults to api.wroclive.kijmoshi.xyz (localhost:3000 on
+                     localhost) and can be set with ?api=
 ```
 
 ## Development

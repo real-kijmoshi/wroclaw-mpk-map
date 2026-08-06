@@ -878,6 +878,21 @@
         /* ---------------------------------------------------------------- API */
 
         /**
+         * Where the API lives. Same origin by default — the server serves this
+         * page at /map — with two escape hatches: `?api=` on the URL and a
+         * global `window.API_BASE`. Served outside the API origin (the static
+         * copy in landing/) it points at the production API, except on
+         * localhost/file where the local dev server is the obvious target.
+         */
+        const API_BASE = (
+            window.API_BASE ??
+            new URLSearchParams(location.search).get('api') ??
+            (location.hostname === 'localhost' || location.protocol === 'file:'
+                ? 'http://localhost:3000'
+                : 'https://api.wroclive.kijmoshi.xyz')
+        ).replace(/\/+$/, '');
+
+        /**
          * The server answers 503 with a Retry-After for up to a minute after boot
          * while it ingests the GTFS feed. This page used to hand that body
          * straight to the renderer, which then drew categories out of
@@ -888,7 +903,7 @@
             for (;;) {
                 let response;
                 try {
-                    response = await fetch(path, { headers: { accept: 'application/json' } });
+                    response = await fetch(API_BASE + path, { headers: { accept: 'application/json' } });
                 } catch (error) {
                     if (attempt >= retries) throw error;
                     attempt += 1;
