@@ -10,16 +10,17 @@ const { GtfsStore } = require('../src/gtfs/store');
 const { buildFixtureZip } = require('./fixtures/gtfs');
 
 const MAP_HTML = path.join(__dirname, '..', 'views', 'map.html');
-const APP_THEME = path.join(__dirname, '..', '..', 'app', 'theme.js');
+const LANDING_MAP_HTML = path.join(__dirname, '..', '..', 'landing', 'map.html');
+const APP_PALETTE = path.join(__dirname, '..', '..', 'wroclive', 'src', 'lib', 'lines.ts');
 
 const readMap = () => fs.readFileSync(MAP_HTML, 'utf8');
 
 /**
  * Pull a `name = { key: '#hex', ... }` table out of a source file as text.
  *
- * Neither file can be required from here — map.html is a page and app/theme.js
- * imports react-native — so both palettes are read the same way, which is also
- * what makes comparing them meaningful rather than circular.
+ * Neither file can be required from here — map.html is a page and lines.ts is
+ * TypeScript importing react-native types — so both palettes are read the same
+ * way, which is also what makes comparing them meaningful rather than circular.
  */
 function readPalette(file, name) {
   const source = fs.readFileSync(file, 'utf8');
@@ -84,6 +85,16 @@ describe('browser map', () => {
   });
 
   /**
+   * landing/map.html is the same page served statically so the demo works
+   * without the server hosting it. If the two diverge, /map fixes never reach
+   * the landing copy — keep them byte-identical.
+   */
+  it('keeps the landing copy identical to the served page', () => {
+    const landing = fs.readFileSync(LANDING_MAP_HTML, 'utf8');
+    assert.equal(landing, readMap());
+  });
+
+  /**
    * The page carries its own copy of the line palette, and it drifted: it was
    * still serving the pre-2026 rainbow long after the app replaced it, which is
    * how white-on-#F8E71C survived there. Comparing the two tables is the only
@@ -91,7 +102,7 @@ describe('browser map', () => {
    */
   it('uses the same line palette as the app', () => {
     const page = readPalette(MAP_HTML, 'LINE_COLOR');
-    const app = readPalette(APP_THEME, 'lineColor');
+    const app = readPalette(APP_PALETTE, 'LINE_COLOR');
     assert.deepEqual(page, app);
   });
 
