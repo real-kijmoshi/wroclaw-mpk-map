@@ -227,16 +227,20 @@
          * roughly that colour. There is no heading until a vehicle has visibly
          * moved, so `iconFor()` only emits the wrapper when one exists.
          */
-        .vehicle-pin { position: relative; width: 40px; height: 40px; }
+        .vehicle-pin { position: relative; width: 42px; height: 42px; }
         .vehicle-badge {
             position: absolute;
-            inset: 5px;
-            border-radius: 8px;
+            top: 4px;
+            left: 4px;
+            width: 34px;
+            height: 34px;
+            box-sizing: border-box;
+            border-radius: 9px;
             display: flex;
             align-items: center;
             justify-content: center;
             color: #fff;
-            font: 700 12px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+            font: 700 14px/1 -apple-system, BlinkMacSystemFont, sans-serif;
             letter-spacing: -0.02em;
             border: 1.5px solid rgba(255, 255, 255, 0.92);
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
@@ -1002,8 +1006,8 @@
                 html: '<div class="vehicle-pin' + (selected ? ' selected' : '') + '">' + arrow +
                     '<div class="vehicle-badge" style="background:' + colourFor(vehicle.type) + '">' +
                     escapeHtml(vehicle.line) + '</div></div>',
-                iconSize: [40, 40],
-                iconAnchor: [20, 20]
+                iconSize: [42, 42],
+                iconAnchor: [21, 21]
             });
         };
 

@@ -124,10 +124,15 @@ anything older. Let the shell expand it.
 `stopBackgroundWork()` exists because the cron task keeps the event loop alive,
 so `test/boot.test.js` hung forever without it.
 
-**14. Do not reintroduce `react-native-map-clustering`.**
-It was imported nowhere, has not been published since 2021, and pins an old
-`react-native-maps`. It would block the next SDK upgrade the same way it blocked
-this one.
+**14. Do not reintroduce `react-native-maps` (or `react-native-map-clustering`,
+which pins an old copy of it).**
+`react-native-maps` is native-only — it needs a custom dev-client build, which
+Expo Go does not run. Scanning into plain Expo Go showed no map at all, no
+crash, nothing in the console: the JS still ran and fetched `/locations`
+fine, the native module just was not there to render into. The map is a
+WebView showing plain HTML (Leaflet) instead — `app/components/mapHtml.js` —
+which is why Expo Go works again. `react-native-map-clustering` has not been
+published since 2021 on top of that.
 
 **15. Do not declare capabilities the app does not use.**
 `expo-notifications` was in the config with an iOS usage string and no code
@@ -142,10 +147,9 @@ carries the matching `updates.url` and `runtimeVersion` — without
 `expo-updates` installed, `eas build` warns that the channel does nothing and
 then errors with `You need to be on SDK 46 or higher, and use expo-updates >=
 0.14.4 to use appVersion runtime policy`. The development profile sets
-`developmentClient: true`, which needs `expo-dev-client` for the same reason;
-without it the build falls back to Expo Go, which cannot load
-`react-native-maps`. Both are pinned by `expo install`, so bump them with
-`npx expo install --fix` and not by hand.
+`developmentClient: true`, which needs `expo-dev-client` for the same reason.
+Both are pinned by `expo install`, so bump them with `npx expo install --fix`
+and not by hand.
 
 **17. A vehicle's direction cannot be decided by distance alone.**
 Both directions of a line run down the same street, and a tram line runs on
@@ -192,7 +196,10 @@ there. `renderVehicles()` keeps a `Map` of id → marker, moves what moved, and
 only touches the icon when the look actually changes (heading is bucketed to
 15°, or a marker redraws on every degree of GPS jitter). Everything reaching
 `innerHTML` goes through `escapeHtml()`, because line and stop names come from
-upstream feeds.
+upstream feeds. `app/components/mapHtml.js` is the same page rendered inside
+the mobile app's WebView and deliberately mirrors this logic rather than
+reimplementing it — `setVehicles()` there is `renderVehicles()` by another
+name, same `Map`-of-markers, same 15° bucketing.
 
 ## Fragile by nature
 
@@ -318,13 +325,18 @@ live on a notice reading "(11 - 16 lipca)": the single-day pattern matched only
 
 ## Previewing the app without a device
 
-`react-native-maps` is native-only, so the app cannot actually run in a browser.
-`app/metro.config.js` swaps it for `app/.preview/maps-stub.js` **on web only**,
-which makes `npx expo export --platform web` both a real compile check and a way
-to render every other part of the UI. The stub forwards a ref and answers
-`fitToCoordinates`/`animateToRegion` with no-ops, so keep it in step with any
-imperative map call added to `MapView.jsx` — otherwise the preview throws where
-the app works.
+`react-native-webview` has no web build target, so `app/metro.config.js` swaps
+it for `app/.preview/webview-stub.js` **on web only**. Unlike the old
+`react-native-maps` stub this is not a fake: the map itself is plain HTML
+(`app/components/mapHtml.js`, Leaflet), so a browser can render it for real
+inside an `<iframe>`. The stub only replaces the native WebView *host* —
+`injectJavaScript` and `onMessage` are bridged over `window.postMessage`
+instead of the native channel. `npx expo export --platform web` is therefore
+both a real compile check and an actual working preview of the map, not just
+everything around it. If you change the native ↔ web message shape in
+`MapView.jsx` or `mapHtml.js`, keep both sides of the bridge (the stub's
+`postMessage` relay and `mapHtml.js`'s own `window.addEventListener('message')`
+fallback) in step, or the preview goes silent where the app still works.
 
 The page the bundle is rendered into is `app/public/index.html`, which Expo's
 metro web bundler picks up as the HTML template (it injects the favicon and the
@@ -337,11 +349,8 @@ cd app && API_URL=http://localhost:3000 npx expo export --platform web --output-
 python3 -m http.server 4620 --directory /tmp/web
 ```
 
-The map area will be an empty grey box. That is the stub, not a bug. The
-markers are laid out as a strip of chips along the top of it, in no meaningful
-position — they exist so the things reached by *tapping* one (the route banner,
-the departures board, a vehicle's stop list) can be seen at all; rendering them
-as nothing meant half the UI was unreachable in the preview.
+The map itself renders for real, vehicles included — it is the same HTML page
+the phone would load, in an iframe instead of a native WebView.
 
 ## Open work
 
