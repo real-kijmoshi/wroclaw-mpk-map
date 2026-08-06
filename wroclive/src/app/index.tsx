@@ -1,0 +1,390 @@
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { useRouter } from 'expo-router';
+import * as Location from 'expo-location';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Platform, Pressable, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { Glass } from '@/components/glass';
+import { MapView } from '@/components/map-view';
+import type { MapRoute, MapSurfaceHandle } from '@/components/map-surface.types';
+import { Sheet } from '@/components/sheet';
+import { StopDetails } from '@/components/stop-details';
+import { ThemedText } from '@/components/themed-text';
+import { VehicleDetails } from '@/components/vehicle-details';
+import { Spacing } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { usePoll } from '@/hooks/use-poll';
+import { useTheme } from '@/hooks/use-theme';
+import { getDepartures, getLocations, getShape, getStopsNear, getVehicle, type Stop } from '@/lib/api';
+import { REFRESH_MS } from '@/lib/config';
+import { formatAge, plural } from '@/lib/format';
+import { colorFor } from '@/lib/lines';
+import { usePreferences } from '@/lib/preferences';
+import { selectionStore, useSelectedLines } from '@/lib/selection';
+
+type Selection =
+  | { kind: 'vehicle'; id: string }
+  | { kind: 'stop'; id: string; name: string }
+  | null;
+
+export default function MapScreen() {
+  const scheme = useColorScheme();
+  const dark = scheme === 'dark';
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+
+  const mapRef = useRef<MapSurfaceHandle>(null);
+  const selectedLines = useSelectedLines();
+  const { showNearbyStops, followSelectedVehicle } = usePreferences();
+  const [selection, setSelection] = useState<Selection>(null);
+  // Stored with the vehicle it belongs to, so switching selection drops the
+  // old route by derivation instead of by a second render that clears it.
+  const [fetched, setFetched] = useState<{ vehicleId: string; route: MapRoute } | null>(null);
+  const [userPosition, setUserPosition] = useState<{ lat: number; lon: number } | null>(null);
+  const [nearbyStops, setNearbyStops] = useState<Stop[]>([]);
+  const [locating, setLocating] = useState(false);
+
+  /* --- the fleet ---------------------------------------------------------- */
+
+  const linesKey = useMemo(() => [...selectedLines].sort().join(','), [selectedLines]);
+
+  const fleet = usePoll(
+    (signal) =>
+      // Filtering server-side keeps a narrow selection a small payload rather
+      // than the whole fleet fetched and then thrown away here.
+      getLocations(selectedLines.length ? selectedLines : null, {
+        signal,
+        // A poll that lands in the boot window comes round again in ten
+        // seconds; no need to hold the request open waiting.
+        retryWhileLoading: false,
+      }),
+    REFRESH_MS.vehicles,
+    { key: linesKey },
+  );
+
+  const vehicles = fleet.data?.locations ?? EMPTY_VEHICLES;
+
+  // Read inside effects that must not re-run on every poll.
+  const fleetRef = useRef(fleet.data);
+  useEffect(() => {
+    fleetRef.current = fleet.data;
+  }, [fleet.data]);
+
+  /* --- what is selected ---------------------------------------------------- */
+
+  const vehicleId = selection?.kind === 'vehicle' ? selection.id : null;
+  const stopId = selection?.kind === 'stop' ? selection.id : null;
+
+  const detail = usePoll(
+    (signal) => getVehicle(vehicleId as string, { signal }),
+    REFRESH_MS.vehicles,
+    { enabled: Boolean(vehicleId), key: vehicleId ?? '' },
+  );
+
+  const departures = usePoll(
+    (signal) => getDepartures(stopId as string, { signal }),
+    REFRESH_MS.departures,
+    { enabled: Boolean(stopId), key: stopId ?? '' },
+  );
+
+  /**
+   * The route the selected vehicle is running.
+   *
+   * Fetched once per selection rather than once per poll: the shape does not
+   * change while you watch it, and refetching would refit the viewport out
+   * from under whoever is panning around. The heading goes with the request —
+   * both directions share the street, so position alone picks the opposite
+   * direction about half the time.
+   */
+  const route = fetched?.vehicleId === vehicleId ? fetched.route : null;
+
+  useEffect(() => {
+    if (!vehicleId) return;
+
+    const vehicle = fleetRef.current?.locations.find((entry) => entry.id === vehicleId);
+    if (!vehicle) return;
+
+    let cancelled = false;
+    getShape(vehicle.line, { lat: vehicle.lat, lon: vehicle.lon, heading: vehicle.heading })
+      .then((shape) => {
+        if (cancelled) return;
+        setFetched({
+          vehicleId,
+          route: { points: shape.points, color: colorFor(vehicle.type), stops: shape.stops },
+        });
+      })
+      .catch(() => {
+        // A line whose snapshot shipped without geometry still shows its
+        // vehicle and its stop list; only the drawn route is missing.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [vehicleId]);
+
+  const handleVehicle = useCallback((id: string) => setSelection({ kind: 'vehicle', id }), []);
+  const handleStop = useCallback(
+    (id: string, name: string) => setSelection({ kind: 'stop', id, name }),
+    [],
+  );
+  const handleBackground = useCallback(() => setSelection(null), []);
+  const closeSheet = useCallback(() => setSelection(null), []);
+
+  /* --- where the rider is --------------------------------------------------- */
+
+  const locate = useCallback(async () => {
+    setLocating(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const coords = { lat: position.coords.latitude, lon: position.coords.longitude };
+
+      setUserPosition(coords);
+      mapRef.current?.centerOn(coords.lat, coords.lon, 15);
+
+      if (showNearbyStops) setNearbyStops(await getStopsNear(coords.lat, coords.lon));
+    } catch {
+      // Location is a convenience here; the map works without it.
+    } finally {
+      setLocating(false);
+    }
+  }, [showNearbyStops]);
+
+  // Turning the setting off hides them straight away, without another render
+  // spent clearing the list it was holding.
+  const visibleStops = showNearbyStops ? nearbyStops : EMPTY_STOPS;
+
+  /* --- status --------------------------------------------------------------- */
+
+  const status = (() => {
+    if (fleet.error) return { text: 'Brak połączenia z serwerem', tone: 'error' as const };
+    if (!fleet.data) return { text: 'Ładowanie…', tone: 'loading' as const };
+    if (!fleet.data.count) return { text: 'Brak pojazdów w tej chwili', tone: 'loading' as const };
+    return {
+      text: `${fleet.data.count} ${plural(fleet.data.count, ['pojazd', 'pojazdy', 'pojazdów'])}`,
+      tone: fleet.data.stale ? ('stale' as const) : ('live' as const),
+    };
+  })();
+
+  const dotColor =
+    status.tone === 'live'
+      ? theme.success
+      : status.tone === 'error'
+        ? theme.danger
+        : theme.textSecondary;
+
+  return (
+    <View style={styles.container}>
+      <MapView
+        ref={mapRef}
+        dark={dark}
+        vehicles={vehicles}
+        route={route}
+        selectedVehicleId={vehicleId}
+        follow={followSelectedVehicle}
+        userPosition={userPosition}
+        nearbyStops={visibleStops}
+        onSelectVehicle={handleVehicle}
+        onSelectStop={handleStop}
+        onBackground={handleBackground}
+      />
+
+      {/* Floating chrome. `box-none` so taps fall through to the map itself. */}
+      <View
+        pointerEvents="box-none"
+        style={[styles.overlay, { paddingTop: insets.top + Spacing.two }]}>
+        <View style={styles.topRow} pointerEvents="box-none">
+          <Glass variant="regular" style={styles.statusPill}>
+            <View style={[styles.dot, { backgroundColor: dotColor }]} />
+            <View>
+              <ThemedText type="smallBold" numberOfLines={1}>
+                {status.text}
+              </ThemedText>
+              {!!fleet.data?.lastUpdated && (
+                <ThemedText type="small" themeColor="textSecondary" style={styles.statusAge}>
+                  {formatAge(fleet.data.lastUpdated)}
+                </ThemedText>
+              )}
+            </View>
+          </Glass>
+
+          {selectedLines.length > 0 && (
+            <Pressable
+              onPress={() => selectionStore.clear()}
+              accessibilityRole="button"
+              accessibilityLabel="Wyczyść filtr linii">
+              <Glass variant="regular" interactive style={styles.filterChip}>
+                <Ionicons name="funnel" size={13} color={theme.text} />
+                <ThemedText type="smallBold">{selectedLines.length}</ThemedText>
+                <Ionicons name="close" size={15} color={theme.textSecondary} />
+              </Glass>
+            </Pressable>
+          )}
+        </View>
+      </View>
+
+      <View
+        pointerEvents="box-none"
+        style={[styles.sideControls, { bottom: insets.bottom + Spacing.four }]}>
+        <RoundButton
+          icon="git-branch"
+          label="Linie"
+          onPress={() => router.push('/lines')}
+          badge={selectedLines.length || undefined}
+        />
+        <RoundButton
+          icon="warning-outline"
+          label="Utrudnienia"
+          onPress={() => router.push('/alerts')}
+        />
+        <RoundButton
+          icon="settings-outline"
+          label="Ustawienia"
+          onPress={() => router.push('/settings')}
+        />
+        <RoundButton
+          icon={locating ? 'ellipsis-horizontal' : 'locate'}
+          label="Pokaż moją lokalizację"
+          onPress={locate}
+          disabled={locating}
+        />
+      </View>
+
+      <Sheet
+        visible={selection !== null}
+        onClose={closeSheet}
+        peekHeight={selection?.kind === 'vehicle' ? 340 : 300}>
+        {/* Keyed off what is actually selected, so a dismissed sheet is not
+            left rendering a departure board for a stop nobody picked. */}
+        {vehicleId ? (
+          <VehicleDetails detail={detail.data} loading={detail.loading} error={detail.error} />
+        ) : stopId ? (
+          <StopDetails data={departures.data} loading={departures.loading} error={departures.error} />
+        ) : null}
+      </Sheet>
+    </View>
+  );
+}
+
+function RoundButton({
+  icon,
+  label,
+  onPress,
+  disabled,
+  badge,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  badge?: number;
+}) {
+  const theme = useTheme();
+
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={label}>
+      <Glass variant="regular" interactive style={styles.roundButton}>
+        <Ionicons name={icon} size={20} color={theme.text} />
+        {badge !== undefined && (
+          <View style={[styles.badge, { backgroundColor: theme.text }]}>
+            <ThemedText
+              type="small"
+              style={[styles.badgeText, { color: theme.background }]}
+              allowFontScaling={false}>
+              {badge}
+            </ThemedText>
+          </View>
+        )}
+      </Glass>
+    </Pressable>
+  );
+}
+
+// Stable empty arrays: a new `[]` every render would re-run the effects that
+// push data into the map.
+const EMPTY_VEHICLES: never[] = [];
+const EMPTY_STOPS: never[] = [];
+
+/** Floating chrome needs a shadow to separate it from the map underneath. */
+const shadow = Platform.select({
+  ios: {
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  android: { elevation: 6 },
+  default: { boxShadow: '0 4px 14px rgba(0,0,0,0.18)' },
+}) as object;
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: Spacing.three,
+  },
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: 22,
+    ...shadow,
+  },
+  statusAge: { fontSize: 11, lineHeight: 14 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: 22,
+    ...shadow,
+  },
+  sideControls: {
+    position: 'absolute',
+    right: Spacing.three,
+    gap: Spacing.two,
+  },
+  roundButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadow,
+  },
+  badge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: { fontSize: 11, lineHeight: 14, fontWeight: '700' },
+});
