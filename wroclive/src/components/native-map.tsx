@@ -1,9 +1,15 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
-import Maps, { Marker, Polyline, UrlTile, type MapMarkerProps } from 'react-native-maps';
+import Maps, {
+  Marker,
+  Polyline,
+  UrlTile,
+  type MapMarkerProps,
+  type Region,
+} from 'react-native-maps';
 
 import type { MapSurfaceHandle, MapSurfaceProps } from './map-surface.types';
-import type { Stop, Vehicle } from '@/lib/api';
+import type { FleetVehicle, Stop } from '@/lib/api';
 import { vehicleBorderColorFor, vehicleColorFor } from '@/lib/lines';
 import { WROCLAW_CENTER } from '@/lib/map-html';
 import { usePreferences } from '@/lib/preferences';
@@ -27,8 +33,22 @@ const STOP_LABEL_MAX_DELTA = 0.03;
 /** How long a marker keeps redrawing after its appearance changes. */
 const MARKER_TRACK_MS = 350;
 
+/**
+ * Keep one extra half-viewport of markers around every edge. Panning stays
+ * seamless, while a close city view no longer mounts hundreds of offscreen
+ * native views.
+ */
+const MARKER_OVERSCAN_RATIO = 0.5;
+
 /** A Leaflet zoom level as the region span `react-native-maps` speaks in. */
 const deltaForZoom = (zoom: number) => 360 / 2 ** zoom;
+
+const INITIAL_REGION: Region = {
+  latitude: WROCLAW_CENTER.lat,
+  longitude: WROCLAW_CENTER.lon,
+  latitudeDelta: deltaForZoom(WROCLAW_CENTER.zoom),
+  longitudeDelta: deltaForZoom(WROCLAW_CENTER.zoom),
+};
 
 /**
  * A marker with a custom child view keeps the first snapshot it took once
@@ -70,81 +90,90 @@ const coordinate = (lat: number, lon: number) => ({
 });
 
 type VehicleMarkerProps = {
-  vehicle: Vehicle;
+  vehicle: FleetVehicle;
   dimmed: boolean;
   selected: boolean;
   onPress: (id: string) => void;
 };
 
-const VehicleMarker = memo(function VehicleMarker({
-  vehicle,
-  dimmed,
-  selected,
-  onPress,
-}: VehicleMarkerProps) {
-  // Heading is bucketed to 15°: redrawing for every degree of GPS jitter is
-  // redrawing constantly, and nobody can see 5° on a 42pt badge. Same bucket
-  // the Leaflet page uses.
-  const tracking = useMarkerRedraw(
-    `${vehicle.line}|${vehicle.type}|${dimmed}|${selected}|${Math.round((vehicle.heading ?? -1) / 15)}`,
-  );
+const VehicleMarker = memo(
+  function VehicleMarker({ vehicle, dimmed, selected, onPress }: VehicleMarkerProps) {
+    // Heading is bucketed to 15°: redrawing for every degree of GPS jitter is
+    // redrawing constantly, and nobody can see 5° on a 42pt badge. Same bucket
+    // the Leaflet page uses.
+    const tracking = useMarkerRedraw(
+      `${vehicle.line}|${vehicle.type}|${dimmed}|${selected}|${Math.round((vehicle.heading ?? -1) / 15)}`,
+    );
 
-  const towards = vehicle.trip?.towards ?? vehicle.trip?.headsign ?? null;
-  const tint = vehicleColorFor(vehicle.type);
-  const edge = vehicleBorderColorFor(vehicle.type);
-  const bearing = Number.isFinite(vehicle.heading)
-    ? [{ rotate: `${Math.round(vehicle.heading as number)}deg` }]
-    : undefined;
-  const uprightLabel = Number.isFinite(vehicle.heading)
-    ? [{ rotate: `${-Math.round(vehicle.heading as number)}deg` }]
-    : undefined;
+    const towards = vehicle.trip?.towards ?? vehicle.trip?.headsign ?? null;
+    const tint = vehicleColorFor(vehicle.type);
+    const edge = vehicleBorderColorFor(vehicle.type);
+    const bearing = Number.isFinite(vehicle.heading)
+      ? [{ rotate: `${Math.round(vehicle.heading as number)}deg` }]
+      : undefined;
+    const uprightLabel = Number.isFinite(vehicle.heading)
+      ? [{ rotate: `${-Math.round(vehicle.heading as number)}deg` }]
+      : undefined;
 
-  return (
-    <Marker
-      coordinate={coordinate(vehicle.lat, vehicle.lon)}
-      // Google Maps/Android uses a normalized anchor. Apple Maps ignores that
-      // prop and uses centerOffset instead, so explicitly select the centring
-      // mechanism for each renderer.
-      anchor={Platform.OS === 'ios' ? undefined : ANCHOR_CENTRE}
-      centerOffset={Platform.OS === 'ios' ? APPLE_CENTRE_OFFSET : undefined}
-      tracksViewChanges={tracking}
-      // Android bubbles a marker tap through to the map underneath, which
-      // would clear the very selection the tap just made.
-      onPress={(event) => {
-        event.stopPropagation();
-        onPress(vehicle.id);
-      }}
-      accessibilityLabel={
-        towards ? `Linia ${vehicle.line} do ${towards}` : `Linia ${vehicle.line}`
-      }>
-      <View style={[styles.vehicle, dimmed && styles.vehicleDimmed]}>
-        <View style={[styles.vehicleBearing, bearing && { transform: bearing }]}>
-          {Number.isFinite(vehicle.heading) && <HeadingArrow tint={tint} edge={edge} />}
-          <View
-            style={[
-              styles.vehicleBody,
-              { backgroundColor: tint, borderColor: edge },
-              selected && styles.vehicleBadgeSelected,
-            ]}>
-            <View pointerEvents="none" style={styles.vehicleSheen} />
-            <Text
-              numberOfLines={1}
-              allowFontScaling={false}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
+    return (
+      <Marker
+        coordinate={coordinate(vehicle.lat, vehicle.lon)}
+        // Google Maps/Android uses a normalized anchor. Apple Maps ignores that
+        // prop and uses centerOffset instead, so explicitly select the centring
+        // mechanism for each renderer.
+        anchor={Platform.OS === 'ios' ? undefined : ANCHOR_CENTRE}
+        centerOffset={Platform.OS === 'ios' ? APPLE_CENTRE_OFFSET : undefined}
+        tracksViewChanges={tracking}
+        // Android bubbles a marker tap through to the map underneath, which
+        // would clear the very selection the tap just made.
+        onPress={(event) => {
+          event.stopPropagation();
+          onPress(vehicle.id);
+        }}
+        accessibilityLabel={
+          towards ? `Linia ${vehicle.line} do ${towards}` : `Linia ${vehicle.line}`
+        }>
+        <View style={[styles.vehicle, dimmed && styles.vehicleDimmed]}>
+          <View style={[styles.vehicleBearing, bearing && { transform: bearing }]}>
+            {Number.isFinite(vehicle.heading) && <HeadingArrow tint={tint} edge={edge} />}
+            <View
               style={[
-                styles.vehicleLabel,
-                vehicle.line.length > 3 && styles.vehicleLabelLong,
-                uprightLabel && { transform: uprightLabel },
+                styles.vehicleBody,
+                { backgroundColor: tint, borderColor: edge },
+                selected && styles.vehicleBadgeSelected,
               ]}>
-              {vehicle.line}
-            </Text>
+              <View pointerEvents="none" style={styles.vehicleSheen} />
+              <Text
+                numberOfLines={1}
+                allowFontScaling={false}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+                style={[
+                  styles.vehicleLabel,
+                  vehicle.line.length > 3 && styles.vehicleLabelLong,
+                  uprightLabel && { transform: uprightLabel },
+                ]}>
+                {vehicle.line}
+              </Text>
+            </View>
           </View>
         </View>
-      </View>
-    </Marker>
-  );
-});
+      </Marker>
+    );
+  },
+  (previous, next) =>
+    previous.vehicle.id === next.vehicle.id &&
+    previous.vehicle.line === next.vehicle.line &&
+    previous.vehicle.type === next.vehicle.type &&
+    previous.vehicle.lat === next.vehicle.lat &&
+    previous.vehicle.lon === next.vehicle.lon &&
+    previous.vehicle.heading === next.vehicle.heading &&
+    previous.vehicle.trip?.towards === next.vehicle.trip?.towards &&
+    previous.vehicle.trip?.headsign === next.vehicle.trip?.headsign &&
+    previous.dimmed === next.dimmed &&
+    previous.selected === next.selected &&
+    previous.onPress === next.onPress,
+);
 
 type StopMarkerProps = {
   stop: Stop;
@@ -197,7 +226,7 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
 ) {
   const mapRef = useRef<Maps>(null);
   const { mapProvider } = usePreferences();
-  const [span, setSpan] = useState(deltaForZoom(WROCLAW_CENTER.zoom));
+  const [visibleRegion, setVisibleRegion] = useState(INITIAL_REGION);
 
   useImperativeHandle(
     ref,
@@ -222,6 +251,25 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
     () => validVehicles.find((vehicle) => vehicle.id === selectedVehicleId) ?? null,
     [validVehicles, selectedVehicleId],
   );
+
+  const visibleVehicles = useMemo(() => {
+    const latitudeRadius =
+      visibleRegion.latitudeDelta * (0.5 + MARKER_OVERSCAN_RATIO);
+    const longitudeRadius =
+      visibleRegion.longitudeDelta * (0.5 + MARKER_OVERSCAN_RATIO);
+    const inView = validVehicles.filter(
+      (vehicle) =>
+        Math.abs(vehicle.lat - visibleRegion.latitude) <= latitudeRadius &&
+        Math.abs(vehicle.lon - visibleRegion.longitude) <= longitudeRadius,
+    );
+
+    // Following or fitting a selected vehicle must never lose its marker just
+    // because the region completion event has not arrived yet.
+    if (selected && !inView.some((vehicle) => vehicle.id === selected.id)) {
+      inView.push(selected);
+    }
+    return inView;
+  }, [selected, validVehicles, visibleRegion]);
 
   useEffect(() => {
     if (!follow || !selected) return;
@@ -250,12 +298,15 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
   // A route's own stops replace the nearby ones while there is a route, the
   // same way those two layers trade places everywhere else.
   const stops: Stop[] = route ? route.stops : nearbyStops;
-  const showStopLabels = span < STOP_LABEL_MAX_DELTA;
+  const showStopLabels = visibleRegion.latitudeDelta < STOP_LABEL_MAX_DELTA;
 
   const handleStop = useCallback(
     (id: string, name: string) => onSelectStop(id, name),
     [onSelectStop],
   );
+  const handleRegionChange = useCallback((region: Region) => {
+    setVisibleRegion(region);
+  }, []);
 
   const osm = mapProvider === 'osm';
 
@@ -265,13 +316,8 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
       style={StyleSheet.absoluteFill}
       // Uncontrolled: feeding the region back on every pan fights the rider's
       // own gestures and makes the map stutter.
-      initialRegion={{
-        latitude: WROCLAW_CENTER.lat,
-        longitude: WROCLAW_CENTER.lon,
-        latitudeDelta: deltaForZoom(WROCLAW_CENTER.zoom),
-        longitudeDelta: deltaForZoom(WROCLAW_CENTER.zoom),
-      }}
-      onRegionChangeComplete={(region) => setSpan(region.latitudeDelta)}
+      initialRegion={INITIAL_REGION}
+      onRegionChangeComplete={handleRegionChange}
       onPress={onBackground}
       showsUserLocation={Boolean(userPosition)}
       showsMyLocationButton={false}
@@ -315,7 +361,7 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
         />
       ))}
 
-      {validVehicles.map((vehicle) => (
+      {visibleVehicles.map((vehicle) => (
         <VehicleMarker
           key={vehicle.id}
           vehicle={vehicle}

@@ -1,4 +1,4 @@
-import type { Stop, Vehicle } from '@/lib/api';
+import type { FleetVehicle, Stop } from '@/lib/api';
 
 /** A route drawn on the map, already reduced to what any map can draw. */
 export type MapRoute = {
@@ -16,7 +16,7 @@ export type MapRoute = {
  */
 export type MapSurfaceProps = {
   dark: boolean;
-  vehicles: Vehicle[];
+  vehicles: FleetVehicle[];
   route: MapRoute;
   selectedVehicleId: string | null;
   /** @deprecated Selection no longer moves the viewport. */

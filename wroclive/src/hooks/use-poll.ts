@@ -43,6 +43,9 @@ export function usePoll<T>(
     if (!enabled) return;
 
     let cancelled = false;
+    // Android can briefly report `null` while the bridge learns the initial
+    // state. Treat that boot window as active so the first screen still loads.
+    let active = AppState.currentState === null || AppState.currentState === 'active';
     let timer: ReturnType<typeof setTimeout> | null = null;
     let controller: AbortController | null = null;
 
@@ -64,26 +67,34 @@ export function usePoll<T>(
 
     const schedule = () => {
       if (timer) clearTimeout(timer);
+      if (!active || cancelled) return;
       timer = setTimeout(async () => {
         await run();
-        if (!cancelled) schedule();
+        schedule();
       }, intervalMs);
     };
 
     const start = () => {
+      if (!active || cancelled) return;
       run().then(() => {
-        if (!cancelled) schedule();
+        schedule();
       });
     };
 
     start();
 
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') {
+      const nextActive = state === 'active';
+      if (nextActive === active) return;
+      active = nextActive;
+
+      if (active) {
         start();
-      } else if (timer) {
-        clearTimeout(timer);
-        timer = null;
+      } else {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
         controller?.abort();
       }
     });

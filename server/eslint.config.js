@@ -31,13 +31,4 @@ module.exports = [
       'prefer-const': 'error',
     },
   },
-  {
-    // page.evaluate() callbacks run inside the browser, not this Node
-    // process — window/document exist there, just not in any scope eslint
-    // can see statically.
-    files: ['src/twitterScrape.js'],
-    languageOptions: {
-      globals: { window: 'readonly', document: 'readonly' },
-    },
-  },
 ];

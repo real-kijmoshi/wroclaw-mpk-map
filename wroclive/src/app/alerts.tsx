@@ -1,7 +1,14 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LineBadge } from '@/components/line-badge';
@@ -36,13 +43,16 @@ export default function AlertsScreen() {
   return (
     <ModalScreen
       title="Utrudnienia"
-      subtitle={alerts.data?.lastRefreshAt ? `Sprawdzono ${formatAge(alerts.data.lastRefreshAt)}` : null}>
+      subtitle={
+        alerts.data?.lastRefreshAt ? `Sprawdzono ${formatAge(alerts.data.lastRefreshAt)}` : null
+      }>
       {alerts.loading && !alerts.data ? (
         <View style={styles.centered}>
           <ActivityIndicator />
         </View>
       ) : (
         <ScrollView
+          style={styles.scroll}
           contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.five }]}
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -121,6 +131,7 @@ export default function AlertsScreen() {
 
 const styles = StyleSheet.create({
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  scroll: { flex: 1 },
   content: { paddingHorizontal: Spacing.three, gap: Spacing.two, paddingTop: Spacing.three },
   state: { alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.six },
   stateNote: { textAlign: 'center', paddingHorizontal: Spacing.four },

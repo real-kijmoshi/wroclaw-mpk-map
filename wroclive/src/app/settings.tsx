@@ -41,6 +41,7 @@ export default function SettingsScreen() {
   return (
     <ModalScreen title="Ustawienia">
       <ScrollView
+        style={styles.scroll}
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.five }]}
         showsVerticalScrollIndicator={false}>
         {platformMapAvailable && (
@@ -92,7 +93,13 @@ export default function SettingsScreen() {
             control={
               <View style={styles.statusRow}>
                 <View style={[styles.dot, { backgroundColor: serverState.color }]} />
-                <ThemedText type="small" themeColor="textSecondary">
+                {/* "Wczytywanie rozkładu…" is long enough to squeeze the URL
+                    beside it into a mid-word wrap; it gives way instead. */}
+                <ThemedText
+                  type="small"
+                  themeColor="textSecondary"
+                  numberOfLines={1}
+                  style={styles.statusText}>
                   {serverState.text}
                 </ThemedText>
               </View>
@@ -216,7 +223,11 @@ function Choice({
         label={label}
         hint={hint}
         control={
-          selected ? <Ionicons name="checkmark" size={20} color={theme.text} /> : <View style={styles.spacer} />
+          selected ? (
+            <Ionicons name="checkmark" size={20} color={theme.text} />
+          ) : (
+            <View style={styles.spacer} />
+          )
         }
       />
     </Pressable>
@@ -229,6 +240,7 @@ function Divider() {
 }
 
 const styles = StyleSheet.create({
+  scroll: { flex: 1 },
   content: { paddingHorizontal: Spacing.three, paddingTop: Spacing.three, gap: Spacing.four },
   section: { gap: Spacing.two },
   sectionTitle: { textTransform: 'uppercase', letterSpacing: 0.6, paddingHorizontal: Spacing.one },
@@ -240,9 +252,10 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two + 2,
     minHeight: 52,
   },
-  rowText: { flex: 1, gap: 1 },
+  rowText: { flex: 1, gap: 1, minWidth: 0 },
   divider: { height: StyleSheet.hairlineWidth },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, flexShrink: 1 },
+  statusText: { flexShrink: 1 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   spacer: { width: 20 },
   about: { paddingHorizontal: Spacing.one },
