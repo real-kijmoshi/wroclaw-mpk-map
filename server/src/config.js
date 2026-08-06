@@ -41,7 +41,7 @@ const VEHICLE_SOURCES = list(process.env.VEHICLE_POSITION_URLS, [
  * Pages carrying live service disruptions.
  *
  * Empty by default — @AlertMPK on X is the sole default source (see
- * `twitterScrape` below). `mpk.wroc.pl/komunikaty` was a guess and 404s, and
+ * `nitter` below). `mpk.wroc.pl/komunikaty` was a guess and 404s, and
  * `/o-mpk/aktualnosci` exists but is corporate news — adding it produced
  * "MPK kupuje nowe tramwaje" as a service alert. `ALERT_PAGE_URLS` still works
  * for anyone who wants to add `wroclaw.pl/komunikacja/zmiany-w-komunikacji` (or
@@ -115,27 +115,19 @@ module.exports = {
     refreshIntervalMs: num(process.env.ALERTS_REFRESH_INTERVAL_MS, 5 * 60_000),
     timeoutMs: num(process.env.ALERTS_TIMEOUT_MS, 15_000),
     maxItems: num(process.env.ALERTS_MAX_ITEMS, 100),
-    // The default alerts source: reads @AlertMPK's public posts instead of
-    // the paid X API. See src/twitterScrape.js for the two ways this can
-    // happen and why "http" is the more fragile of the two, despite being the
-    // default — it needs no Chromium install, at the cost of depending on one
-    // specific undocumented endpoint instead of the rendered page itself.
-    // Set to false to turn this source off entirely.
-    twitterScrape: {
-      enabled: bool(process.env.TWITTER_SCRAPE_ENABLED, true),
-      // "http": plain fetch of the syndication/embed endpoint, no browser.
-      // "browser": drive a real headless Chromium instead — heavier to run,
-      // but reads the rendered page rather than one specific undocumented
-      // URL, so it's the fallback if TWITTER_SCRAPE_MODE=http stops working.
-      mode: process.env.TWITTER_SCRAPE_MODE === 'browser' ? 'browser' : 'http',
-      username: process.env.TWITTER_SCRAPE_USERNAME || 'AlertMPK',
-      maxPosts: num(process.env.TWITTER_SCRAPE_MAX_POSTS, 10),
-      timeoutMs: num(process.env.TWITTER_SCRAPE_TIMEOUT_MS, 30_000),
-      headless: bool(process.env.TWITTER_SCRAPE_HEADLESS, true),
-      // Only used in "browser" mode, and only needed if playwright-core's own
-      // managed browser install (`npx playwright install chromium`) is not
-      // what should be used — e.g. a distro-packaged Chromium already on the box.
-      executablePath: process.env.TWITTER_SCRAPE_EXECUTABLE_PATH || undefined,
+    // The default alerts source: reads @AlertMPK's public posts through a
+    // Nitter mirror's RSS feed instead of the paid X API or scraping X's own
+    // markup — see NitterProvider in src/alerts.js. `instances` is a list,
+    // same pattern as every other multi-source config here (GTFS, vehicle
+    // positions), because public Nitter mirrors go down with no notice; add
+    // more via NITTER_INSTANCE_URLS. Set NITTER_ENABLED to false to turn this
+    // source off entirely.
+    nitter: {
+      enabled: bool(process.env.NITTER_ENABLED, true),
+      instances: list(process.env.NITTER_INSTANCE_URLS, ['https://nitter.net']),
+      username: process.env.NITTER_USERNAME || 'AlertMPK',
+      maxPosts: num(process.env.NITTER_MAX_POSTS, 10),
+      timeoutMs: num(process.env.NITTER_TIMEOUT_MS, 15_000),
     },
   },
 

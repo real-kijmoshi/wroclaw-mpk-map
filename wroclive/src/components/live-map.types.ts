@@ -16,3 +16,14 @@ export type LiveMapProps = {
   dark: boolean;
   onMessage: (message: MapMessage) => void;
 };
+
+/**
+ * Commands describe current map state, so only the newest command of each
+ * kind matters while the embedded map is loading. This bounds the startup
+ * queue if Leaflet or its tiles are slow and avoids replaying stale fleets.
+ */
+export function enqueueLatest(queue: MapCommand[], command: MapCommand) {
+  const existing = queue.findIndex((item) => item.type === command.type);
+  if (existing >= 0) queue[existing] = command;
+  else queue.push(command);
+}

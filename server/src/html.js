@@ -4,9 +4,8 @@
  * Strip tags and decode the handful of entities that show up in scraped
  * notices, without pulling in a full HTML parser dependency.
  *
- * Shared by src/alerts.js and src/twitterScrape.js — kept here instead of
- * duplicated in both, and instead of one requiring the other, since neither
- * scraper is a natural home for the other's dependency graph.
+ * Used by src/alerts.js to clean up scraped notice pages and Nitter RSS
+ * descriptions alike.
  */
 const stripHtml = (value) =>
   String(value ?? '')

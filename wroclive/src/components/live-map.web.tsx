@@ -2,7 +2,12 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { StyleSheet, View } from 'react-native';
 
 import { mapHtml, type MapMessage } from '@/lib/map-html';
-import type { LiveMapHandle, LiveMapProps, MapCommand } from './live-map.types';
+import {
+  enqueueLatest,
+  type LiveMapHandle,
+  type LiveMapProps,
+  type MapCommand,
+} from './live-map.types';
 
 export type { LiveMapHandle, LiveMapProps, MapCommand };
 
@@ -52,7 +57,7 @@ export const LiveMap = forwardRef<LiveMapHandle, LiveMapProps>(function LiveMap(
   const send = useCallback(
     (command: MapCommand) => {
       if (!readyRef.current) {
-        queue.current.push(command);
+        enqueueLatest(queue.current, command);
         return;
       }
       post(command);

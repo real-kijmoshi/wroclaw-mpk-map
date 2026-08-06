@@ -308,6 +308,11 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     return '<b>' + escapeHtml(vehicle.line) + '</b>' + (towards ? ' → ' + escapeHtml(towards) : '');
   }
 
+  function tooltipKeyFor(vehicle) {
+    var towards = vehicle.trip && (vehicle.trip.towards || vehicle.trip.headsign);
+    return String(vehicle.line) + '|' + String(towards || '');
+  }
+
   /**
    * Update the fleet in place.
    *
@@ -325,6 +330,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
 
       var selected = vehicle.id === selectedId;
       var key = keyFor(vehicle, selected);
+      var tooltipKey = tooltipKeyFor(vehicle);
       var existing = markers.get(vehicle.id);
 
       if (!existing) {
@@ -354,6 +360,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
           key: key,
           lat: vehicle.lat,
           lon: vehicle.lon,
+          tooltipKey: tooltipKey,
           vehicle: vehicle,
         });
       } else {
@@ -367,7 +374,10 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
           existing.key = key;
         }
         existing.vehicle = vehicle;
-        existing.marker.setTooltipContent(tooltipFor(vehicle));
+        if (existing.tooltipKey !== tooltipKey) {
+          existing.marker.setTooltipContent(tooltipFor(vehicle));
+          existing.tooltipKey = tooltipKey;
+        }
       }
 
       if (followId && vehicle.id === followId) {

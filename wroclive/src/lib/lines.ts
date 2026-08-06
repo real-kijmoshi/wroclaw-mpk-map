@@ -75,6 +75,29 @@ export const LINE_LABEL: Record<LineType, string> = {
   unknown: 'Pozostałe',
 };
 
+/**
+ * The same categories, short enough to sit in a filter pill.
+ *
+ * `LINE_LABEL` runs to "Autobusy podmiejskie", which truncates mid-word in a
+ * horizontal strip and reads as broken. The strip is already colour-coded and
+ * the full name still heads the list below it, so the pill only has to be
+ * unambiguous — which is why the rare tram/bus variants keep their vehicle
+ * word and only abbreviate the qualifier.
+ */
+export const LINE_SHORT_LABEL: Record<LineType, string> = {
+  tram: 'Tramwaje',
+  tramSpecial: 'Tramwaje spec.',
+  tramTemporary: 'Tramwaje tymcz.',
+  bus: 'Autobusy',
+  busNight: 'Nocne',
+  busSuburban: 'Podmiejskie',
+  busTemporary: 'Autobusy tymcz.',
+  busZone: 'Strefowe',
+  busExpress: 'Pospieszne',
+  busSpecial: 'Autobusy spec.',
+  unknown: 'Pozostałe',
+};
+
 /** `/lines` carries these two as convenience unions of the real categories. */
 export const HIDDEN_CATEGORIES = new Set(['allTrams', 'allBuses']);
 
@@ -102,9 +125,11 @@ export const vehicleColorFor = (type: string | null | undefined): string =>
 export const vehicleBorderColorFor = (type: string | null | undefined): string =>
   VEHICLE_BORDER_COLOR[(type ?? 'unknown') as LineType] ?? VEHICLE_BORDER_COLOR.unknown;
 
-
 export const labelFor = (type: string): string =>
   LINE_LABEL[type as LineType] ?? LINE_LABEL.unknown;
+
+export const shortLabelFor = (type: string): string =>
+  LINE_SHORT_LABEL[type as LineType] ?? LINE_SHORT_LABEL.unknown;
 
 const TRAM_TYPES = new Set<string>(['tram', 'tramSpecial', 'tramTemporary']);
 

@@ -5,10 +5,12 @@ const path = require('node:path');
 
 const config = require('./config');
 const { LruCache } = require('./cache');
+const { simplify } = require('./gtfs/geo');
 const { CATEGORIES } = require('./lines');
 const { describeVehicle } = require('./progress');
 
 const shapeCache = new LruCache(config.cache.shapeEntries);
+const WIRE_SHAPE_SIMPLIFY_METERS = 8;
 
 /** Cache-Control helper: timetable data is stable, vehicle data is not. */
 const cacheFor = (seconds) => (req, res, next) => {
@@ -23,11 +25,15 @@ const noStore = (req, res, next) => {
 
 /** Compact wire format used by the current app: half the bytes of the legacy one. */
 const toCompact = (variant) => {
-  const points = new Array(variant.points.length / 2);
+  // Matching keeps the store's finer geometry; drawing gets a slightly
+  // stronger simplification because an 8 m deviation is hidden by the route
+  // stroke at the zoom levels where a whole run is visible.
+  const wirePoints = simplify(variant.points, WIRE_SHAPE_SIMPLIFY_METERS);
+  const points = new Array(wirePoints.length / 2);
   for (let i = 0; i < points.length; i += 1) {
     points[i] = [
-      Number(variant.points[i * 2].toFixed(5)),
-      Number(variant.points[i * 2 + 1].toFixed(5)),
+      Number(wirePoints[i * 2].toFixed(5)),
+      Number(wirePoints[i * 2 + 1].toFixed(5)),
     ];
   }
   return {
@@ -49,6 +55,30 @@ const toCompact = (variant) => {
     })),
   };
 };
+
+/** The map does not need stop progress or timestamps for every vehicle. */
+const toMapVehicle = (vehicle) => ({
+  id: vehicle.id,
+  line: vehicle.line,
+  type: vehicle.type,
+  lat: vehicle.lat,
+  lon: vehicle.lon,
+  heading: vehicle.heading,
+  trip: vehicle.trip
+    ? {
+        headsign: vehicle.trip.headsign ?? null,
+        towards: vehicle.trip.towards ?? null,
+      }
+    : null,
+});
+
+const toMapSnapshot = (snapshot, locations) => ({
+  locations: locations.map(toMapVehicle),
+  count: locations.length,
+  lastUpdated: snapshot.lastUpdated,
+  source: snapshot.source,
+  stale: snapshot.stale,
+});
 
 /**
  * The shape released app builds expect. Kept so an older installed app keeps
@@ -151,14 +181,18 @@ const createRouter = ({ gtfs, vehicles, alerts, startedAt }) => {
   });
 
   router.get('/locations', noStore, (req, res) => {
-    const { line, type } = req.query;
+    const { line, type, format } = req.query;
     const snapshot = vehicles.snapshot;
-    if (!line && !type) return res.json(snapshot);
-
     const wanted = line ? new Set(String(line).split(',').map((item) => item.trim())) : null;
-    const locations = snapshot.locations.filter(
-      (vehicle) => (!wanted || wanted.has(vehicle.line)) && (!type || vehicle.type === type),
-    );
+    const locations =
+      wanted || type
+        ? snapshot.locations.filter(
+            (vehicle) => (!wanted || wanted.has(vehicle.line)) && (!type || vehicle.type === type),
+          )
+        : snapshot.locations;
+
+    if (format === 'map') return res.json(toMapSnapshot(snapshot, locations));
+    if (!wanted && !type) return res.json(snapshot);
     return res.json({ ...snapshot, locations, count: locations.length });
   });
 
@@ -318,4 +352,11 @@ const createRouter = ({ gtfs, vehicles, alerts, startedAt }) => {
   return router;
 };
 
-module.exports = { createRouter, shapeCache, toCompact, toLegacy };
+module.exports = {
+  WIRE_SHAPE_SIMPLIFY_METERS,
+  createRouter,
+  shapeCache,
+  toCompact,
+  toLegacy,
+  toMapSnapshot,
+};

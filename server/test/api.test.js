@@ -13,7 +13,20 @@ const fakeVehicles = {
   status: { source: 'test', lastSuccessAt: null, lastError: null, consecutiveFailures: 0, count: 2 },
   snapshot: {
     locations: [
-      { id: '4-1', line: '4', type: 'tram', lat: 51.11, lon: 17.032, heading: 90, updatedAt: null },
+      {
+        id: '4-1',
+        line: '4',
+        type: 'tram',
+        lat: 51.11,
+        lon: 17.032,
+        heading: 90,
+        trip: {
+          headsign: 'Oporów',
+          towards: 'Oporów',
+          nextStop: { id: '2', name: 'Świdnicka' },
+        },
+        updatedAt: null,
+      },
       { id: '128-1', line: '128', type: 'bus', lat: 51.09, lon: 17.031, heading: 180, updatedAt: null },
     ],
     count: 2,
@@ -88,6 +101,22 @@ describe('HTTP API', () => {
     const byLine = await get('/locations?line=128');
     assert.equal(byLine.body.count, 1);
     assert.equal(byLine.body.locations[0].line, '128');
+  });
+
+  it('serves a map-only vehicle payload without progress metadata', async () => {
+    const { body } = await get('/locations?format=map&line=4');
+    assert.equal(body.count, 1);
+    assert.deepEqual(body.locations[0], {
+      id: '4-1',
+      line: '4',
+      type: 'tram',
+      lat: 51.11,
+      lon: 17.032,
+      heading: 90,
+      trip: { headsign: 'Oporów', towards: 'Oporów' },
+    });
+    assert.equal('updatedAt' in body.locations[0], false);
+    assert.equal('nextStop' in body.locations[0].trip, false);
   });
 
   it('never lets a client cache live positions', async () => {

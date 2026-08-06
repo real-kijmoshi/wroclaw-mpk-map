@@ -138,8 +138,13 @@ export type Vehicle = {
   updatedAt: string;
 };
 
+/** The deliberately small vehicle record repeated on every map refresh. */
+export type FleetVehicle = Omit<Vehicle, 'trip' | 'updatedAt'> & {
+  trip: Pick<VehicleTrip, 'headsign' | 'towards'> | null;
+};
+
 export type Locations = {
-  locations: Vehicle[];
+  locations: FleetVehicle[];
   count: number;
   lastUpdated: string | null;
   source: string | null;
@@ -277,7 +282,7 @@ export function normaliseLines(payload: unknown): Lines {
   return lines as Lines;
 }
 
-const isVehicle = (value: unknown): value is Vehicle =>
+const isFleetVehicle = (value: unknown): value is FleetVehicle =>
   isRecord(value) &&
   typeof value.id === 'string' &&
   typeof value.line === 'string' &&
@@ -288,7 +293,20 @@ export function normaliseLocations(payload: unknown): Locations {
   if (!isRecord(payload) || !Array.isArray(payload.locations)) {
     throw new ApiError('Unexpected /locations payload', 0);
   }
-  const locations = payload.locations.filter(isVehicle);
+  const locations = payload.locations.filter(isFleetVehicle).map((vehicle) => ({
+    id: vehicle.id,
+    line: vehicle.line,
+    type: vehicle.type,
+    lat: vehicle.lat,
+    lon: vehicle.lon,
+    heading: Number.isFinite(vehicle.heading) ? vehicle.heading : null,
+    trip: isRecord(vehicle.trip)
+      ? {
+          headsign: typeof vehicle.trip.headsign === 'string' ? vehicle.trip.headsign : null,
+          towards: typeof vehicle.trip.towards === 'string' ? vehicle.trip.towards : null,
+        }
+      : null,
+  }));
   return {
     locations,
     count: locations.length,
@@ -350,8 +368,9 @@ export const getLines = async (options?: GetOptions) =>
 export const getLocations = async (lines: string[] | null, options?: GetOptions) => {
   // The filter runs server-side so a narrow selection is a smaller payload,
   // not the whole fleet thrown away on the phone.
-  const query = lines?.length ? `?line=${encodeURIComponent(lines.join(','))}` : '';
-  return normaliseLocations(await apiGet<unknown>(`/locations${query}`, options));
+  const query = new URLSearchParams({ format: 'map' });
+  if (lines?.length) query.set('line', lines.join(','));
+  return normaliseLocations(await apiGet<unknown>(`/locations?${query}`, options));
 };
 
 export const getVehicle = (id: string, options?: GetOptions) =>

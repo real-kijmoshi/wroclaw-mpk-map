@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
 import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from './themed-text';
@@ -30,12 +30,13 @@ export function ModalScreen({ title, subtitle, children, action }: ModalScreenPr
   const insets = useSafeAreaInsets();
   const theme = useTheme();
 
-  // At the sheet's smaller detent this is ~0 — the rounded top already
-  // clears the status bar. Focusing the search field auto-expands an iOS
-  // form sheet to its full detent, which pulls the sheet up over the
-  // status bar/notch; `insets.top` picks up the real inset once that
-  // happens, so the header stops rendering underneath it.
-  const topInset = insets.top + Spacing.two;
+  // An iOS form sheet is a card inset from the top of the screen: it never
+  // reaches the notch, at either detent, so the safe-area inset here is dead
+  // space — ~59pt of it on a notched phone, which read as a bug above the
+  // title. UIKit already keeps the sheet clear of the status bar; all this
+  // needs is enough room for the grabber. Android and web draw the modal
+  // full-bleed and do need the real inset.
+  const topInset = Platform.OS === 'ios' ? Spacing.four : insets.top + Spacing.two;
 
   return (
     <ThemedView style={styles.container}>
@@ -92,5 +93,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   pressed: { opacity: 0.6 },
-  content: { flex: 1 },
+  /**
+   * `minHeight: 0` lets this shrink to the space left over instead of being
+   * sized by its content, and `overflow: 'hidden'` clips whatever is inside.
+   *
+   * Without them a `ScrollView` in here that forgets `flex: 1` takes its full
+   * content height, overflows the sheet, and — RN views do not clip on iOS —
+   * paints straight over the title. That is what put "MAPA" on top of
+   * "Ustawienia" and the line grid on top of the category tabs. The clip is
+   * the backstop; every screen below still owns `styles.scroll`.
+   */
+  content: { flex: 1, minHeight: 0, overflow: 'hidden' },
 });

@@ -204,19 +204,19 @@ name, same `Map`-of-markers, same 15° bucketing.
 ## Fragile by nature
 
 The default (and, out of the box, only) alerts source is `@AlertMPK` on X —
-see the `twitterScrape`/`TwitterScrapeProvider` paragraph below. `parsePage()`
-in `server/src/alerts.js` can also scrape
+see the `NitterProvider` paragraph below. `parsePage()` in
+`server/src/alerts.js` can also scrape
 `wroclaw.pl/komunikacja/zmiany-w-komunikacji`, a page verified to carry live
 disruptions, but `ALERT_PAGES` is empty by default; set `ALERT_PAGE_URLS` to
 add it (or another page) back as an extra source. `mpk.wroc.pl/komunikaty` was
-a guess and 404s; `/o-mpk/aktualnosci` exists but is corporate news. Both
-providers are HTML/browser scrapes, which is the most likely thing here to
-break.
+a guess and 404s; `/o-mpk/aktualnosci` exists but is corporate news. The page
+provider is an HTML scrape and the Nitter provider depends on a mirror staying
+up — both are the most likely thing here to break, for different reasons.
 
 It fails soft: when every provider fails the previous list stays in place, and
 the reason shows up in `/health` under `alerts.providers[].lastError`. If alerts
 go stale, check that field first — then, for the X source, `npm run
-scrape:twitter`, and for a configured page, the keyword lists in `parsePage()`.
+scrape:nitter`, and for a configured page, the keyword lists in `parsePage()`.
 A configured page that serves RSS is auto-detected and parsed as a feed
 instead.
 
@@ -235,43 +235,36 @@ organizacji ruchu na ulicy X" and only list the affected lines in the body.
 
 The X API is not usable as a source: reading someone else's timeline needs a
 paid tier, which is what silently emptied `/alerts` for a year in the first
-place. `@AlertMPK` posts real disruptions, though, so `server/src/twitterScrape.js`
-reads public HTML instead, one of two ways (`TwitterScrapeProvider` in
-`alerts.js`, `TWITTER_SCRAPE_MODE`), and it is the default and, out of the
-box, only alerts source (`TWITTER_SCRAPE_ENABLED` defaults to `true`; set it
-to `false` to turn it off):
+place. `@AlertMPK` posts real disruptions, though, and `NitterProvider` in
+`server/src/alerts.js` reads them through a Nitter mirror's RSS feed
+(`<instance>/<username>/rss`) instead of scraping X directly — Nitter is an
+alternative X front end that republishes public profiles as plain RSS, which
+`parseFeed()` (the same function every other feed source in this file uses)
+already parses: no browser, no regex-scraped HTML, no reverse-engineered
+endpoint. It is the default and, out of the box, only alerts source
+(`NITTER_ENABLED` defaults to `true`; set it to `false` to turn it off).
 
-- `http` (the default) fetches `syndication.twitter.com`'s legacy "Embedded
-  Timelines" endpoint — the server-rendered HTML `widgets.js` falls back to
-  for logged-out embeds — and regex-parses the `timeline-Tweet` cards out of
-  it. No browser needed, which is the whole reason it's the default: a deploy
-  gets a working alerts source without an extra install step. The tradeoff is
-  that this endpoint is undocumented and unversioned — it could 404, redirect,
-  or start requiring a token with no warning, and this markup shape has not
-  been confirmed against a live response (this sandbox has no path to x.com).
-- `browser` drives a real headless Chromium (`playwright-core`) instead,
-  reading the same public HTML a logged-out visitor sees via the rendered
-  page's `schema.org/SocialMediaPosting` markup. Heavier to run — needs its
-  own Chromium on disk (`npx --yes playwright install chromium`, or point
-  `TWITTER_SCRAPE_EXECUTABLE_PATH` at one that already exists), since
-  `playwright-core` does not download one for you — but more likely to keep
-  working, since it renders whatever the site actually serves rather than
-  depending on one specific undocumented URL. Switch to this mode
-  (`TWITTER_SCRAPE_MODE=browser`) if `http` mode's endpoint stops answering.
+The fragility moved rather than disappeared. Parsing is no longer the weak
+point — RSS is a stable, documented format — but public Nitter instances are
+themselves unreliable and disappear with no warning (this is a known property
+of the Nitter ecosystem, not specific to this project). That is why
+`NITTER_INSTANCE_URLS` is a list tried in order, same pattern as every other
+multi-source config in this project (invariant 1): a deploy should not depend
+on exactly one public mirror staying up forever. `toXPostUrl()` rewrites each
+post's permalink from the mirror's own domain to `x.com`, so a link handed to
+a user still resolves after the mirror that served it goes down.
 
-Both are exactly as fragile as scraping a page you don't control ever is — X
-can change either markup, add a login wall, or rate-limit the IP with no
-warning — and because a broken login wall reads as "zero posts," not a crash,
-a silent failure here is easy to miss; that is why `parsePage()` above stays
-available as a fallback/extra source via `ALERT_PAGE_URLS`. **A deploy running
-`http` mode against a retired endpoint, with no page-scrape source configured,
-gets zero alerts until someone notices and switches mode or adds a page.**
-`npm run scrape:twitter` (and `npm run doctor`, which now checks the X source
-too) are manual, non-test ways to check either mode against the real profile
-before relying on it — the automated suite can't: this sandbox has no path to
-x.com and CI doesn't install a browser, so `test/twitterScrape.test.js` only
-covers the pure `normalizeScrapedPosts()`/`parseSyndicationHtml()` parsing,
-not the network or browser orchestration around them.
+Because a dead mirror reads as "zero posts," not a crash, a silent failure
+here is easy to miss; that is why `parsePage()` above stays available as a
+fallback/extra source via `ALERT_PAGE_URLS`. **A deploy with every configured
+Nitter instance down, and no page-scrape source configured, gets zero alerts
+until someone notices and adds another instance or a page.** `npm run
+scrape:nitter` (and `npm run doctor`, which checks every configured instance)
+are manual, non-test ways to check the real feed before relying on it — the
+automated suite can't, since it has no network; `test/alerts.test.js` instead
+pins `parseFeed()` against a fixture captured from a real Nitter response
+(attributed `<guid>`, CDATA description with a nested `<a>`) to cover the
+parsing, which is the part that can be tested without a network call.
 
 `parseFileListing()` is deliberately shape-agnostic — it walks the JSON looking
 for url-ish and name-ish fields rather than hardcoding a schema, because the CUI

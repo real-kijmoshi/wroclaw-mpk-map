@@ -4,9 +4,8 @@ const { XMLParser } = require('fast-xml-parser');
 
 const config = require('./config');
 const logger = require('./logger');
-const { fetchWithTimeout } = require('./http');
+const { fetchWithTimeout, requestText } = require('./http');
 const { lineToType } = require('./lines');
-const { scrapePosts, scrapePostsHttp } = require('./twitterScrape');
 const { stripHtml } = require('./html');
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
@@ -257,8 +256,38 @@ class NoticeProvider {
 }
 
 /**
- * Reads @AlertMPK's public posts — see src/twitterScrape.js for the two ways
- * this can happen and why "http" (no browser) is the more fragile of the two.
+ * Rewrites a Nitter permalink to the equivalent x.com one.
+ *
+ * The alert itself should keep working after the mirror that served it goes
+ * down — public Nitter instances disappear with no notice — so the link an
+ * alert carries points at the source of truth, not the mirror that happened
+ * to answer this refresh.
+ *
+ * @param {string|null} nitterUrl
+ * @returns {string|null}
+ */
+const toXPostUrl = (nitterUrl) => {
+  if (!nitterUrl) return null;
+  try {
+    return `https://x.com${new URL(nitterUrl).pathname}`;
+  } catch {
+    return nitterUrl;
+  }
+};
+
+/**
+ * Reads @AlertMPK's public posts through a Nitter mirror's RSS feed.
+ *
+ * There is no free API path to a user's timeline — that has needed a paid
+ * tier since 2023, which is what silently emptied `/alerts` for a year (see
+ * CLAUDE.md). Nitter (an alternative X front end) republishes public
+ * profiles as plain RSS, which `parseFeed()` above already parses — no
+ * browser, no reverse-engineered endpoint, no markup to keep up with.
+ *
+ * The tradeoff moves rather than disappears: public Nitter instances are
+ * themselves unreliable and vanish with no warning, so `instances` is tried
+ * in order and the list is meant to carry more than one entry, same as every
+ * other multi-source config in this project (see CLAUDE.md invariant 1).
  *
  * The account is dedicated entirely to service alerts, unlike the corporate
  * news page rejected earlier — so unlike `parsePage()`, a post here does not
@@ -266,44 +295,48 @@ class NoticeProvider {
  * are still extracted centrally by `AlertsService.refresh()`, same as every
  * other provider.
  */
-class TwitterScrapeProvider {
-  constructor({ username, maxPosts, timeoutMs, headless, executablePath, mode }) {
+class NitterProvider {
+  constructor({ username, instances, maxPosts, timeoutMs }) {
     this.username = username;
+    this.instances = instances;
     this.maxPosts = maxPosts;
     this.timeoutMs = timeoutMs;
-    this.headless = headless;
-    this.executablePath = executablePath;
-    this.mode = mode;
-    this.url = `https://x.com/${username}`;
-    this.name = `twitter-scrape:@${username} (${mode})`;
+    this.name = `nitter:@${username}`;
   }
 
   async fetch() {
-    const posts =
-      this.mode === 'browser'
-        ? await scrapePosts({
-            url: this.url,
-            limit: this.maxPosts,
-            timeoutMs: this.timeoutMs,
-            headless: this.headless,
-            executablePath: this.executablePath,
-          })
-        : await scrapePostsHttp({
-            username: this.username,
-            limit: this.maxPosts,
-            timeoutMs: this.timeoutMs,
-          });
+    let lastError = new Error(`no Nitter instance configured for @${this.username}`);
 
-    if (!posts.length) throw new Error('no posts found — the profile markup may have changed');
+    for (const instance of this.instances) {
+      const url = `${stripTrailingSlash(instance)}/${this.username}/rss`;
+      try {
+        // requestText(), not fetchWithTimeout() — see its doc comment in
+        // src/http.js: nitter.net answers the global fetch() with a genuine
+        // 200 and an empty body, and only a raw http(s) request gets the
+        // actual feed.
+        const response = await requestText(url, {
+          timeoutMs: this.timeoutMs,
+          headers: { Accept: 'application/rss+xml, application/xml;q=0.9' },
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
 
-    return posts.map((post) => ({
-      id: post.url ?? `${this.name}:${post.timestamp}`,
-      title: null,
-      content: post.text,
-      url: post.url,
-      timestamp: post.timestamp,
-      source: this.url,
-    }));
+        const items = parseFeed(response.text, url);
+        if (!items.length) throw new Error('no items in feed — the instance may be serving an empty page');
+
+        return items.slice(0, this.maxPosts).map((item) => ({
+          id: item.id,
+          title: null,
+          content: item.content,
+          url: toXPostUrl(item.url),
+          timestamp: item.timestamp,
+          source: url,
+        }));
+      } catch (error) {
+        lastError = new Error(`${instance}: ${error.message}`);
+      }
+    }
+
+    throw lastError;
   }
 }
 
@@ -320,8 +353,8 @@ class AlertsService {
     this.alerts = [];
     this.timer = null;
     this.providers = config.alerts.pages.map((url) => new NoticeProvider(url));
-    if (config.alerts.twitterScrape.enabled) {
-      this.providers.push(new TwitterScrapeProvider(config.alerts.twitterScrape));
+    if (config.alerts.nitter.enabled) {
+      this.providers.push(new NitterProvider(config.alerts.nitter));
     }
 
     this.status = {
@@ -368,8 +401,8 @@ class AlertsService {
         logger.warn('No alert provider responded; keeping the previous list');
       } else if (this.providers.length) {
         logger.warn(
-          'No alerts available from any provider — check TWITTER_SCRAPE_ENABLED (needs Chromium ' +
-            'on disk, see npm run scrape:twitter) and ALERT_PAGE_URLS',
+          'No alerts available from any provider — check NITTER_ENABLED/NITTER_INSTANCE_URLS ' +
+            '(see npm run scrape:nitter) and ALERT_PAGE_URLS',
         );
       }
       return this.alerts;
@@ -434,7 +467,8 @@ class AlertsService {
 module.exports = {
   AlertsService,
   NoticeProvider,
-  TwitterScrapeProvider,
+  NitterProvider,
+  toXPostUrl,
   extractAffectedLines,
   parseFeed,
   parsePage,

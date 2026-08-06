@@ -294,9 +294,14 @@ function RoundButton({
       disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={label}>
-      <Glass variant="regular" interactive style={styles.roundButton}>
-        <Ionicons name={icon} size={20} color={theme.text} />
+      <View style={styles.roundButtonWrap}>
+        <Glass variant="regular" interactive style={styles.roundButton}>
+          <Ionicons name={icon} size={20} color={theme.text} />
+        </Glass>
         {badge !== undefined && (
+          // Outside Glass on purpose: Glass clips to its rounded shape with
+          // `overflow: hidden`, which cut off this badge where it pokes past
+          // the button's edge.
           <View style={[styles.badge, { backgroundColor: theme.text }]}>
             <ThemedText
               type="small"
@@ -306,7 +311,7 @@ function RoundButton({
             </ThemedText>
           </View>
         )}
-      </Glass>
+      </View>
     </Pressable>
   );
 }
@@ -366,6 +371,10 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: Spacing.three,
     gap: Spacing.two,
+  },
+  roundButtonWrap: {
+    width: 46,
+    height: 46,
   },
   roundButton: {
     width: 46,

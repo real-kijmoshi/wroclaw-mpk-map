@@ -16,9 +16,8 @@
 const AdmZip = require('adm-zip');
 
 const config = require('../src/config');
-const { fetchWithTimeout } = require('../src/http');
+const { fetchWithTimeout, requestText } = require('../src/http');
 const { parseFeed, parsePage } = require('../src/alerts');
-const { scrapePosts, scrapePostsHttp } = require('../src/twitterScrape');
 const { resolveFeedCandidates } = require('../src/gtfs/catalogue');
 const { assertComplete } = require('../src/gtfs/store');
 
@@ -185,27 +184,34 @@ const checkAlerts = async () => {
     }
   }
 
-  const { enabled, mode, username, maxPosts, timeoutMs, headless, executablePath } = config.alerts.twitterScrape;
-  const label = `https://x.com/${username} [${mode}]`;
+  const { enabled, instances, username, maxPosts, timeoutMs } = config.alerts.nitter;
 
   if (!enabled) {
-    console.log(DIM('  X/Twitter scrape disabled — set TWITTER_SCRAPE_ENABLED=true to enable'));
+    console.log(DIM('  Nitter scrape disabled — set NITTER_ENABLED=true to enable'));
     return;
   }
 
-  try {
-    const { value, ms } = await timed(() =>
-      mode === 'browser'
-        ? scrapePosts({ url: `https://x.com/${username}`, limit: maxPosts, timeoutMs, headless, executablePath })
-        : scrapePostsHttp({ username, limit: maxPosts, timeoutMs }),
-    );
-    if (!value.length) throw new Error('no posts found — the profile markup may have changed');
-    report('alerts', label, true, `${value.length} posts in ${ms} ms`);
-    for (const post of value.slice(0, 4)) {
-      console.log(DIM(`        · ${post.text.slice(0, 90)}`));
+  // Every configured instance is checked, not just the first that answers —
+  // unlike the server itself, doctor's job is to say which candidates still
+  // work, since public Nitter mirrors go down with no notice.
+  for (const instance of instances) {
+    const url = `${instance.replace(/\/$/, '')}/${username}/rss`;
+    try {
+      const { value: items, ms } = await timed(async () => {
+        // requestText(), not fetchWithTimeout() — nitter.net answers the
+        // global fetch() with an empty 200 body; see src/http.js.
+        const response = await requestText(url, { timeoutMs });
+        if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
+        return parseFeed(response.text, url).slice(0, maxPosts);
+      });
+      if (!items.length) throw new Error('no items in feed — the instance may be serving an empty page');
+      report('alerts', url, true, `${items.length} posts in ${ms} ms`);
+      for (const item of items.slice(0, 4)) {
+        console.log(DIM(`        · ${(item.content ?? '').slice(0, 90)}`));
+      }
+    } catch (error) {
+      report('alerts', url, false, error.message);
     }
-  } catch (error) {
-    report('alerts', label, false, error.message);
   }
 };
 
@@ -214,7 +220,7 @@ const main = async () => {
   console.log(
     DIM('Vehicle sources come from VEHICLE_POSITION_URLS; alerts default to the'),
   );
-  console.log(DIM('X/Twitter scrape (TWITTER_SCRAPE_ENABLED) plus any ALERT_PAGE_URLS.'));
+  console.log(DIM('Nitter RSS (NITTER_ENABLED) plus any ALERT_PAGE_URLS.'));
   console.log(DIM('the GTFS archive is discovered at runtime — see src/gtfs/catalogue.js.'));
 
   await checkGtfs();

@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
-const { extractAffectedLines, parseFeed, parsePage, stripHtml } = require('../src/alerts');
+const { extractAffectedLines, parseFeed, parsePage, stripHtml, toXPostUrl } = require('../src/alerts');
 
 const KNOWN = new Set(['4', '10', '17', '128', '240', 'A', 'N']);
 
@@ -116,6 +116,67 @@ describe('parseFeed', () => {
 
   it('returns an empty list for documents that are not feeds', () => {
     assert.deepEqual(parseFeed('<html><body>nope</body></html>', 'x'), []);
+  });
+});
+
+describe('parseFeed against a real Nitter RSS response', () => {
+  // Captured live from https://nitter.net/AlertMPK/rss — fixture kept close
+  // to the actual shape (attributed <guid>, CDATA description with an <a>
+  // wrapping the #AlertMPK hashtag) because that shape is what broke the old
+  // syndication.twitter.com scraper's ad-hoc regex parsing; this is exactly
+  // the kind of markup change parseFeed() has to keep tolerating.
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+    <rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">
+      <channel>
+        <title>MPK Wrocław / @AlertMPK</title>
+        <link>https://nitter.net/AlertMPK</link>
+        <item>
+          <title>#AlertMPK ul. Reymonta/Kleczkowska - ruch przywrócony.</title>
+          <dc:creator>@AlertMPK</dc:creator>
+          <description><![CDATA[<p><a href="https://nitter.net/search?f=tweets&q=%23AlertMPK">#AlertMPK</a> ul. Reymonta/Kleczkowska - ruch przywrócony.</p>]]></description>
+          <pubDate>Thu, 06 Aug 2026 09:11:21 GMT</pubDate>
+          <guid isPermaLink="false">2085292635451724015</guid>
+          <link>https://nitter.net/AlertMPK/status/2085292635451724015#m</link>
+        </item>
+      </channel>
+    </rss>`;
+
+  it('reads the numeric guid rather than its isPermaLink attribute', () => {
+    const [item] = parseFeed(xml, 'https://nitter.net/AlertMPK/rss');
+    assert.equal(item.id, '2085292635451724015');
+  });
+
+  it('strips the link markup out of the CDATA description', () => {
+    const [item] = parseFeed(xml, 'https://nitter.net/AlertMPK/rss');
+    assert.equal(item.content, '#AlertMPK ul. Reymonta/Kleczkowska - ruch przywrócony.');
+  });
+
+  it('reads the permalink and publish date', () => {
+    const [item] = parseFeed(xml, 'https://nitter.net/AlertMPK/rss');
+    assert.equal(item.url, 'https://nitter.net/AlertMPK/status/2085292635451724015#m');
+    assert.equal(item.timestamp, Date.parse('Thu, 06 Aug 2026 09:11:21 GMT'));
+  });
+});
+
+describe('toXPostUrl', () => {
+  it('rewrites a Nitter permalink to the equivalent x.com one', () => {
+    assert.equal(
+      toXPostUrl('https://nitter.net/AlertMPK/status/2085292635451724015#m'),
+      'https://x.com/AlertMPK/status/2085292635451724015',
+    );
+  });
+
+  it('works no matter which instance served the feed', () => {
+    assert.equal(
+      toXPostUrl('https://nitter.example.org/AlertMPK/status/1'),
+      'https://x.com/AlertMPK/status/1',
+    );
+  });
+
+  it('tolerates junk input', () => {
+    assert.equal(toXPostUrl(null), null);
+    assert.equal(toXPostUrl(undefined), null);
+    assert.equal(toXPostUrl('not a url'), 'not a url');
   });
 });
 
