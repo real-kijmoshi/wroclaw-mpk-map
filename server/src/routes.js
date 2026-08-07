@@ -57,20 +57,29 @@ const toCompact = (variant) => {
 };
 
 /** The map does not need stop progress or timestamps for every vehicle. */
-const toMapVehicle = (vehicle) => ({
-  id: vehicle.id,
-  line: vehicle.line,
-  type: vehicle.type,
-  lat: vehicle.lat,
-  lon: vehicle.lon,
-  heading: vehicle.heading,
-  trip: vehicle.trip
-    ? {
-        headsign: vehicle.trip.headsign ?? null,
-        towards: vehicle.trip.towards ?? null,
-      }
-    : null,
-});
+const toMapVehicle = (vehicle) => {
+  const entry = {
+    id: vehicle.id,
+    line: vehicle.line,
+    type: vehicle.type,
+    lat: vehicle.lat,
+    lon: vehicle.lon,
+    heading: vehicle.heading,
+    trip: vehicle.trip
+      ? {
+          headsign: vehicle.trip.headsign ?? null,
+          towards: vehicle.trip.towards ?? null,
+        }
+      : null,
+  };
+  // The merge metadata is optional — only add it when a vehicle actually has
+  // it, so the map payload shape is unchanged for plain MPK vehicles.
+  if (vehicle.source !== undefined) entry.source = vehicle.source;
+  if (vehicle.vehicleNumber !== undefined) entry.vehicleNumber = vehicle.vehicleNumber;
+  if (vehicle.brigade !== undefined) entry.brigade = vehicle.brigade;
+  if (vehicle.positionUpdatedAt !== undefined) entry.positionUpdatedAt = vehicle.positionUpdatedAt;
+  return entry;
+};
 
 const toMapSnapshot = (snapshot, locations) => ({
   locations: locations.map(toMapVehicle),
@@ -330,7 +339,12 @@ const createRouter = ({ gtfs, vehicles, alerts, startedAt }) => {
       uptimeSeconds: Math.round((Date.now() - startedAt.getTime()) / 1000),
       memoryMb: Math.round(process.memoryUsage().heapUsed / 1e6),
       gtfs: gtfs.status,
-      vehicles: { ...vehicles.status, tracked: vehicles.snapshot.count },
+      vehicles: {
+        ...vehicles.status,
+        tracked: vehicles.snapshot.count,
+        stats: vehicles.stats,
+        openData: vehicles.openDataStatus,
+      },
       alerts: alerts.status,
       lines: {
         total: Object.values(gtfs.lines).flat().length,

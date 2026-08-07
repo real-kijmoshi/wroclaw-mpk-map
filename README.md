@@ -1,8 +1,10 @@
 # Wrocław MPK Map
 
 Real-time tracking for Wrocław's trams and buses: an Expo app and the API that feeds it.
-Vehicle positions come from MPK Wrocław's public endpoint, timetables and route shapes from
-the city's GTFS feed, and disruption notices scraped from public city and MPK pages.
+Vehicle positions come from MPK Wrocław's public endpoint, supplemented by the city's own
+open-data vehicle table (so a bus keeps its number and brigade, and stays on the map when one
+feed stumbles), timetables and route shapes from the city's GTFS feed, and disruption notices
+scraped from public city and MPK pages.
 
 <div style="display: flex; gap: 10px;">
     <img src="landing/images/screens1.png" alt="Map with tracked vehicles" width="260"/>
@@ -58,6 +60,13 @@ place:
   with two different bodies — `busList[bus][]`/`busList[tram][]` and `busList[][]` — and it
   answers `200 []` rather than an error when it does not like the one you sent. The tracker
   tries each, sticks to whichever works, and shows it on `/health` as `vehicles.encoding`.
+- **A second, independent vehicle source is merged in.** The city's Open Data table
+  (`open-data.cui.wroclaw.pl/hdb/db/14`) is polled on its own timer and matched to the MPK
+  fleet by line, type and proximity (250 m), so each matched vehicle gains its number,
+  brigade and position time without guessing when two are equally plausible, and a record
+  within 350 m of an MPK vehicle of the same line is treated as the same vehicle rather
+  than a duplicate. Fresh records with no match are served under their own `open-data:`
+  id. One source going down never stops the other, and `/health` reports each separately.
 - **Vehicle records are matched by field aliases,** so a renamed `x`/`y` field does not
   silently produce an empty map.
 - **A scheduled GitHub Action** runs the doctor daily and opens an issue when a required
@@ -71,7 +80,7 @@ Base URL: your deployment, or `http://localhost:3000`.
 | --- | --- |
 | `GET /lines` | All lines grouped by category (`tram`, `busNight`, `busExpress`, …) |
 | `GET /lines/:category` | One category |
-| `GET /locations` | Live vehicle positions, each with where it is headed, its next stop and how late it is. `?line=4,17` and `?type=tram` filter |
+| `GET /locations` | Live vehicle positions, each with where it is headed, its next stop and how late it is. Vehicles matched to the Open Data source also carry `source` (`"mpk"`, `"merged"` or `"open-data"`), `vehicleNumber`, `brigade` and `positionUpdatedAt`. `?line=4,17` and `?type=tram` filter |
 | `GET /vehicle/:id` | One vehicle with the stops still ahead of it, their timetabled times and estimated arrivals. `?limit=` `?history=` |
 | `GET /shapes/:line` | Route shape and stops. `?lat=&lon=` picks the variant nearest a vehicle and `?heading=` the direction it is running, `?format=compact` halves the payload |
 | `GET /shapes/:line/variants` | Every variant of a route |
@@ -81,7 +90,7 @@ Base URL: your deployment, or `http://localhost:3000`.
 | `GET /stop/:id` | Stop details |
 | `GET /stop/:id/departures` | Next departures, filtered to services running today. `?limit=` `?within=` (minutes) |
 | `GET /alerts` | Disruption notices. `?since=` (ms epoch) `?line=` |
-| `GET /health` | Status of every upstream source and index |
+| `GET /health` | Status of every upstream source (GTFS, both vehicle sources, alerts) and index |
 | `GET /map`, `GET /status` | Mobile-first browser map — lines, alerts, departures, and a tapped vehicle's direction and remaining stops — and the status dashboard |
 
 `/shapes/:line` returns the verbose legacy payload by default so app builds already on
@@ -101,6 +110,7 @@ server/
   src/gtfs/          Discover, download, parse, index and query the GTFS feed
   src/gtfs/catalogue.js  Which snapshot to use, and why
   src/vehicles.js    Live position polling and normalisation
+  src/open-data.js   The city's Open Data vehicle source: parsing, Warsaw time, merging
   src/progress.js    Positions onto the timetable: direction, next stops, delay
   src/alerts.js      Notice pages: RSS if they offer it, scraped otherwise
   src/routes.js      HTTP endpoints
@@ -172,7 +182,9 @@ Before the first submission you still need to, outside this repo:
 
 - Timetables: [Otwarte Dane Wrocław](https://opendata.cui.wroclaw.pl/), resolved through
   the CUI data API at runtime
-- Vehicle positions: `POST https://mpk.wroc.pl/bus_position`
+- Vehicle positions: `POST https://mpk.wroc.pl/bus_position`, supplemented by
+  `GET https://open-data.cui.wroclaw.pl/hdb/db/14?download=json` (the city's own live
+  vehicle table — merged onto the MPK fleet, see `.env.example` for the matching rules)
 - Disruptions: `@AlertMPK` on X, since the timeline API needs a paid tier —
   the default and, out of the box, only source (`TWITTER_SCRAPE_ENABLED`).
   Reads a plain HTTP endpoint by default (`TWITTER_SCRAPE_MODE=http`, no

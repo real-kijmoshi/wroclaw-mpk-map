@@ -157,6 +157,31 @@ const checkVehicles = async () => {
   }
 };
 
+const checkOpenData = async () => {
+  console.log('\nOpen Data vehicle positions');
+  const url = config.vehicles.openDataUrl;
+  if (!url) {
+    console.log(DIM('  No Open Data source configured — set OPEN_DATA_VEHICLE_URL to enable.'));
+    return;
+  }
+
+  try {
+    const { value, ms } = await timed(async () => {
+      const response = await fetchWithTimeout(url, { timeoutMs: config.vehicles.openDataTimeoutMs });
+      if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      const payload = await response.json();
+      const rows = payload?.dane;
+      if (!Array.isArray(rows)) throw new Error('no "dane" list in the response');
+      return rows;
+    });
+
+    if (!value.length) throw new Error('empty list — the table is empty or changed shape');
+    report('open-data', url, true, `${value.length} vehicles in ${ms} ms — sample ${JSON.stringify(value[0])}`);
+  } catch (error) {
+    report('open-data', url, false, error.message);
+  }
+};
+
 const checkAlerts = async () => {
   console.log('\nService notice pages');
   for (const url of config.alerts.pages) {
@@ -225,23 +250,31 @@ const main = async () => {
 
   await checkGtfs();
   await checkVehicles();
+  await checkOpenData();
   await checkAlerts();
 
   console.log('\nSummary');
-  const groups = ['gtfs', 'vehicles', 'alerts'];
+  const groups = ['gtfs', 'vehicles', 'open-data', 'alerts'];
   let fatal = false;
 
   for (const group of groups) {
     const inGroup = results.filter((result) => result.group === group);
     const working = inGroup.filter((result) => result.ok);
-    // Alerts are a nice-to-have; the other two are what the map is made of.
-    const required = group !== 'alerts';
+    // Alerts and the supplementary Open Data source are nice-to-haves; the
+    // other two are what the map is made of.
+    const required = group !== 'alerts' && group !== 'open-data';
     const ok = working.length > 0;
     if (required && !ok) fatal = true;
 
+    const note = required
+      ? ' — THIS BREAKS THE APP'
+      : group === 'alerts'
+        ? ' — alerts will be empty'
+        : ' — MPK source keeps the map working';
+
     console.log(
       `  ${ok ? PASS : FAIL} ${group}: ${working.length}/${inGroup.length} sources reachable` +
-        (ok ? ` — using ${working[0].url}` : required ? ' — THIS BREAKS THE APP' : ' — alerts will be empty'),
+        (ok ? ` — using ${working[0].url}` : note),
     );
   }
 

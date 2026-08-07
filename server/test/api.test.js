@@ -11,6 +11,14 @@ const { buildFixtureZip } = require('./fixtures/gtfs');
 /** Minimal stand-ins so the API can be tested without touching the network. */
 const fakeVehicles = {
   status: { source: 'test', lastSuccessAt: null, lastError: null, consecutiveFailures: 0, count: 2 },
+  openDataStatus: {
+    source: 'https://open-data.cui.wroclaw.pl/hdb/db/14?download=json',
+    lastSuccessAt: null,
+    lastError: null,
+    consecutiveFailures: 0,
+    count: 0,
+  },
+  stats: { mpk: 1, merged: 1, openData: 0, total: 2, activeLines: 2 },
   snapshot: {
     locations: [
       {
@@ -229,6 +237,10 @@ describe('HTTP API', () => {
     assert.equal(status, 200);
     assert.equal(body.status, 'ok');
     assert.equal(body.lines.trams, 1);
+    // Both vehicle sources and the merge stats are part of the report.
+    assert.equal(body.vehicles.openData.source, 'https://open-data.cui.wroclaw.pl/hdb/db/14?download=json');
+    assert.equal(body.vehicles.stats.total, 2);
+    assert.equal(body.vehicles.stats.merged, 1);
   });
 
   it('404s unknown paths as JSON', async () => {
