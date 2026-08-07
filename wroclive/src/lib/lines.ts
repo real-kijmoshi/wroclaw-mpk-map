@@ -21,6 +21,7 @@ export const LINE_COLOR: Record<LineType, string> = {
   busZone: '#9D174D',
   busExpress: '#C2410C',
   busSpecial: '#334155',
+  train: '#78350F',
   unknown: '#475569',
 };
 
@@ -43,6 +44,7 @@ export const VEHICLE_COLOR: Record<LineType, string> = {
   busZone: '#DE95B0',
   busExpress: '#F1CD77',
   busSpecial: '#C65A55',
+  train: '#D4A373',
   unknown: '#99B1D0',
 };
 
@@ -58,6 +60,7 @@ export const VEHICLE_BORDER_COLOR: Record<LineType, string> = {
   busZone: '#D76C96',
   busExpress: '#EFC25A',
   busSpecial: '#BB3932',
+  train: '#B08956',
   unknown: '#668AB5',
 };
 
@@ -72,6 +75,7 @@ export const LINE_LABEL: Record<LineType, string> = {
   busZone: 'Autobusy strefowe',
   busExpress: 'Autobusy pospieszne',
   busSpecial: 'Autobusy specjalne',
+  train: 'Pociągi',
   unknown: 'Pozostałe',
 };
 
@@ -95,11 +99,12 @@ export const LINE_SHORT_LABEL: Record<LineType, string> = {
   busZone: 'Strefowe',
   busExpress: 'Pospieszne',
   busSpecial: 'Autobusy spec.',
+  train: 'Pociągi',
   unknown: 'Pozostałe',
 };
 
 /** `/lines` carries these two as convenience unions of the real categories. */
-export const HIDDEN_CATEGORIES = new Set(['allTrams', 'allBuses']);
+export const HIDDEN_CATEGORIES = new Set(['allTrams', 'allBuses', 'allTrains']);
 
 /** The order categories are listed in, most-used first. */
 export const CATEGORY_ORDER: LineType[] = [
@@ -113,6 +118,7 @@ export const CATEGORY_ORDER: LineType[] = [
   'tramTemporary',
   'busTemporary',
   'busSpecial',
+  'train',
   'unknown',
 ];
 

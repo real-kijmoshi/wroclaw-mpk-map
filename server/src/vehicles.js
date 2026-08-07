@@ -410,7 +410,7 @@ class VehicleTracker {
         count: accepted,
       };
 
-      if (accepted === 0) logger.warn('Open Data poll returned rows but none were usable');
+      //if (accepted === 0) logger.warn('Open Data poll returned rows but none were usable');
     } catch (error) {
       this.openDataStatus.consecutiveFailures += 1;
       this.openDataStatus.lastError = error.message;

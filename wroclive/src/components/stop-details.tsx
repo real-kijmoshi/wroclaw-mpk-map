@@ -63,7 +63,10 @@ export function StopDetails({ data, loading, error }: StopDetailsProps) {
               <LineBadge line={departure.line} type={departure.type} size="small" />
 
               <View style={styles.rowText}>
-                <ThemedText numberOfLines={1}>{departure.headsign ?? '—'}</ThemedText>
+                <ThemedText numberOfLines={1}>
+                  {departure.headsign ?? '—'}
+                  {departure.operator ? ` · ${departure.operator}` : ''}
+                </ThemedText>
                 {scheduled && (
                   <ThemedText type="small" themeColor="textSecondary">
                     {scheduled}

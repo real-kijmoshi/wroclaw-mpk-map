@@ -99,11 +99,14 @@ export type LineType =
   | 'busZone'
   | 'busExpress'
   | 'busSpecial'
+  | 'train'
   | 'unknown';
 
 export type Lines = Record<string, string[]> & {
   allTrams: string[];
   allBuses: string[];
+  /** Present only when KD trains are enabled on the server. */
+  allTrains?: string[];
 };
 
 export type StopRef = {
@@ -136,6 +139,14 @@ export type Vehicle = {
   heading: number | null;
   trip: VehicleTrip | null;
   updatedAt: string;
+  /** KD-only fields. The server adds them conditionally, so they are optional. */
+  operator?: string | null;
+  routeId?: string | null;
+  tripId?: string | null;
+  vehicleLabel?: string | null;
+  delaySeconds?: number | null;
+  occupancyStatus?: string | null;
+  occupancyPercentage?: number | null;
 };
 
 /** The deliberately small vehicle record repeated on every map refresh. */
@@ -231,6 +242,8 @@ export type Departure = {
   inSeconds: number;
   tripId: string;
   serviceDay: 'today' | 'yesterday';
+  operator?: string | null;
+  platformCode?: string | null;
 };
 
 export type Departures = {
@@ -289,6 +302,11 @@ const isFleetVehicle = (value: unknown): value is FleetVehicle =>
   Number.isFinite(value.lat) &&
   Number.isFinite(value.lon);
 
+const optionalString = (value: unknown): string | null | undefined =>
+  typeof value === 'string' ? value : undefined;
+const optionalNumber = (value: unknown): number | null | undefined =>
+  Number.isFinite(value) ? (value as number) : undefined;
+
 export function normaliseLocations(payload: unknown): Locations {
   if (!isRecord(payload) || !Array.isArray(payload.locations)) {
     throw new ApiError('Unexpected /locations payload', 0);
@@ -306,6 +324,13 @@ export function normaliseLocations(payload: unknown): Locations {
           towards: typeof vehicle.trip.towards === 'string' ? vehicle.trip.towards : null,
         }
       : null,
+    operator: optionalString(vehicle.operator),
+    routeId: optionalString(vehicle.routeId),
+    tripId: optionalString(vehicle.tripId),
+    vehicleLabel: optionalString(vehicle.vehicleLabel),
+    delaySeconds: optionalNumber(vehicle.delaySeconds),
+    occupancyStatus: optionalString(vehicle.occupancyStatus),
+    occupancyPercentage: optionalNumber(vehicle.occupancyPercentage),
   }));
   return {
     locations,
@@ -329,15 +354,60 @@ export function normaliseAlerts(payload: unknown): Alerts {
   };
 }
 
+/** Seconds after midnight, in Europe/Warsaw — the same clock the server uses. */
+function warsawSecondsNow(): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Warsaw',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date());
+  const get = (type: 'hour' | 'minute' | 'second') =>
+    Number.parseInt(parts.find((part) => part.type === type)?.value ?? '0', 10);
+  return (get('hour') % 24) * 3600 + get('minute') * 60 + get('second');
+}
+
+/**
+ * Departures come in two shapes: MPK's `{departure, inSeconds, serviceDay}`
+ * and KD's `{scheduledDeparture, departureSeconds, operator}`. Both become
+ * the one `Departure` the board knows how to render.
+ */
 export function normaliseDepartures(payload: unknown): Departures {
   if (!isRecord(payload) || !isRecord(payload.stop) || !Array.isArray(payload.departures)) {
     throw new ApiError('Unexpected departures payload', 0);
   }
-  const departures = payload.departures.filter(
-    (item): item is Departure =>
-      isRecord(item) && typeof item.line === 'string' && Number.isFinite(item.inSeconds),
-  );
-  return { stop: payload.stop as unknown as Stop, departures };
+  const secondsNow = warsawSecondsNow();
+  const departures = payload.departures.flatMap((item): Departure[] => {
+    if (!isRecord(item) || typeof item.line !== 'string') return [];
+    const hasMpkTime = Number.isFinite(item.inSeconds);
+    const hasKdTime = Number.isFinite(item.departureSeconds);
+    if (!hasMpkTime && !hasKdTime) return [];
+    return [
+      {
+        line: item.line,
+        type: item.type as LineType,
+        headsign: typeof item.headsign === 'string' ? item.headsign : null,
+        departure:
+          typeof item.departure === 'string'
+            ? item.departure
+            : typeof item.scheduledDeparture === 'string'
+              ? item.scheduledDeparture
+              : '',
+        inSeconds: hasMpkTime
+          ? (item.inSeconds as number)
+          : (item.departureSeconds as number) - secondsNow,
+        tripId: typeof item.tripId === 'string' ? item.tripId : '',
+        serviceDay: item.serviceDay === 'yesterday' ? 'yesterday' : 'today',
+        operator: optionalString(item.operator),
+        platformCode: optionalString(item.platformCode),
+      },
+    ];
+  });
+  return {
+    stop: payload.stop as unknown as Stop,
+    departures: departures.slice(0, 12),
+  };
 }
 
 /** Compact shape points only; anything unparseable is dropped, not NaN-rendered. */
@@ -358,6 +428,162 @@ export function normaliseShape(payload: unknown): Shape {
   };
 }
 
+/** One `Vehicle` in the app's shape, from either provider's wire format. */
+function normaliseVehicle(value: unknown): Vehicle {
+  const record = isRecord(value) ? value : {};
+  return {
+    id: typeof record.id === 'string' ? record.id : '',
+    line: typeof record.line === 'string' && record.line ? record.line : '?',
+    type: (record.type as LineType) ?? 'unknown',
+    lat: Number.isFinite(record.lat) ? (record.lat as number) : 0,
+    lon: Number.isFinite(record.lon) ? (record.lon as number) : 0,
+    heading: Number.isFinite(record.heading) ? (record.heading as number) : null,
+    trip: isRecord(record.trip)
+      ? {
+          headsign: typeof record.trip.headsign === 'string' ? record.trip.headsign : null,
+          direction: typeof record.trip.direction === 'string' ? record.trip.direction : null,
+          towards: typeof record.trip.towards === 'string' ? record.trip.towards : null,
+          directionId: Number.isFinite(record.trip.directionId)
+            ? (record.trip.directionId as number)
+            : null,
+          shapeId: typeof record.trip.shapeId === 'string' ? record.trip.shapeId : null,
+          delaySeconds: Number.isFinite(record.trip.delaySeconds)
+            ? (record.trip.delaySeconds as number)
+            : null,
+          tripId: typeof record.trip.tripId === 'string' ? record.trip.tripId : null,
+          stopsAhead: Number.isFinite(record.trip.stopsAhead)
+            ? (record.trip.stopsAhead as number)
+            : 0,
+          atStop:
+            typeof record.trip.atStop === 'string'
+              ? record.trip.atStop
+              : isRecord(record.trip.atStop) && typeof record.trip.atStop.name === 'string'
+                ? record.trip.atStop.name
+                : null,
+          previousStop: isRecord(record.trip.previousStop)
+            ? {
+                id: typeof record.trip.previousStop.id === 'string' ? record.trip.previousStop.id : '',
+                name:
+                  typeof record.trip.previousStop.name === 'string'
+                    ? record.trip.previousStop.name
+                    : '',
+              }
+            : null,
+          nextStop: isRecord(record.trip.nextStop)
+            ? {
+                id: typeof record.trip.nextStop.id === 'string' ? record.trip.nextStop.id : '',
+                name: typeof record.trip.nextStop.name === 'string' ? record.trip.nextStop.name : '',
+                etaSeconds: Number.isFinite(record.trip.nextStop.etaSeconds)
+                  ? (record.trip.nextStop.etaSeconds as number)
+                  : null,
+                scheduled: typeof record.trip.nextStop.scheduled === 'string'
+                  ? record.trip.nextStop.scheduled
+                  : null,
+              }
+            : null,
+        }
+      : null,
+    updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : '',
+    operator: optionalString(record.operator),
+    routeId: optionalString(record.routeId),
+    tripId: optionalString(record.tripId),
+    vehicleLabel: optionalString(record.vehicleLabel),
+    delaySeconds: optionalNumber(record.delaySeconds),
+    occupancyStatus: optionalString(record.occupancyStatus),
+    occupancyPercentage: optionalNumber(record.occupancyPercentage),
+  };
+}
+
+/**
+ * A KD stop from the trip detail into the app's `TripStop`. Trains have no
+ * shape geometry, so `lat`/`lon` are 0 and there is no ETA projection — the
+ * schedule column is honest about that instead of inventing running time.
+ */
+function kdStopToTripStop(stop: Record<string, unknown>, passed: boolean): TripStop {
+  const name =
+    typeof stop.name === 'string'
+      ? stop.name
+      : typeof stop.stopId === 'string'
+        ? stop.stopId
+        : '?';
+  const platformCode = typeof stop.platformCode === 'string' ? stop.platformCode : null;
+  const scheduled =
+    (typeof stop.predictedDeparture === 'string' ? stop.predictedDeparture : null) ??
+    (typeof stop.predictedArrival === 'string' ? stop.predictedArrival : null) ??
+    (typeof stop.scheduledDeparture === 'string' ? stop.scheduledDeparture : null) ??
+    (typeof stop.scheduledArrival === 'string' ? stop.scheduledArrival : null);
+  return {
+    id: typeof stop.stopId === 'string' ? stop.stopId : '',
+    name: platformCode ? `${name} (peron ${platformCode})` : name,
+    lat: 0,
+    lon: 0,
+    sequence: Number.isFinite(stop.sequence) ? (stop.sequence as number) : 0,
+    scheduled,
+    etaSeconds: null,
+    agoSeconds: null,
+    distanceMeters: 0,
+    passed,
+  };
+}
+
+/**
+ * `/vehicle/:id` in two shapes: MPK's `{vehicle, trip: VehicleTripDetail}`
+ * and KD's `{vehicle, trip: {stopsAhead: KDStop[]}}`. Both end up as the one
+ * `VehicleDetail` the vehicle screen renders.
+ */
+export function normaliseVehicleDetail(payload: unknown): VehicleDetail {
+  if (!isRecord(payload) || !isRecord(payload.vehicle)) {
+    throw new ApiError('Unexpected /vehicle payload', 0);
+  }
+  const vehicle = normaliseVehicle(payload.vehicle);
+  const rawTrip = payload.trip;
+  if (!isRecord(rawTrip)) return { vehicle, trip: null };
+
+  // MPK's detail already matches the app's shape.
+  if (Array.isArray(rawTrip.nextStops)) {
+    return { vehicle, trip: rawTrip as unknown as VehicleTripDetail };
+  }
+
+  // KD's detail.
+  const stopsAhead = Array.isArray(rawTrip.stopsAhead)
+    ? rawTrip.stopsAhead.filter(isRecord)
+    : [];
+  const previousStop = isRecord(rawTrip.previousStop)
+    ? kdStopToTripStop(rawTrip.previousStop, true)
+    : null;
+  const nextStops = stopsAhead.map((stop) => kdStopToTripStop(stop, false));
+  const delaySeconds = Number.isFinite(rawTrip.delaySeconds)
+    ? (rawTrip.delaySeconds as number)
+    : null;
+  return {
+    vehicle,
+    trip: {
+      line: typeof rawTrip.routeName === 'string' && rawTrip.routeName ? rawTrip.routeName : vehicle.line,
+      shapeId: null,
+      directionId: null,
+      headsign: typeof rawTrip.headsign === 'string' ? rawTrip.headsign : null,
+      direction: null,
+      towards: null,
+      origin: null,
+      onRoute: true,
+      progressMeters: null,
+      routeMeters: 0,
+      shapeIndex: null,
+      delaySeconds,
+      scheduleMatched: delaySeconds !== null,
+      atStop: null,
+      previousStops: previousStop ? [previousStop] : [],
+      previousStop,
+      nextStop: nextStops[0] ?? null,
+      nextStops,
+      stopsAhead: nextStops.length,
+      stopCount: nextStops.length + (previousStop ? 1 : 0),
+    },
+  };
+}
+
+
+
 /* -------------------------------------------------------------------------- */
 /* Endpoints                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -373,8 +599,10 @@ export const getLocations = async (lines: string[] | null, options?: GetOptions)
   return normaliseLocations(await apiGet<unknown>(`/locations?${query}`, options));
 };
 
-export const getVehicle = (id: string, options?: GetOptions) =>
-  apiGet<VehicleDetail>(`/vehicle/${encodeURIComponent(id)}`, options);
+export const getVehicle = async (id: string, options?: GetOptions) =>
+  normaliseVehicleDetail(
+    await apiGet<unknown>(`/vehicle/${encodeURIComponent(id)}`, options),
+  );
 
 /**
  * The variant a vehicle is actually running.

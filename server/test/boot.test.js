@@ -16,7 +16,11 @@ process.env.GTFS_URLS = 'http://127.0.0.1:1/never-answers.zip';
 process.env.GTFS_USE_CACHE = 'false';
 process.env.ALERT_PAGE_URLS = 'http://127.0.0.1:1/none';
 process.env.VEHICLE_POSITION_URLS = 'http://127.0.0.1:1/none';
+process.env.KD_ENABLED = 'false';
+process.env.KLOSOK_ENABLED = 'false';
 process.env.LOG_LEVEL = 'silent';
+// Keep the stats snapshot out of the repo's data dir.
+process.env.STATS_CACHE_DIR = require('node:os').tmpdir();
 
 const assert = require('node:assert/strict');
 const { after, before, describe, it } = require('node:test');
@@ -58,5 +62,11 @@ describe('server boot', () => {
     const response = await fetch(`${base}/`);
     assert.equal(response.status, 200);
     assert.ok(Array.isArray((await response.json()).endpoints));
+  });
+
+  it('reports KD as disabled on /health', async () => {
+    const response = await fetch(`${base}/health`);
+    const body = await response.json();
+    assert.equal(body.kd.enabled, false);
   });
 });

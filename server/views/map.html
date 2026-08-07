@@ -770,6 +770,7 @@
                 <div class="stats">
                     <div class="stat"><div class="stat__n" id="tramCount">0</div><div class="stat__l">Tramwaje</div></div>
                     <div class="stat"><div class="stat__n" id="busCount">0</div><div class="stat__l">Autobusy</div></div>
+                    <div class="stat"><div class="stat__n" id="trainCount">0</div><div class="stat__l">Pociągi</div></div>
                 </div>
 
                 <div id="filters"></div>
@@ -823,6 +824,7 @@
             busZone: '#9D174D',
             busExpress: '#C2410C',
             busSpecial: '#334155',
+            train: '#78350F',
             unknown: '#475569'
         };
 
@@ -837,10 +839,11 @@
             busZone: 'Autobusy strefowe',
             busExpress: 'Autobusy pospieszne',
             busSpecial: 'Autobusy specjalne',
+            train: 'Pociągi',
             unknown: 'Pozostałe'
         };
 
-        const HIDDEN_CATEGORIES = new Set(['allBuses', 'allTrams']);
+        const HIDDEN_CATEGORIES = new Set(['allBuses', 'allTrams', 'allTrains']);
         const STORAGE_KEY = 'wromapa.selectedLines';
         const VEHICLE_REFRESH_MS = 10000;
         const ALERT_REFRESH_MS = 5 * 60000;
@@ -1102,8 +1105,10 @@
             }
 
             const trams = visible.filter((v) => String(v.type).startsWith('tram')).length;
+            const trains = visible.filter((v) => v.type === 'train').length;
             $('tramCount').textContent = trams;
-            $('busCount').textContent = visible.length - trams;
+            $('busCount').textContent = visible.length - trams - trains;
+            $('trainCount').textContent = trains;
             renderStatus();
         }
 
@@ -1290,7 +1295,13 @@
             snapTo(detents().half);
             renderVehicleBoard({ status: 'loading' });
 
-            showRoute(vehicle);
+            // KD trains have no shape geometry, so there is no route to draw
+            // and no /shapes/:line to ask — the board still lists the stops.
+            if (String(vehicle.id || '').indexOf('kd:') === 0) {
+                removeRouteLayer();
+            } else {
+                showRoute(vehicle);
+            }
             loadVehicleTrip();
         }
 
@@ -1302,7 +1313,7 @@
             try {
                 const data = await apiGet('/vehicle/' + encodeURIComponent(id), { retries: 1 });
                 if (currentVehicleId !== id) return;
-                currentTrip = data.trip;
+                currentTrip = normaliseTrip(data.trip);
                 tripStale = false;
                 applyTripProgress(currentTrip);
             } catch (error) {
@@ -1317,6 +1328,56 @@
             renderVehicleBoard();
         }
 
+        /**
+         * The trip detail comes in two shapes. MPK's already reads like the
+         * board expects (`nextStops`/`previousStops` with ETAs); KD's carries
+         * `stopsAhead` as an array of scheduled stops instead, so it is mapped
+         * into the same shape — with no ETA, because only the schedule is known.
+         */
+        function normaliseTrip(trip) {
+            if (!trip) return null;
+            if (Array.isArray(trip.nextStops)) return trip;
+
+            const toStop = (stop, passed) => {
+                if (!stop) return null;
+                const name = String(stop.name || stop.stopId || '?');
+                const platformCode = stop.platformCode || null;
+                const scheduled = stop.predictedDeparture || stop.predictedArrival ||
+                    stop.scheduledDeparture || stop.scheduledArrival || null;
+                return {
+                    name: platformCode ? name + ' (peron ' + platformCode + ')' : name,
+                    scheduled: scheduled || null,
+                    etaSeconds: null,
+                    agoSeconds: null,
+                    passed: !!passed
+                };
+            };
+
+            const previous = [toStop(trip.previousStop, true)].filter(Boolean);
+            const next = (Array.isArray(trip.stopsAhead) ? trip.stopsAhead : [])
+                .map((stop) => toStop(stop, false)).filter(Boolean);
+            const delay = (trip.delaySeconds === null || trip.delaySeconds === undefined)
+                ? null : trip.delaySeconds;
+
+            return {
+                line: trip.routeName || null,
+                towards: trip.headsign || null,
+                headsign: trip.headsign || null,
+                shapeId: null,
+                shapeIndex: null,
+                delaySeconds: delay,
+                scheduleMatched: delay !== null,
+                onRoute: true,
+                atStop: null,
+                previousStop: previous[0] || null,
+                nextStop: next[0] || null,
+                previousStops: previous,
+                nextStops: next,
+                stopsAhead: next.length,
+                stopCount: next.length + previous.length
+            };
+        }
+
         function delayText(trip) {
             if (!trip || trip.delaySeconds === null || trip.delaySeconds === undefined) {
                 return 'Rozkład tego kursu nieznany';
@@ -1328,13 +1389,22 @@
         }
 
         function vehicleStopRow(stop, passed) {
-            const minutes = Math.round((stop.etaSeconds || 0) / 60);
+            const eta = stop.etaSeconds === null || stop.etaSeconds === undefined
+                ? null : Math.round(stop.etaSeconds / 60);
             const ago = Math.round((stop.agoSeconds || 0) / 60);
-            const right = passed
-                ? '<span class="row__ago">' + (ago <= 0 ? 'przed chwilą' : ago + ' min temu') + '</span>'
-                : (minutes <= 0
-                    ? '<span class="row__min">teraz</span>'
-                    : '<span class="row__min">' + minutes + '</span><span class="row__unit">min</span>');
+            // Trains carry no ETA — only the schedule — so show the clock.
+            let right;
+            if (passed) {
+                right = '<span class="row__ago">' + (ago <= 0 ? 'przed chwilą' : ago + ' min temu') + '</span>';
+            } else if (eta === null && stop.scheduled) {
+                right = '<span class="row__min">' + escapeHtml(String(stop.scheduled).slice(0, 5)) + '</span>';
+            } else if (eta !== null && eta <= 0) {
+                right = '<span class="row__min">teraz</span>';
+            } else if (eta !== null) {
+                right = '<span class="row__min">' + eta + '</span><span class="row__unit">min</span>';
+            } else {
+                right = '<span class="row__min">—</span>';
+            }
 
             return '<div class="row' + (passed ? ' row--passed' : '') + '" style="color:' +
                     (currentVehicleTint || LINE_COLOR.unknown) + '">' +
@@ -1434,8 +1504,21 @@
                 body = '<div class="board__msg">Brak odjazdów w ciągu najbliższych dwóch godzin.</div>';
             } else {
                 body = state.departures.map((departure) => {
-                    const minutes = Math.round((departure.inSeconds || 0) / 60);
-                    const scheduled = String(departure.departure || '').slice(0, 5);
+                    // MPK serves {departure, inSeconds}; KD serves
+                    // {scheduledDeparture, departureSeconds} and no ETA, so
+                    // the countdown is computed here from the Warsaw clock.
+                    const inSeconds = Number.isFinite(departure.inSeconds)
+                        ? departure.inSeconds
+                        : Number.isFinite(departure.departureSeconds)
+                            ? departure.departureSeconds - warsawSecondsNow()
+                            : null;
+                    const minutes = inSeconds === null ? null : Math.round(inSeconds / 60);
+                    const scheduled = String(departure.departure || departure.scheduledDeparture || '').slice(0, 5);
+                    const countdown = minutes === null
+                        ? (scheduled ? '<span class="row__min">' + escapeHtml(scheduled) + '</span>' : '')
+                        : (minutes <= 0
+                            ? '<span class="row__min">teraz</span>'
+                            : '<span class="row__min">' + minutes + '</span><span class="row__unit">min</span>');
                     return '<div class="row">' +
                         '<span class="badge badge--sm" style="background:' + colourFor(departure.type) + '">' +
                             escapeHtml(departure.line) + '</span>' +
@@ -1443,14 +1526,22 @@
                             '<div class="row__headsign">' + escapeHtml(departure.headsign || '—') + '</div>' +
                             (scheduled ? '<div class="row__time">' + escapeHtml(scheduled) + '</div>' : '') +
                         '</div>' +
-                        (minutes <= 0
-                            ? '<span class="row__min">teraz</span>'
-                            : '<span class="row__min">' + minutes + '</span><span class="row__unit">min</span>') +
+                        countdown +
                         '</div>';
                 }).join('');
             }
 
             $('board').innerHTML = head + body;
+        }
+
+        /** Seconds after midnight in Europe/Warsaw — the clock departures are served against. */
+        function warsawSecondsNow() {
+            const parts = new Intl.DateTimeFormat('en-US', {
+                timeZone: 'Europe/Warsaw',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+            }).formatToParts(new Date());
+            const get = (type) => Number((parts.find((part) => part.type === type) || {}).value || 0);
+            return (get('hour') % 24) * 3600 + get('minute') * 60 + get('second');
         }
 
         $('stopBack').addEventListener('click', () => {

@@ -60,6 +60,10 @@ class GtfsStore {
   reset() {
     /** @type {Map<string, object>} short name -> route metadata */
     this.routesByLine = new Map();
+    /** @type {Map<string, object>} route_id -> route metadata (agency, line) */
+    this.routesById = new Map();
+    /** @type {Map<string, object>} agency_id -> agency */
+    this.agencies = new Map();
     /** @type {Map<string, object[]>} short name -> route variants */
     this.variantsByLine = new Map();
     /** @type {Map<string, object>} stop_id -> stop */
@@ -68,6 +72,10 @@ class GtfsStore {
     this.trips = [];
     /** @type {Map<string, number>} trip_id -> index into this.trips */
     this.tripIndexById = new Map();
+    /** @type {Map<string, number[]>} trips.vehicle_id -> trip indices */
+    this.tripsByVehicleId = new Map();
+    /** @type {Map<string, number[]>} trips.brigade_id -> trip indices */
+    this.tripsByBrigade = new Map();
     /** @type {Map<string, number[]>} shape_id -> trip indices running it */
     this.tripsByShape = new Map();
     /** Seconds after midnight each trip leaves its first stop, by trip index. */
@@ -130,6 +138,7 @@ class GtfsStore {
     const zip = new AdmZip(buffer);
     this.reset();
 
+    this.#buildAgency(zip);
     const routeIdToLine = this.#buildRoutes(zip);
     const { representativeTripByShape } = this.#buildTrips(zip, routeIdToLine);
     this.#buildStops(zip);
@@ -137,6 +146,16 @@ class GtfsStore {
     const shapePoints = await this.#buildShapes(zip);
 
     return this.#buildStopTimes(zip, representativeTripByShape, shapePoints);
+  }
+
+  #buildAgency(zip) {
+    const rows = parseTable(entryBuffer(zip, 'agency.txt') ?? Buffer.from(''));
+    for (const row of rows) {
+      this.agencies.set(row.agency_id, {
+        id: row.agency_id,
+        name: row.agency_name || null,
+      });
+    }
   }
 
   #buildRoutes(zip) {
@@ -147,6 +166,18 @@ class GtfsStore {
       const line = (row.route_short_name || row.route_id || '').trim();
       if (!line) continue;
       routeIdToLine.set(row.route_id, line);
+
+      // Per-route_id metadata: the live feeds of subcontractor fleets carry
+      // route ids, not line names, and operator comes from routes.agency_id.
+      if (!this.routesById.has(row.route_id)) {
+        this.routesById.set(row.route_id, {
+          line,
+          agencyId: row.agency_id || null,
+          longName: row.route_long_name || null,
+          routeType: row.route_type ? Number.parseInt(row.route_type, 10) : null,
+          color: row.route_color ? `#${row.route_color}` : null,
+        });
+      }
 
       const existing = this.routesByLine.get(line);
       if (existing) {
@@ -180,12 +211,31 @@ class GtfsStore {
       this.trips.push({
         id: row.trip_id,
         line,
+        routeId: row.route_id || null,
         shapeId: row.shape_id || null,
         headsign: row.trip_headsign || null,
         serviceId: row.service_id || null,
         directionId: row.direction_id === undefined ? null : Number.parseInt(row.direction_id, 10),
+        // Subcontractor fleets are matched to their runs through these: the
+        // Wrocław feed is the authority on its own buses, but Kłosok's live
+        // GTFS-RT positions identify a bus by vehicle or brigade rather than
+        // trip on some days, and trips.txt is what connects those back here.
+        vehicleId: row.vehicle_id || null,
+        blockId: row.brigade_id || row.block_id || null,
       });
       this.tripIndexById.set(row.trip_id, index);
+
+      if (row.vehicle_id) {
+        const bucket = this.tripsByVehicleId.get(row.vehicle_id);
+        if (bucket) bucket.push(index);
+        else this.tripsByVehicleId.set(row.vehicle_id, [index]);
+      }
+      const brigade = row.brigade_id || row.block_id;
+      if (brigade) {
+        const bucket = this.tripsByBrigade.get(brigade);
+        if (bucket) bucket.push(index);
+        else this.tripsByBrigade.set(brigade, [index]);
+      }
 
       if (!row.shape_id) continue;
       // Every trip on the shape is kept, not just a count: matching a live
