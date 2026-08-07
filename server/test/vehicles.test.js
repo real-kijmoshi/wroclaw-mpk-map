@@ -25,6 +25,17 @@ describe('normalizeVehicle', () => {
     assert.equal(vehicle.type, 'bus');
   });
 
+  it('uppercases letter lines so they match the timetable', () => {
+    // MPK's feed reports express lines ("A", "K", "N") in lowercase, while the
+    // GTFS route_short_name — and therefore /lines and the app's line picker —
+    // carries them uppercase. The filter, the route matcher and the merge all
+    // compare exact values, so the live name has to be normalised to match.
+    const vehicle = normalizeVehicle({ x: 51.1, y: 17.0, name: 'a', k: 1 });
+    assert.equal(vehicle.line, 'A');
+    assert.equal(vehicle.type, 'busExpress');
+    assert.equal(vehicle.id, 'A-1');
+  });
+
   it('rejects positions outside Wrocław', () => {
     assert.equal(normalizeVehicle({ x: 0, y: 0, name: '4' }), null);
     assert.equal(normalizeVehicle({ x: 52.23, y: 21.0, name: '4' }), null, 'that is Warsaw');

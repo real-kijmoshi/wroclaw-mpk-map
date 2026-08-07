@@ -101,21 +101,28 @@
   const render = (health) => {
     const vehiclesFresh = Boolean(health.vehicles.lastSuccessAt) &&
       Date.now() - Date.parse(health.vehicles.lastSuccessAt) < 60000;
+    const openData = health.vehicles.openData || {};
+    const openDataFresh = Boolean(openData.lastSuccessAt) &&
+      Date.now() - Date.parse(openData.lastSuccessAt) < 60000;
     const gtfsReady = health.gtfs.state === 'ready';
+    const anyVehicles = vehiclesFresh || openDataFresh;
 
     document.getElementById('dot').className =
-      'dot ' + (!gtfsReady ? 'bad' : vehiclesFresh ? 'ok' : 'warn');
+      'dot ' + (!gtfsReady ? 'bad' : anyVehicles ? 'ok' : 'warn');
     document.getElementById('subtitle').textContent =
       (gtfsReady ? 'Rozkłady wczytane' : 'Rozkłady niedostępne') +
-      ' · pojazdy ' + (vehiclesFresh ? 'aktualne' : 'nieaktualne') +
+      ' · pojazdy ' + (anyVehicles ? 'aktualne' : 'nieaktualne') +
       ' · uptime ' + duration(health.uptimeSeconds);
 
     const counts = health.gtfs.counts || {};
     const providers = health.alerts.providers || [];
+    const stats = health.vehicles.stats || {};
 
     document.getElementById('content').innerHTML =
       '<div class="grid">' +
         card('Śledzone pojazdy', health.vehicles.tracked ?? 0, ago(health.vehicles.lastSuccessAt)) +
+        card('MPK', stats.mpk ?? '—', stats.merged + ' z numerem (merge)') +
+        card('Tylko Open Data', stats.openData ?? '—', stats.activeLines + ' aktywnych linii') +
         card('Linie', health.lines.total, health.lines.trams + ' tramwajowych · ' + health.lines.buses + ' autobusowych') +
         card('Przystanki', counts.stops ?? '—', (counts.variants ?? '—') + ' wariantów tras') +
         card('Pamięć', (health.memoryMb ?? 0) + '<small> MB</small>', health.shapeCacheEntries + ' tras w cache') +
@@ -128,12 +135,17 @@
           '<td>' + ago(health.gtfs.fetchedAt) + '</td>' +
           '<td><span class="pill ' + (gtfsReady ? 'ok' : 'bad') + '">' +
             escapeHtml(health.gtfs.state) + (health.gtfs.fromCache ? ' (cache)' : '') + '</span></td></tr>' +
-        '<tr><td>Pozycje pojazdów</td>' +
+        '<tr><td>Pozycje pojazdów — MPK</td>' +
           '<td><code>' + escapeHtml(health.vehicles.source ?? '—') + '</code>' +
             (health.vehicles.encoding ? ' <code>' + escapeHtml(health.vehicles.encoding) + '</code>' : '') + '</td>' +
           '<td>' + ago(health.vehicles.lastSuccessAt) + '</td>' +
           '<td><span class="pill ' + (vehiclesFresh ? 'ok' : 'bad') + '">' +
             escapeHtml(vehiclesFresh ? 'ok' : (health.vehicles.lastError ?? 'brak danych')) + '</span></td></tr>' +
+        '<tr><td>Pozycje pojazdów — Open Data</td>' +
+          '<td><code>' + escapeHtml(openData.source ?? '—') + '</code></td>' +
+          '<td>' + ago(openData.lastSuccessAt) + '</td>' +
+          '<td><span class="pill ' + (openDataFresh ? 'ok' : 'bad') + '">' +
+            escapeHtml(openDataFresh ? 'ok' : (openData.lastError ?? 'brak danych')) + '</span></td></tr>' +
         providers.map((provider) =>
           '<tr><td>Komunikaty</td>' +
             '<td><code>' + escapeHtml(provider.name) + '</code></td>' +

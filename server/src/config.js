@@ -108,6 +108,25 @@ module.exports = {
     timeoutMs: num(process.env.VEHICLE_TIMEOUT_MS, 10_000),
     // Positions older than this are dropped from /locations.
     staleAfterMs: num(process.env.VEHICLE_STALE_AFTER_MS, 120_000),
+
+    // Supplementary live positions from the city's Open Data portal. The MPK
+    // endpoint stays the primary source; this one is merged in (see
+    // src/open-data.js) so a bus number and brigade can ride along with the
+    // position, and so the fleet is not empty when only one source answers.
+    openDataUrl: process.env.OPEN_DATA_VEHICLE_URL || 'https://open-data.cui.wroclaw.pl/hdb/db/14?download=json',
+    openDataPollIntervalMs: num(process.env.OPEN_DATA_POLL_INTERVAL_MS, 15_000),
+    openDataTimeoutMs: num(process.env.OPEN_DATA_TIMEOUT_MS, 10_000),
+    // Records whose position timestamp is older than this are dropped.
+    openDataMaxAgeMs: num(process.env.OPEN_DATA_MAX_AGE_MS, 90_000),
+
+    // Merge thresholds for pairing Open Data records with MPK vehicles:
+    // closest same-line, same-type MPK vehicle within matchMaxMeters wins, a
+    // record closer than dedupeMeters to *any* same-line MPK vehicle is a
+    // duplicate rather than a vehicle of its own, and two candidates closer
+    // together than ambiguityMeters cannot be told apart.
+    matchMaxMeters: num(process.env.VEHICLE_MATCH_MAX_METERS, 250),
+    dedupeMeters: num(process.env.VEHICLE_DEDUPE_MAX_METERS, 350),
+    ambiguityMeters: num(process.env.VEHICLE_MATCH_AMBIGUITY_METERS, 75),
   },
 
   alerts: {
