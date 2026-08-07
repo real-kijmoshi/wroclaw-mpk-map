@@ -99,13 +99,16 @@
     (note ? '<div class="sub">' + note + '</div>' : '') + '</div>';
 
   const render = (health) => {
+    const klosok = health.klosok || { enabled: false };
+    const klosokFresh = klosok.enabled && klosok.state === 'ready' && Boolean(klosok.lastSuccessAt) &&
+      Date.now() - Date.parse(klosok.lastSuccessAt) < 120000;
     const vehiclesFresh = Boolean(health.vehicles.lastSuccessAt) &&
       Date.now() - Date.parse(health.vehicles.lastSuccessAt) < 60000;
     const openData = health.vehicles.openData || {};
     const openDataFresh = Boolean(openData.lastSuccessAt) &&
       Date.now() - Date.parse(openData.lastSuccessAt) < 60000;
     const gtfsReady = health.gtfs.state === 'ready';
-    const anyVehicles = vehiclesFresh || openDataFresh;
+    const anyVehicles = vehiclesFresh || openDataFresh || klosokFresh;
 
     document.getElementById('dot').className =
       'dot ' + (!gtfsReady ? 'bad' : anyVehicles ? 'ok' : 'warn');
@@ -117,6 +120,14 @@
     const counts = health.gtfs.counts || {};
     const providers = health.alerts.providers || [];
     const stats = health.vehicles.stats || {};
+    const kd = health.kd || { enabled: false };
+    const kdStatic = kd.static || {};
+    const kdCounts = kdStatic.counts || {};
+    const kdRt = kd.realtime || {};
+
+    const kdReady = kd.enabled && kdStatic.state === 'ready';
+    const kdRtFresh = kdRt.state === 'ready' && Boolean(kdRt.lastSuccessAt) &&
+      Date.now() - Date.parse(kdRt.lastSuccessAt) < 120000;
 
     document.getElementById('content').innerHTML =
       '<div class="grid">' +
@@ -126,6 +137,14 @@
         card('Linie', health.lines.total, health.lines.trams + ' tramwajowych · ' + health.lines.buses + ' autobusowych') +
         card('Przystanki', counts.stops ?? '—', (counts.variants ?? '—') + ' wariantów tras') +
         card('Pamięć', (health.memoryMb ?? 0) + '<small> MB</small>', health.shapeCacheEntries + ' tras w cache') +
+        (kd.enabled
+          ? card('Pociągi KD', health.lines.trains ?? 0,
+              (kdCounts.stops ?? '—') + ' przystanków · ' + (kdRt.vehiclePositions ?? 0) + ' pojazdów RT')
+          : '') +
+        (klosok.enabled
+          ? card('Autobusy Kłosok', klosok.finalVehiclesAdded ?? 0,
+              (klosok.freshPositions ?? '—') + ' świeżych pozycji · ' + (klosok.unmatched ?? '—') + ' bez linii')
+          : '') +
       '</div>' +
 
       '<section><h2>Źródła danych</h2><div class="scroll"><table>' +
@@ -146,12 +165,32 @@
           '<td>' + ago(openData.lastSuccessAt) + '</td>' +
           '<td><span class="pill ' + (openDataFresh ? 'ok' : 'bad') + '">' +
             escapeHtml(openDataFresh ? 'ok' : (openData.lastError ?? 'brak danych')) + '</span></td></tr>' +
+        (kd.enabled
+          ? '<tr><td>Rozkłady GTFS — KD</td>' +
+            '<td><code>' + escapeHtml(kdStatic.source ?? '—') + '</code></td>' +
+            '<td>' + ago(kdStatic.lastSuccessAt) + '</td>' +
+            '<td><span class="pill ' + (kdReady ? 'ok' : 'bad') + '">' +
+              escapeHtml(kdStatic.state) + (kdStatic.fromCache ? ' (cache)' : '') + '</span></td></tr>' +
+            '<tr><td>Pozycje pociągów — KD</td>' +
+            '<td><code>' + escapeHtml(kdRt.source ?? '—') + '</code></td>' +
+            '<td>' + ago(kdRt.lastSuccessAt) + '</td>' +
+            '<td><span class="pill ' + (kdRtFresh ? 'ok' : (kdRt.configured ? 'bad' : 'ok')) + '">' +
+              escapeHtml(kdRt.configured ? (kdRtFresh ? 'ok' : (kdRt.lastError ?? 'brak danych')) : 'nie skonfigurowany') +
+              '</span></td></tr>'
+          : '') +
         providers.map((provider) =>
           '<tr><td>Komunikaty</td>' +
             '<td><code>' + escapeHtml(provider.name) + '</code></td>' +
             '<td>' + ago(provider.lastSuccessAt) + '</td>' +
             '<td><span class="pill ' + (provider.lastError ? 'bad' : 'ok') + '">' +
               escapeHtml(provider.lastError ?? provider.items + ' pozycji') + '</span></td></tr>').join('') +
+        (klosok.enabled
+          ? '<tr><td>Pozycje autobusów — Kłosok GTFS-RT</td>' +
+            '<td><code>' + escapeHtml(klosok.endpoint ?? '—') + '</code></td>' +
+            '<td>' + ago(klosok.lastSuccessAt) + '</td>' +
+            '<td><span class="pill ' + (klosokFresh ? 'ok' : 'bad') + '">' +
+              escapeHtml(klosokFresh ? 'ok' : (klosok.lastError ?? 'brak danych')) + '</span></td></tr>'
+          : '') +
       '</table></div></section>' +
 
       (health.gtfs.error

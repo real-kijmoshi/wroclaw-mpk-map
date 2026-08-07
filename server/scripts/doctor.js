@@ -18,6 +18,9 @@ const AdmZip = require('adm-zip');
 const config = require('../src/config');
 const { fetchWithTimeout, requestText } = require('../src/http');
 const { parseFeed, parsePage } = require('../src/alerts');
+const { parseRealtime: parseKdRealtime } = require('../src/kd/realtime');
+const { fetchKlosokFeed } = require('../src/klosok/fetch');
+const { parseRealtime: parseKlosokRealtime } = require('../src/klosok/realtime');
 const { resolveFeedCandidates } = require('../src/gtfs/catalogue');
 const { assertComplete } = require('../src/gtfs/store');
 
@@ -182,6 +185,116 @@ const checkOpenData = async () => {
   }
 };
 
+const checkKd = async () => {
+  console.log('\nKoleje Dolnośląskie (KD)');
+
+  const { kd } = config;
+  if (!kd.enabled) {
+    console.log(DIM('  KD_ENABLED is false — static GTFS and GTFS-RT checks skipped.'));
+    return;
+  }
+
+  // Static timetable: the same download the server does at boot, without
+  // writing the cache or leaking the credentials in the URL.
+  try {
+    const { value: buffer, ms } = await timed(async () => {
+      const headers = { Accept: 'application/zip' };
+      if (kd.username && kd.password) {
+        headers.Authorization = `Basic ${Buffer.from(`${kd.username}:${kd.password}`).toString('base64')}`;
+      }
+      const response = await fetchWithTimeout(kd.gtfsUrl, {
+        timeoutMs: kd.timeoutMs,
+        redirect: 'follow',
+        headers,
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      return Buffer.from(await response.arrayBuffer());
+    });
+
+    const names = new AdmZip(buffer).getEntries().map((entry) => entry.entryName).filter((name) => name.endsWith('.txt'));
+    report('kd', kd.gtfsUrl, true, `${(buffer.length / 1e6).toFixed(1)} MB in ${ms} ms — tables: ${names.join(', ')}`);
+  } catch (error) {
+    report('kd', kd.gtfsUrl, false, error.message);
+  }
+
+  // Live GTFS-RT, when a URL is configured. Never print the credentials.
+  if (!kd.realtimeUrl) {
+    console.log(DIM('  No GTFS-RT URL configured — set KD_GTFS_RT_URL to enable live trains.'));
+    return;
+  }
+
+  try {
+    const { value, ms } = await timed(async () => {
+      const headers = { Accept: 'application/x-protobuf' };
+      if (kd.realtimeUsername || kd.realtimePassword) {
+        headers.Authorization = `Basic ${Buffer.from(`${kd.realtimeUsername}:${kd.realtimePassword}`).toString('base64')}`;
+      }
+      const response = await fetchWithTimeout(kd.realtimeUrl, {
+        timeoutMs: kd.realtimeTimeoutMs,
+        redirect: 'follow',
+        headers,
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      return Buffer.from(await response.arrayBuffer());
+    });
+
+    const parsed = parseKdRealtime(value);
+    report(
+      'kd',
+      kd.realtimeUrl,
+      true,
+      `${parsed.vehicles.length} vehicles, ${parsed.tripUpdates.size} trip updates in ${ms} ms`,
+    );
+  } catch (error) {
+    report('kd', kd.realtimeUrl, false, error.message);
+  }
+};
+
+const checkKlosok = async () => {
+  console.log('\nPT KŁOSOK (live bus positions)');
+
+  const { klosok } = config;
+  if (!klosok.enabled) {
+    console.log(DIM('  KLOSOK_ENABLED is false — GTFS-RT check skipped.'));
+    return;
+  }
+  if (!klosok.gtfsRtUrl) {
+    console.log(DIM('  No GTFS-RT URL configured — set KLOSOK_GTFS_RT_URL to enable.'));
+    return;
+  }
+
+  try {
+    const { value, ms } = await timed(async () => {
+      const response = await fetchKlosokFeed(klosok.gtfsRtUrl, {
+        timeoutMs: klosok.timeoutMs,
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      return Buffer.from(await response.arrayBuffer());
+    });
+
+    const parsed = parseKlosokRealtime(value);
+    if (!parsed.vehicles.length) throw new Error('feed decoded but no positions passed sanity checks');
+    report(
+      'klosok',
+      klosok.gtfsRtUrl,
+      true,
+      `${parsed.stats.vehiclePositions} vehicle positions, ` +
+        `${parsed.stats.freshPositions} fresh, ${parsed.tripUpdates.size} trip updates in ${ms} ms`,
+    );
+    for (const vehicle of parsed.vehicles.slice(0, 3)) {
+      console.log(
+        DIM(
+          `        · ${vehicle.id} — lat ${vehicle.lat}, lon ${vehicle.lon}` +
+            (vehicle.vehicleLabel ? `, label ${vehicle.vehicleLabel}` : '') +
+            (vehicle.tripId ? `, trip ${vehicle.tripId}` : ''),
+        ),
+      );
+    }
+  } catch (error) {
+    report('klosok', klosok.gtfsRtUrl, false, error.message);
+  }
+};
+
 const checkAlerts = async () => {
   console.log('\nService notice pages');
   for (const url of config.alerts.pages) {
@@ -241,6 +354,8 @@ const checkAlerts = async () => {
 };
 
 const main = async () => {
+  const onlyKd = process.argv.includes('--kd');
+  const onlyKlosok = process.argv.includes('--klosok');
   console.log('Checking every upstream source this server depends on.\n');
   console.log(
     DIM('Vehicle sources come from VEHICLE_POSITION_URLS; alerts default to the'),
@@ -248,21 +363,57 @@ const main = async () => {
   console.log(DIM('Nitter RSS (NITTER_ENABLED) plus any ALERT_PAGE_URLS.'));
   console.log(DIM('the GTFS archive is discovered at runtime — see src/gtfs/catalogue.js.'));
 
+  if (onlyKd) {
+    await checkKd();
+    console.log('\nSummary');
+    const inGroup = results.filter((result) => result.group === 'kd');
+    const working = inGroup.filter((result) => result.ok);
+    // Disabled is a clean skip, not a failure: the app works without trains.
+    if (!config.kd.enabled) {
+      console.log('  kd: disabled — nothing to check');
+      return;
+    }
+    console.log(
+      `  ${working.length ? PASS : FAIL} kd: ${working.length}/${inGroup.length} sources reachable`,
+    );
+    process.exitCode = working.length ? 0 : 1;
+    return;
+  }
+
+  if (onlyKlosok) {
+    await checkKlosok();
+    console.log('\nSummary');
+    const inGroup = results.filter((result) => result.group === 'klosok');
+    const working = inGroup.filter((result) => result.ok);
+    // Disabled is a clean skip, not a failure: the app works without these buses.
+    if (!config.klosok.enabled) {
+      console.log('  klosok: disabled — nothing to check');
+      return;
+    }
+    console.log(
+      `  ${working.length ? PASS : FAIL} klosok: ${working.length}/${inGroup.length} sources reachable`,
+    );
+    process.exitCode = working.length ? 0 : 1;
+    return;
+  }
+
   await checkGtfs();
   await checkVehicles();
   await checkOpenData();
+  await checkKd();
+  await checkKlosok();
   await checkAlerts();
-
   console.log('\nSummary');
-  const groups = ['gtfs', 'vehicles', 'open-data', 'alerts'];
+  const groups = ['gtfs', 'vehicles', 'open-data', 'kd', 'klosok', 'alerts'];
   let fatal = false;
 
   for (const group of groups) {
     const inGroup = results.filter((result) => result.group === group);
     const working = inGroup.filter((result) => result.ok);
     // Alerts and the supplementary Open Data source are nice-to-haves; the
-    // other two are what the map is made of.
-    const required = group !== 'alerts' && group !== 'open-data';
+    // other two are what the map is made of. KD is optional — the app works
+    // without trains, so a KD outage must not fail the exit code.
+    const required = group !== 'alerts' && group !== 'open-data' && group !== 'kd' && group !== 'klosok';
     const ok = working.length > 0;
     if (required && !ok) fatal = true;
 
@@ -270,7 +421,11 @@ const main = async () => {
       ? ' — THIS BREAKS THE APP'
       : group === 'alerts'
         ? ' — alerts will be empty'
-        : ' — MPK source keeps the map working';
+        : group === 'kd'
+          ? ' — trains will be missing (MPK still works)'
+          : group === 'klosok'
+            ? ' — Kłosok buses will be missing (MPK still works)'
+            : ' — MPK source keeps the map working';
 
     console.log(
       `  ${ok ? PASS : FAIL} ${group}: ${working.length}/${inGroup.length} sources reachable` +

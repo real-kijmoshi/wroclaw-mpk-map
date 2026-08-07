@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Admin — Wrocław MPK API</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --surface: #151b2e;
+    --surface-2: #1e2740;
+    --text: #f5f7fb;
+    --muted: #93a0bd;
+    --ok: #37d67a;
+    --accent: #0075ff;
+    --bad: #e85d75;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+  h1 { font-size: 22px; margin: 0; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+  .card { background: var(--surface); border-radius: 14px; padding: 16px 18px; }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  .value { font-size: 30px; font-weight: 700; }
+  .value small { font-size: 13px; font-weight: 500; color: var(--muted); }
+  .card .sub { margin: 4px 0 0; }
+  section { margin-top: 26px; }
+  section > h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 12px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 14px; overflow: hidden; }
+  th, td { text-align: left; padding: 11px 16px; font-size: 13px; border-bottom: 1px solid rgba(255,255,255,.06); }
+  th { color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  code { background: var(--surface-2); padding: 2px 6px; border-radius: 5px; font-size: 12px; word-break: break-all; }
+  .bars { display: flex; align-items: flex-end; gap: 3px; height: 90px; }
+  .bars .bar { background: var(--accent); border-radius: 3px 3px 0 0; flex: 1; min-width: 4px; opacity: .85; }
+  .bars .bar:hover { opacity: 1; }
+  .chart { background: var(--surface); border-radius: 14px; padding: 16px 18px; }
+  .chart .axis { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-top: 6px; }
+  .login {
+    max-width: 340px; margin: 80px auto; background: var(--surface);
+    border-radius: 14px; padding: 24px;
+  }
+  .login h2 { margin: 0 0 4px; font-size: 17px; }
+  .login .sub { margin-bottom: 16px; }
+  input[type=password] {
+    width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--surface-2);
+    background: var(--surface-2); color: var(--text); font-size: 14px; margin-bottom: 12px;
+  }
+  button {
+    width: 100%; padding: 10px 12px; border: none; border-radius: 10px;
+    background: var(--accent); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: .6; cursor: default; }
+  .err { background: rgba(232,93,117,.12); color: var(--bad); padding: 10px 14px; border-radius: 10px; margin-top: 12px; }
+  footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
+  a { color: var(--accent); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+
+  <div class="login" id="login">
+    <h2>Zaloguj się</h2>
+    <div class="sub">Token administratora (ADMIN_TOKEN)</div>
+    <input type="password" id="token" autocomplete="current-password" placeholder="Token" autofocus>
+    <button id="loginBtn">Wejdź</button>
+    <div class="err hidden" id="loginErr">Błędny token.</div>
+  </div>
+
+  <div id="dashboard" class="hidden">
+    <header><h1>Wrocław MPK API — statystyki</h1></header>
+    <div class="sub" id="subtitle"></div>
+    <div id="content"></div>
+    <footer>
+      Odświeżanie co 30 s ·
+      <a href="/admin/api/stats" id="raw">surowe JSON</a> ·
+      <a href="#" id="logout">wyloguj</a> ·
+      <a href="/status">status</a>
+    </footer>
+  </div>
+</div>
+
+<script>
+  // Served by the API itself, so a relative URL always points at the right
+  // host, and the token stays in sessionStorage — closed tab, forgotten.
+  const API_BASE = '';
+  const KEY = 'adminToken';
+  const token = () => sessionStorage.getItem(KEY);
+
+  const escapeHtml = (value) =>
+    String(value ?? '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+
+  const formatCount = (value) => (value ?? 0).toLocaleString('pl-PL');
+
+  const card = (title, value, note) =>
+    '<div class="card"><h2>' + escapeHtml(title) + '</h2><div class="value">' + value + '</div>' +
+    (note ? '<div class="sub">' + note + '</div>' : '') + '</div>';
+
+  const bars = (items, valueKey) => {
+    const values = items.map((item) => item[valueKey]);
+    const max = Math.max(1, ...values);
+    const barsHtml = items.map((item) =>
+      '<div class="bar" style="height:' + Math.round((item[valueKey] / max) * 100) + '%" title="' +
+      escapeHtml(item.label) + ': ' + formatCount(item[valueKey]) + '"></div>').join('');
+    return '<div class="chart"><div class="bars">' + barsHtml + '</div><div class="axis">' +
+      '<span>' + escapeHtml(items[0]?.label ?? '') + '</span>' +
+      '<span>' + escapeHtml(items[items.length - 1]?.label ?? '') + '</span></div></div>';
+  };
+
+  const render = (stats) => {
+    document.getElementById('subtitle').textContent =
+      'Dzień ' + stats.today + ' · ' + stats.daysTracked + ' dni w pamięci · zliczono ' +
+      formatCount(stats.requestsToday) + ' żądań dziś';
+
+    const daily = stats.daily.map((day) => ({ label: day.date.slice(5), value: day.requests }));
+    const hourly = stats.hourly.map((hour) => ({ label: hour.hour + ':00', value: hour.requests }));
+
+    document.getElementById('content').innerHTML =
+      '<div class="grid">' +
+        card('DAU', formatCount(stats.dau), 'aktywnych dziś') +
+        card('WAU', formatCount(stats.wau), 'ostatnie 7 dni') +
+        card('MAU', formatCount(stats.mau), 'ostatnie 30 dni') +
+        card('Żądania dziś', formatCount(stats.requestsToday), formatCount(stats.requests7d) + ' w 7 dni') +
+      '</div>' +
+
+      '<section><h2>Aktywność dzienna (14 dni)</h2>' + bars(daily, 'value') + '</section>' +
+
+      '<section><h2>Żądania wg godziny (dziś)</h2>' + bars(hourly, 'value') + '</section>' +
+
+      '<section><h2>Najczęstsze endpointy (dziś)</h2><div class="scroll"><table>' +
+        '<tr><th>Endpoint</th><th>Żądania</th></tr>' +
+        stats.topEndpointsToday.map((entry) =>
+          '<tr><td><code>' + escapeHtml(entry.endpoint) + '</code></td><td>' + formatCount(entry.count) + '</td></tr>').join('') +
+      '</table></div></section>';
+  };
+
+  const showLogin = () => {
+    document.getElementById('login').classList.remove('hidden');
+    document.getElementById('dashboard').classList.add('hidden');
+  };
+
+  const showDashboard = () => {
+    document.getElementById('login').classList.add('hidden');
+    document.getElementById('dashboard').classList.remove('hidden');
+  };
+
+  const refresh = async () => {
+    if (!token()) return showLogin();
+    try {
+      const response = await fetch(API_BASE + '/admin/api/stats', {
+        headers: { Authorization: 'Bearer ' + token() },
+      });
+      if (response.status === 401) {
+        sessionStorage.removeItem(KEY);
+        return showLogin();
+      }
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      render(await response.json());
+      showDashboard();
+    } catch (error) {
+      document.getElementById('subtitle').textContent = 'Błąd: ' + escapeHtml(error.message);
+    }
+  };
+
+  document.getElementById('loginBtn').addEventListener('click', async () => {
+    const value = document.getElementById('token').value.trim();
+    if (!value) return;
+    sessionStorage.setItem(KEY, value);
+    document.getElementById('loginErr').classList.add('hidden');
+    await refresh();
+  });
+
+  document.getElementById('token').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') document.getElementById('loginBtn').click();
+  });
+
+  document.getElementById('logout').addEventListener('click', (event) => {
+    event.preventDefault();
+    sessionStorage.removeItem(KEY);
+    showLogin();
+  });
+
+  document.getElementById('raw').addEventListener('click', (event) => {
+    event.preventDefault();
+    window.open(API_BASE + '/admin/api/stats', '_blank');
+  });
+
+  refresh();
+  setInterval(refresh, 30000);
+</script>
+</body>
+</html>

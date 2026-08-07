@@ -237,6 +237,8 @@ describe('HTTP API', () => {
     assert.equal(status, 200);
     assert.equal(body.status, 'ok');
     assert.equal(body.lines.trams, 1);
+    assert.equal(body.lines.trains, 0, 'no KD provider is configured here');
+    assert.deepEqual(body.kd, { enabled: false }, 'KD is reported even when disabled');
     // Both vehicle sources and the merge stats are part of the report.
     assert.equal(body.vehicles.openData.source, 'https://open-data.cui.wroclaw.pl/hdb/db/14?download=json');
     assert.equal(body.vehicles.stats.total, 2);

@@ -63,11 +63,16 @@ export function VehicleDetails({ detail, loading, error }: VehicleDetailsProps) 
             {trip?.towards ?? trip?.headsign ?? 'Kierunek nieznany'}
           </ThemedText>
           <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-            {trip?.atStop
-              ? `Na przystanku ${trip.atStop.name}`
-              : trip?.previousStop
-                ? `Minął ${trip.previousStop.name}`
-                : 'W trasie'}
+            {[
+              vehicle.operator,
+              trip?.atStop
+                ? `Na przystanku ${trip.atStop.name}`
+                : trip?.previousStop
+                  ? `Minął ${trip.previousStop.name}`
+                  : 'W trasie',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           </ThemedText>
         </View>
       </View>

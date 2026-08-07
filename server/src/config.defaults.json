@@ -1,0 +1,110 @@
+{
+  "logLevel": "info",
+  "trustProxy": false,
+
+  "cors": {
+    "origins": ["*"]
+  },
+
+  "vehicleSources": ["https://mpk.wroc.pl/bus_position"],
+  "alertPages": [],
+
+  "gtfs": {
+    "catalogueUrl": "https://api.open-data.cui.wroclaw.pl/od2/6/",
+    "ckanHosts": [
+      "https://opendata.cui.wroclaw.pl",
+      "https://open-data.cui.wroclaw.pl"
+    ],
+    "ckanDataset": "rozkladjazdytransportupublicznegoplik_data",
+    "mirrors": [
+      "https://api.dane.gov.pl/resources/1823,rozklad-jazdy-transportu-publicznego-gtfs/file"
+    ],
+    "overrideUrls": [],
+    "downloadBase": "https://open-data.cui.wroclaw.pl/hdb/download",
+    "maxFileLookups": 24,
+    "maxIdDownloads": 4,
+    "maxCandidates": 6,
+    "cacheDir": "data",
+    "useCache": true,
+    "refreshCron": "30 3 * * *",
+    "timeoutMs": 120000,
+    "catalogueTimeoutMs": 20000,
+    "buildStopIndex": true
+  },
+
+  "vehicles": {
+    "pollIntervalMs": 10000,
+    "timeoutMs": 10000,
+    "staleAfterMs": 120000,
+    "openDataUrl": "https://open-data.cui.wroclaw.pl/hdb/db/14?download=json",
+    "openDataPollIntervalMs": 15000,
+    "openDataTimeoutMs": 10000,
+    "openDataMaxAgeMs": 90000,
+    "matchMaxMeters": 250,
+    "dedupeMeters": 350,
+    "ambiguityMeters": 75
+  },
+
+  "kd": {
+    "enabled": false,
+    "gtfsUrl": "https://kd.kiedyprzyjedzie.pl/gtfs/kd_sample/google_transit.zip",
+    "username": "",
+    "password": "",
+    "refreshIntervalMs": 86400000,
+    "timeoutMs": 30000,
+    "cacheDir": "data/kd",
+    "useCache": true,
+    "realtimeUrl": "",
+    "realtimeUsername": "",
+    "realtimePassword": "",
+    "realtimePollIntervalMs": 15000,
+    "realtimeTimeoutMs": 10000,
+    "realtimeMaxAgeMs": 120000,
+    "publicRealtimeEnabled": true,
+    "publicRealtimeUrl": "https://kd.kiedyprzyjedzie.pl",
+    "publicRealtimePollIntervalMs": 30000,
+    "publicRealtimeChunkSize": 150,
+    "publicRealtimeTimeoutMs": 15000
+  },
+
+  "klosok": {
+    "enabled": true,
+    "gtfsRtUrl": "https://mapadlugoleka.klosok.eu/vehicle_positions.pb",
+    "pollIntervalMs": 10000,
+    "timeoutMs": 10000,
+    "maxAgeMs": 90000,
+    "dedupeMeters": 300,
+    "tlsAllowInvalidCert": false
+  },
+
+  "alerts": {
+    "refreshIntervalMs": 300000,
+    "timeoutMs": 15000,
+    "maxItems": 100,
+    "nitter": {
+      "enabled": true,
+      "instances": ["https://nitter.net"],
+      "username": "AlertMPK",
+      "maxPosts": 10,
+      "timeoutMs": 15000
+    }
+  },
+
+  "cache": {
+    "shapeEntries": 200
+  },
+
+  "admin": {
+    "token": ""
+  },
+
+  "stats": {
+    "enabled": true,
+    "cacheDir": "data",
+    "saveIntervalMs": 300000,
+    "daysToKeep": 31,
+    "timeZone": "Europe/Warsaw"
+  },
+
+  "userAgent": "wroclaw-mpk-map/2.0 (+https://github.com/real-kijmoshi/wroclaw-mpk-map)"
+}

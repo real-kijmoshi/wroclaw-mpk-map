@@ -106,6 +106,10 @@ export default function MapScreen() {
     const vehicle = fleetRef.current?.locations.find((entry) => entry.id === vehicleId);
     if (!vehicle) return;
 
+    // KD trains have no shape geometry in the feed, so there is nothing to
+    // fetch or draw — the vehicle board still lists their stops.
+    if (vehicle.id.indexOf('kd:') === 0) return;
+
     let cancelled = false;
     getShape(vehicle.line, { lat: vehicle.lat, lon: vehicle.lon, heading: vehicle.heading })
       .then((shape) => {
