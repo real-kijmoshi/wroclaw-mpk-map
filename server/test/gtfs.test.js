@@ -166,6 +166,164 @@ describe('GtfsStore', () => {
     assert.equal(store.status.counts.variants, 4);
     assert.equal(store.status.counts.stops, 5);
   });
+
+  it('records per-stage timings and memory for the build', () => {
+    const lastBuild = store.performance.lastBuild;
+    assert.ok(lastBuild.totalMs >= 0, 'total build time is reported');
+    for (const stage of [
+      'archiveOpen',
+      'agency',
+      'routes',
+      'trips',
+      'stops',
+      'calendar',
+      'shapes',
+      'stopTimes',
+      'variants',
+    ]) {
+      assert.ok(Number.isFinite(lastBuild.stages[stage]), `stage ${stage} is timed`);
+    }
+    // stopTimes excludes the variants pass, so the stages never double-count.
+    assert.ok(lastBuild.stages.stopTimes + lastBuild.stages.variants <= lastBuild.totalMs);
+    for (const [kind, memory] of [
+      ['latestMemory', lastBuild.latestMemory],
+      ['peakMemory', lastBuild.peakMemory],
+    ]) {
+      for (const key of ['rssMb', 'heapUsedMb', 'externalMb', 'arrayBuffersMb']) {
+        assert.ok(Number.isFinite(memory[key]), `${kind}.${key} is a number`);
+      }
+    }
+    assert.ok(lastBuild.peakMemory.heapUsedMb >= lastBuild.latestMemory.heapUsedMb);
+  });
+});
+
+describe('stop search', () => {
+  const buildWithStops = async (stops) => {
+    const store = new GtfsStore();
+    await store.build(buildFixtureZip({ stops }));
+    return store;
+  };
+
+  const stops = (rows) =>
+    rows.map(([id, name], index) => [id, String(index), name, '51.10', '17.03']);
+
+  it('returns nothing for empty, whitespace or all-punctuation queries', async () => {
+    const store = await buildWithStops(stops([['1', 'Rynek'], ['2', 'Świdnicka']]));
+    assert.deepEqual(store.searchStops(''), []);
+    assert.deepEqual(store.searchStops('   '), []);
+    assert.deepEqual(store.searchStops('\t\n'), []);
+  });
+
+  it('folds Polish diacritics in both directions', async () => {
+    const store = await buildWithStops(
+      stops([
+        ['1', 'Żabka'],
+        ['2', 'Kąty Wrocławskie'],
+        ['3', 'Dworcowa'],
+        ['4', 'Ząbkowice'],
+      ]),
+    );
+    // Query without diacritics matches a name that has them (ż -> z, ą -> a).
+    assert.deepEqual(store.searchStops('zabka').map((stop) => stop.name), ['Żabka']);
+    assert.deepEqual(store.searchStops('zabkowice').map((stop) => stop.name), ['Ząbkowice']);
+    // Query with diacritics matches a name that has none.
+    assert.deepEqual(store.searchStops('żabka').map((stop) => stop.name), ['Żabka']);
+    // Case does not matter.
+    assert.deepEqual(store.searchStops('DwOrCoWa').map((stop) => stop.name), ['Dworcowa']);
+  });
+
+  it('ranks exact, prefix, word-prefix and substring matches in order', async () => {
+    const store = await buildWithStops(
+      stops([
+        ['1', 'Podworcowa'], // rank 3: substring only ("dworcowa" mid-word)
+        ['2', 'Aleja Dworcowa'], // rank 2: a word starts with the query
+        ['3', 'Dworcowa Stary'], // rank 1: the name starts with the query
+        ['4', 'Dworcowa'], // rank 0: exact
+      ]),
+    );
+    assert.deepEqual(
+      store.searchStops('dworcowa').map((stop) => stop.name),
+      ['Dworcowa', 'Dworcowa Stary', 'Aleja Dworcowa', 'Podworcowa'],
+    );
+  });
+
+  it('breaks ties by shorter name, then lexical order, then id', async () => {
+    const store = await buildWithStops(
+      stops([
+        // Both rank 1 (name starts with the query), same name length; the
+        // id decides. Inserted out of id order on purpose.
+        ['b', 'Dworcowa Południe'],
+        ['a', 'Dworcowa Północ'],
+        // Shorter rank-1 name wins over a longer one.
+        ['c', 'Dworcowa B'],
+        ['d', 'Dworcowa Bą'],
+      ]),
+    );
+    const names = store.searchStops('dworcowa', 10).map((stop) => stop.name);
+    assert.deepEqual(names, ['Dworcowa B', 'Dworcowa Bą', 'Dworcowa Północ', 'Dworcowa Południe']);
+  });
+
+  it('is deterministic: the same query yields the same ordering', async () => {
+    const store = await buildWithStops(
+      stops([
+        ['1', 'Dworcowa'],
+        ['2', 'Dworcowa Południe'],
+        ['3', 'Podworcowa'],
+        ['4', 'Aleja Dworcowa'],
+      ]),
+    );
+    const first = store.searchStops('dworcowa', 10).map((stop) => stop.id);
+    const second = store.searchStops('dworcowa', 10).map((stop) => stop.id);
+    assert.deepEqual(first, second);
+  });
+
+  it('honours the limit and never returns duplicates', async () => {
+    const store = await buildWithStops(
+      stops([
+        ['1', 'Rynek'],
+        ['2', 'Rynek Główny'],
+        ['3', 'Rynek Południe'],
+        ['4', 'Mały Rynek'],
+        ['5', 'Rynek Północ'],
+      ]),
+    );
+    const limited = store.searchStops('rynek', 2);
+    assert.equal(limited.length, 2);
+    const ids = limited.map((stop) => stop.id);
+    assert.equal(new Set(ids).size, ids.length, 'no duplicate stops');
+  });
+
+  it('treats canonically-equivalent spellings as the same name', async () => {
+    // "S\u0301widnicka" is "Świdnicka" written as S + U+0301.
+    const store = await buildWithStops(stops([['1', 'S\u0301widnicka'], ['2', 'Świdnicka']]));
+    const results = store.searchStops('swidnicka', 10);
+    assert.deepEqual(results.map((stop) => stop.name).sort(), ['Świdnicka', 'Świdnicka']);
+    // The query itself, written the other way, matches both too.
+    assert.equal(store.searchStops('S\u0301widnicka', 10).length, 2);
+  });
+
+  it('folds only decomposable accents, not transliteration', async () => {
+    const store = await buildWithStops(stops([['1', 'Straße'], ['2', 'Rynek']]));
+    // ł, ß and friends have no canonical decomposition, so they are kept as-is.
+    assert.deepEqual(store.searchStops('strasse'), []);
+    assert.equal(store.searchStops('straße').length, 1);
+  });
+
+  it('finds an exact match that sits late in insertion order (the old cutoff bug)', async () => {
+    // The old implementation stopped collecting after `limit * 10` matches,
+    // so with limit 2 it broke after 20 results and never examined the exact
+    // match at the very end of the feed — returning only prefix hits even
+    // though the exact name was present. Every stop is scanned now.
+    const rows = [
+      ...Array.from({ length: 30 }, (_, i) => [`w${i}`, `Rynek-Południe-${i}`]),
+      ['exact', 'Rynek'],
+    ];
+    const store = await buildWithStops(stops(rows));
+    const names = store.searchStops('rynek', 2).map((stop) => stop.name);
+    assert.equal(names[0], 'Rynek');
+    assert.equal(names.length, 2);
+    assert.notEqual(names[1], 'Rynek', 'the second hit is a prefix match, not a duplicate');
+  });
 });
 
 describe('assertComplete', () => {

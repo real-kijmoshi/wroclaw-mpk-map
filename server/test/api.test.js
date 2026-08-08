@@ -46,6 +46,11 @@ const fakeVehicles = {
     return this.snapshot.locations.find((entry) => entry.id === id) ?? null;
   },
   describeCache: new Map(),
+  performanceSnapshot: () => ({
+    totalPollMs: { latest: 1.5, ewma: 1.5, max: 1.5, count: 1 },
+    fetchMs: { latest: 1.0, ewma: 1.0, max: 1.0, count: 1 },
+    acceptedVehicleCount: { latest: 2, ewma: 2, max: 2, count: 1 },
+  }),
 };
 
 const fakeAlerts = {
@@ -298,6 +303,17 @@ describe('HTTP API', () => {
     assert.equal(body.vehicles.openData.source, 'https://open-data.cui.wroclaw.pl/hdb/db/14?download=json');
     assert.equal(body.vehicles.stats.total, 2);
     assert.equal(body.vehicles.stats.merged, 1);
+    // Rolling diagnostics are compact: no arrays, just latest/ewma/max/count.
+    assert.deepEqual(body.performance.vehicles.totalPollMs, {
+      latest: 1.5,
+      ewma: 1.5,
+      max: 1.5,
+      count: 1,
+    });
+    const gtfsPerf = body.performance.gtfs.lastBuild;
+    assert.ok(Number.isFinite(gtfsPerf.totalMs));
+    assert.ok(Number.isFinite(gtfsPerf.stages.variants));
+    assert.ok(Number.isFinite(gtfsPerf.peakMemory.heapUsedMb));
   });
 
   it('404s unknown paths as JSON', async () => {

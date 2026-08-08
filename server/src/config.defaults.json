@@ -92,7 +92,8 @@
 
   "cache": {
     "shapeEntries": 200,
-    "vehicleDetailEntries": 512
+    "vehicleDetailEntries": 512,
+    "vehicleDetailTtlMs": 10000
   },
 
   "admin": {

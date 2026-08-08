@@ -1,10 +1,13 @@
 'use strict';
 
 const AdmZip = require('adm-zip');
+const { performance } = require('node:perf_hooks');
 
 const config = require('../config');
 const logger = require('../logger');
 const { categorizeLines, lineToType } = require('../lines');
+const { timeSync } = require('../metrics');
+const { matchRank, normalizeSearchText } = require('../search');
 const { downloadGtfs } = require('./download');
 const { assertComplete, entryBuffer, findEntry, isInForce } = require('./archive');
 const {
@@ -43,11 +46,22 @@ const HEADING_PENALTY_METERS = 400;
  * at load time, so lookups are O(1) and the raw tables are released to the GC.
  */
 class GtfsStore {
-  constructor() {
-    this.reset();
-    // Bumped on every successful build; caches keyed on timetable data use it
-    // to refuse entries that were computed against older geometry.
+  /**
+   * @param {{ downloader?: (options: object) => Promise<object> }} [options]
+   *   `downloader` is how `refresh()` obtains an archive — injectable for
+   *   tests so atomic refresh can be exercised without the network. The
+   *   default resolves and validates the real city feed.
+   */
+  constructor({ downloader = downloadGtfs } = {}) {
+    this.downloader = downloader;
+    // Bumped exactly once per successful build, on commit. Caches keyed on
+    // timetable data use it to refuse entries that were computed against older
+    // geometry; it never moves on a failed refresh.
     this.generation = 0;
+    /** Stage timings and memory from the latest successful build, or null. */
+    this.performance = null;
+    /** @type {Promise<object>|null} an in-flight refresh; overlapping calls share one run */
+    this.refreshingPromise = null;
     this.status = {
       state: 'empty',
       source: null,
@@ -58,62 +72,141 @@ class GtfsStore {
       buildMs: null,
       error: null,
       counts: {},
+      // True while a refresh is running against a live snapshot. `state` stays
+      // 'ready' throughout, so `/health` reports the refresh instead of the
+      // endpoints going 503.
+      refreshing: false,
+      generation: 0,
+    };
+    this.reset();
+  }
+
+  /**
+   * Replace the live snapshot with a fresh, empty one. Not part of the refresh
+   * path — `build()` never resets the active store — but kept for callers that
+   * want to forget everything.
+   */
+  reset() {
+    this.#commit(this.#emptyState());
+    this.status.state = 'empty';
+    this.status.refreshing = false;
+  }
+
+  /** A fresh, uncommitted GTFS state. Nothing here is live until #commit. */
+  #emptyState() {
+    return {
+      /** @type {Map<string, object>} short name -> route metadata */
+      routesByLine: new Map(),
+      /** @type {Map<string, object>} route_id -> route metadata (agency, line) */
+      routesById: new Map(),
+      /** @type {Map<string, object>} agency_id -> agency */
+      agencies: new Map(),
+      /** @type {Map<string, object[]>} short name -> route variants */
+      variantsByLine: new Map(),
+      /** @type {Map<string, object>} shape_id -> route variant */
+      variantByShapeId: new Map(),
+      /** @type {Map<string, object>} stop_id -> stop */
+      stopsById: new Map(),
+      /**
+       * Search index over the stops, built once at load time. The name is
+       * folded (diacritics, case) in this entry, not on every query.
+       * @type {Array<{ stop: object, normalized: string }>}
+       */
+      stopSearchIndex: [],
+      /** @type {object[]} compact trip records, addressed by index */
+      trips: [],
+      /** @type {Map<string, number>} trip_id -> index into this.trips */
+      tripIndexById: new Map(),
+      /** @type {Map<string, number[]>} trips.vehicle_id -> trip indices */
+      tripsByVehicleId: new Map(),
+      /** @type {Map<string, number[]>} trips.brigade_id -> trip indices */
+      tripsByBrigade: new Map(),
+      /** @type {Map<string, number[]>} shape_id -> trip indices running it */
+      tripsByShape: new Map(),
+      /** Seconds after midnight each trip leaves its first stop, by trip index. */
+      tripStart: new Int32Array(0),
+      /** Seconds after midnight each trip reaches its last stop, by trip index. */
+      tripEnd: new Int32Array(0),
+      /** @type {Map<string, object>} service_id -> calendar */
+      services: new Map(),
+      /** Parallel arrays holding one entry per stop_times row. */
+      stopTimes: { trip: new Int32Array(0), arrival: new Int32Array(0), departure: new Int32Array(0) },
+      /** @type {Map<string, Int32Array>} stop_id -> stop_times row indices, sorted by departure */
+      departuresByStop: new Map(),
+      lines: categorizeLines([]),
+      counts: {},
     };
   }
 
-  reset() {
-    /** @type {Map<string, object>} short name -> route metadata */
-    this.routesByLine = new Map();
-    /** @type {Map<string, object>} route_id -> route metadata (agency, line) */
-    this.routesById = new Map();
-    /** @type {Map<string, object>} agency_id -> agency */
-    this.agencies = new Map();
-    /** @type {Map<string, object[]>} short name -> route variants */
-    this.variantsByLine = new Map();
-    /** @type {Map<string, object>} shape_id -> route variant */
-    this.variantByShapeId = new Map();
-    /** @type {Map<string, object>} stop_id -> stop */
-    this.stopsById = new Map();
-    /** @type {object[]} compact trip records, addressed by index */
-    this.trips = [];
-    /** @type {Map<string, number>} trip_id -> index into this.trips */
-    this.tripIndexById = new Map();
-    /** @type {Map<string, number[]>} trips.vehicle_id -> trip indices */
-    this.tripsByVehicleId = new Map();
-    /** @type {Map<string, number[]>} trips.brigade_id -> trip indices */
-    this.tripsByBrigade = new Map();
-    /** @type {Map<string, number[]>} shape_id -> trip indices running it */
-    this.tripsByShape = new Map();
-    /** Seconds after midnight each trip leaves its first stop, by trip index. */
-    this.tripStart = new Int32Array(0);
-    /** Seconds after midnight each trip reaches its last stop, by trip index. */
-    this.tripEnd = new Int32Array(0);
-    /** @type {Map<string, object>} service_id -> calendar */
-    this.services = new Map();
-    /** Parallel arrays holding one entry per stop_times row. */
-    this.stopTimes = { trip: new Int32Array(0), arrival: new Int32Array(0), departure: new Int32Array(0) };
-    /** @type {Map<string, Int32Array>} stop_id -> stop_times row indices, sorted by departure */
-    this.departuresByStop = new Map();
-    this.lines = categorizeLines([]);
+  /**
+   * Swap a fully built candidate state in — every field in one synchronous
+   * block, so no request can observe half-old / half-new data, and the only
+   * moment a reader sees the new snapshot is after all of it is in place.
+   */
+  #commit(state) {
+    this.routesByLine = state.routesByLine;
+    this.routesById = state.routesById;
+    this.agencies = state.agencies;
+    this.variantsByLine = state.variantsByLine;
+    this.variantByShapeId = state.variantByShapeId;
+    this.stopsById = state.stopsById;
+    this.stopSearchIndex = state.stopSearchIndex;
+    this.trips = state.trips;
+    this.tripIndexById = state.tripIndexById;
+    this.tripsByVehicleId = state.tripsByVehicleId;
+    this.tripsByBrigade = state.tripsByBrigade;
+    this.tripsByShape = state.tripsByShape;
+    this.tripStart = state.tripStart;
+    this.tripEnd = state.tripEnd;
+    this.services = state.services;
+    this.stopTimes = state.stopTimes;
+    this.departuresByStop = state.departuresByStop;
+    this.lines = state.lines;
+    this.status.counts = state.counts;
   }
 
   get isReady() {
     return this.status.state === 'ready';
   }
 
-  /** Download the newest archive and rebuild every index. */
-  async refresh() {
-    const previousState = this.status.state;
-    this.status.state = previousState === 'ready' ? 'refreshing' : 'loading';
+  /**
+   * Download the newest archive and rebuild every index, transactionally.
+   *
+   * While a valid snapshot exists the store keeps serving it: `state` stays
+   * 'ready' for the whole run (`isReady` never dips), the candidate is built
+   * and validated in isolation, and only a fully valid candidate is swapped in
+   * and bumps `generation`. Any failure — download, zip, parse, index or
+   * validation — keeps the previous snapshot completely intact, records the
+   * error on `status`, and throws.
+   *
+   * Overlapping calls share a single in-flight refresh rather than racing.
+   */
+  refresh() {
+    if (this.refreshingPromise) return this.refreshingPromise;
+    const run = this.#doRefresh().finally(() => {
+      this.refreshingPromise = null;
+    });
+    this.refreshingPromise = run;
+    return run;
+  }
+
+  async #doRefresh() {
+    // Only the first-ever load is a cold boot; a refresh over a live snapshot
+    // keeps serving it, so `state` must not leave 'ready' and isReady must not
+    // flicker.
+    const hasSnapshot = this.generation > 0;
+    this.status.refreshing = true;
+    if (!hasSnapshot) this.status.state = 'loading';
 
     try {
-      const archive = await downloadGtfs({ validate: assertComplete, prefer: isInForce });
+      const archive = await this.downloader({ validate: assertComplete, prefer: isInForce });
       const startedAt = Date.now();
       await this.build(archive.buffer);
 
       this.status = {
         ...this.status,
         state: 'ready',
+        refreshing: false,
         source: archive.source,
         snapshot: archive.snapshot ?? null,
         fetchedAt: archive.fetchedAt,
@@ -121,6 +214,7 @@ class GtfsStore {
         builtAt: new Date().toISOString(),
         buildMs: Date.now() - startedAt,
         error: null,
+        generation: this.generation,
       };
       logger.info(
         `GTFS ready in ${this.status.buildMs} ms — ${this.status.counts.routes} routes, ` +
@@ -128,8 +222,11 @@ class GtfsStore {
       );
       return this.status;
     } catch (error) {
+      // The candidate never reached #commit, so the previous snapshot — and
+      // every index, typed array and cache entry built from it — is intact.
+      this.status.refreshing = false;
       this.status.error = error.message;
-      this.status.state = previousState === 'ready' ? 'ready' : 'failed';
+      this.status.state = hasSnapshot ? 'ready' : 'failed';
       logger.error('GTFS refresh failed:', error.message);
       throw error;
     }
@@ -137,36 +234,111 @@ class GtfsStore {
 
   /**
    * Build every index from a GTFS zip buffer.
+   *
+   * Parsing, indexing and validation happen against a candidate state that is
+   * completely separate from the live one; the candidate is installed in a
+   * single atomic swap and `generation` bumps only when it is. Any exception —
+   * bad zip, unparseable CSV, an error partway through the shapes or
+   * stop_times pass — leaves the live store untouched.
+   *
    * Kept synchronous-ish and self-contained so it can be unit tested against a
    * small fixture archive.
+   *
+   * @returns {object} the resulting counts (also on `status.counts`)
    */
   async build(buffer) {
-    const zip = new AdmZip(buffer);
-    this.reset();
+    const state = this.#emptyState();
+    const counts = await this.#buildInto(state, buffer);
 
-    this.#buildAgency(zip);
-    const routeIdToLine = this.#buildRoutes(zip);
-    const { representativeTripByShape } = this.#buildTrips(zip, routeIdToLine);
-    this.#buildStops(zip);
-    this.#buildCalendar(zip);
-    const shapePoints = await this.#buildShapes(zip);
-
-    const counts = await this.#buildStopTimes(zip, representativeTripByShape, shapePoints);
+    // The candidate is fully built and valid — swap it in as one block, then
+    // bump the generation so caches keyed on timetable data know to rebuild.
+    this.#commit(state);
     this.generation += 1;
     return counts;
   }
 
-  #buildAgency(zip) {
+  /**
+   * Parse and index `buffer` into `state`. Nothing here reads or mutates the
+   * live store, so a throw at any stage leaves the previous snapshot intact.
+   */
+  async #buildInto(state, buffer) {
+    const startedAt = performance.now();
+
+    // Memory is sampled only at the build boundaries below, never on a timer:
+    // process.memoryUsage() forces a GC when it is called frequently, so a
+    // background sampler would distort exactly what it measures. Each stage
+    // keeps the running peak and the final sample becomes the "latest".
+    const memory = { peak: {}, latest: {} };
+    const sampleMemory = () => {
+      const usage = process.memoryUsage();
+      for (const key of ['rss', 'heapUsed', 'external', 'arrayBuffers']) {
+        const value = usage[key] ?? 0;
+        if (!(key in memory.peak) || value > memory.peak[key]) memory.peak[key] = value;
+        memory.latest[key] = value;
+      }
+    };
+    const stages = {};
+    const stage = (name, fn) => {
+      const { ms, result } = timeSync(fn);
+      stages[name] = ms;
+      sampleMemory();
+      return result;
+    };
+
+    const zip = new AdmZip(buffer);
+    stages.archiveOpen = performance.now() - startedAt;
+    sampleMemory();
+
+    stage('agency', () => this.#buildAgency(state, zip));
+    const routeIdToLine = stage('routes', () => this.#buildRoutes(state, zip));
+    const { representativeTripByShape } = stage('trips', () => this.#buildTrips(state, zip, routeIdToLine));
+    stage('stops', () => this.#buildStops(state, zip));
+    stage('calendar', () => this.#buildCalendar(state, zip));
+
+    const shapesStart = performance.now();
+    const shapePoints = await this.#buildShapes(zip);
+    stages.shapes = performance.now() - shapesStart;
+    sampleMemory();
+
+    const counts = await this.#buildStopTimes(state, zip, representativeTripByShape, shapePoints, stages);
+    sampleMemory();
+
+    stages.total = performance.now() - startedAt;
+
+    const mb = (value) => Number((value / 1e6).toFixed(1));
+    this.performance = {
+      lastBuild: {
+        totalMs: stages.total,
+        stages,
+        latestMemory: {
+          rssMb: mb(memory.latest.rss),
+          heapUsedMb: mb(memory.latest.heapUsed),
+          externalMb: mb(memory.latest.external),
+          arrayBuffersMb: mb(memory.latest.arrayBuffers),
+        },
+        peakMemory: {
+          rssMb: mb(memory.peak.rss),
+          heapUsedMb: mb(memory.peak.heapUsed),
+          externalMb: mb(memory.peak.external),
+          arrayBuffersMb: mb(memory.peak.arrayBuffers),
+        },
+      },
+    };
+
+    return counts;
+  }
+
+  #buildAgency(state, zip) {
     const rows = parseTable(entryBuffer(zip, 'agency.txt') ?? Buffer.from(''));
     for (const row of rows) {
-      this.agencies.set(row.agency_id, {
+      state.agencies.set(row.agency_id, {
         id: row.agency_id,
         name: row.agency_name || null,
       });
     }
   }
 
-  #buildRoutes(zip) {
+  #buildRoutes(state, zip) {
     const rows = parseTable(entryBuffer(zip, 'routes.txt') ?? Buffer.from(''));
     const routeIdToLine = new Map();
 
@@ -177,8 +349,8 @@ class GtfsStore {
 
       // Per-route_id metadata: the live feeds of subcontractor fleets carry
       // route ids, not line names, and operator comes from routes.agency_id.
-      if (!this.routesById.has(row.route_id)) {
-        this.routesById.set(row.route_id, {
+      if (!state.routesById.has(row.route_id)) {
+        state.routesById.set(row.route_id, {
           line,
           agencyId: row.agency_id || null,
           longName: row.route_long_name || null,
@@ -187,12 +359,12 @@ class GtfsStore {
         });
       }
 
-      const existing = this.routesByLine.get(line);
+      const existing = state.routesByLine.get(line);
       if (existing) {
         existing.routeIds.push(row.route_id);
         continue;
       }
-      this.routesByLine.set(line, {
+      state.routesByLine.set(line, {
         line,
         routeIds: [row.route_id],
         longName: row.route_long_name || null,
@@ -202,11 +374,11 @@ class GtfsStore {
       });
     }
 
-    this.lines = categorizeLines([...this.routesByLine.keys()]);
+    state.lines = categorizeLines([...state.routesByLine.keys()]);
     return routeIdToLine;
   }
 
-  #buildTrips(zip, routeIdToLine) {
+  #buildTrips(state, zip, routeIdToLine) {
     const rows = parseTable(entryBuffer(zip, 'trips.txt') ?? Buffer.from(''));
     /** @type {Map<string, number>} shape_id -> index of the trip used to describe it */
     const representativeTripByShape = new Map();
@@ -215,8 +387,8 @@ class GtfsStore {
       const line = routeIdToLine.get(row.route_id);
       if (!line) continue;
 
-      const index = this.trips.length;
-      this.trips.push({
+      const index = state.trips.length;
+      state.trips.push({
         id: row.trip_id,
         line,
         routeId: row.route_id || null,
@@ -231,27 +403,27 @@ class GtfsStore {
         vehicleId: row.vehicle_id || null,
         blockId: row.brigade_id || row.block_id || null,
       });
-      this.tripIndexById.set(row.trip_id, index);
+      state.tripIndexById.set(row.trip_id, index);
 
       if (row.vehicle_id) {
-        const bucket = this.tripsByVehicleId.get(row.vehicle_id);
+        const bucket = state.tripsByVehicleId.get(row.vehicle_id);
         if (bucket) bucket.push(index);
-        else this.tripsByVehicleId.set(row.vehicle_id, [index]);
+        else state.tripsByVehicleId.set(row.vehicle_id, [index]);
       }
       const brigade = row.brigade_id || row.block_id;
       if (brigade) {
-        const bucket = this.tripsByBrigade.get(brigade);
+        const bucket = state.tripsByBrigade.get(brigade);
         if (bucket) bucket.push(index);
-        else this.tripsByBrigade.set(brigade, [index]);
+        else state.tripsByBrigade.set(brigade, [index]);
       }
 
       if (!row.shape_id) continue;
       // Every trip on the shape is kept, not just a count: matching a live
       // vehicle to the run it is on means asking which of today's departures
       // would be here now, and that needs their start times.
-      const siblings = this.tripsByShape.get(row.shape_id);
+      const siblings = state.tripsByShape.get(row.shape_id);
       if (siblings) siblings.push(index);
-      else this.tripsByShape.set(row.shape_id, [index]);
+      else state.tripsByShape.set(row.shape_id, [index]);
 
       if (!representativeTripByShape.has(row.shape_id)) {
         representativeTripByShape.set(row.shape_id, index);
@@ -261,27 +433,32 @@ class GtfsStore {
     return { representativeTripByShape };
   }
 
-  #buildStops(zip) {
+  #buildStops(state, zip) {
     const rows = parseTable(entryBuffer(zip, 'stops.txt') ?? Buffer.from(''));
     for (const row of rows) {
       const lat = Number.parseFloat(row.stop_lat);
       const lon = Number.parseFloat(row.stop_lon);
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-      this.stopsById.set(row.stop_id, {
+      const stop = {
         id: row.stop_id,
         code: row.stop_code || null,
         name: row.stop_name || '',
         lat,
         lon,
-      });
+      };
+      state.stopsById.set(row.stop_id, stop);
+      // Folded once here, at load time, so a search never re-normalizes the
+      // whole feed. Kept off the stop object itself (which travels through the
+      // API) and in a parallel entry instead.
+      state.stopSearchIndex.push({ stop, normalized: normalizeSearchText(stop.name) });
     }
   }
 
-  #buildCalendar(zip) {
+  #buildCalendar(state, zip) {
     const calendar = entryBuffer(zip, 'calendar.txt');
     if (calendar) {
       for (const row of parseTable(calendar)) {
-        this.services.set(row.service_id, {
+        state.services.set(row.service_id, {
           days: DAY_KEYS.map((day) => row[day] === '1'),
           start: row.start_date || null,
           end: row.end_date || null,
@@ -295,10 +472,10 @@ class GtfsStore {
     if (!exceptions) return;
 
     for (const row of parseTable(exceptions)) {
-      let service = this.services.get(row.service_id);
+      let service = state.services.get(row.service_id);
       if (!service) {
         service = { days: DAY_KEYS.map(() => false), start: null, end: null, added: new Set(), removed: new Set() };
-        this.services.set(row.service_id, service);
+        state.services.set(row.service_id, service);
       }
       if (row.exception_type === '1') service.added.add(row.date);
       else if (row.exception_type === '2') service.removed.add(row.date);
@@ -372,8 +549,9 @@ class GtfsStore {
     return shapes;
   }
 
-  async #buildStopTimes(zip, representativeTripByShape, shapePoints) {
+  async #buildStopTimes(state, zip, representativeTripByShape, shapePoints, stages) {
     const buffer = entryBuffer(zip, 'stop_times.txt');
+    const startedAt = performance.now();
     /** @type {Map<number, object[]>} trip index -> ordered stops (representatives only) */
     const representativeStops = new Map();
     for (const tripIndex of representativeTripByShape.values()) representativeStops.set(tripIndex, []);
@@ -390,8 +568,8 @@ class GtfsStore {
     // One entry per trip rather than per row: cheap enough to keep for the
     // whole feed, and it is what turns "this vehicle is 40% along the route"
     // into "it is the 08:12 running four minutes late".
-    const tripStart = new Int32Array(this.trips.length).fill(-1);
-    const tripEnd = new Int32Array(this.trips.length).fill(-1);
+    const tripStart = new Int32Array(state.trips.length).fill(-1);
+    const tripEnd = new Int32Array(state.trips.length).fill(-1);
 
     if (buffer) {
       let colTripId;
@@ -408,7 +586,7 @@ class GtfsStore {
           colSequence = columns.get('stop_sequence');
         }
 
-        const tripIndex = this.tripIndexById.get(fields[colTripId]);
+        const tripIndex = state.tripIndexById.get(fields[colTripId]);
         if (tripIndex === undefined) return;
 
         const arrival = timeToSeconds(fields[colArrival]);
@@ -432,7 +610,7 @@ class GtfsStore {
         }
 
         if (!config.gtfs.buildStopIndex) return;
-        if (!this.stopsById.has(fields[colStopId])) return;
+        if (!state.stopsById.has(fields[colStopId])) return;
 
         tripColumn.push(tripIndex);
         arrivalColumn.push(arrival);
@@ -447,18 +625,18 @@ class GtfsStore {
       });
     }
 
-    this.stopTimes = {
+    state.stopTimes = {
       trip: tripColumn.toArray(),
       arrival: arrivalColumn.toArray(),
       departure: departureColumn.toArray(),
     };
-    this.tripStart = tripStart;
-    this.tripEnd = tripEnd;
+    state.tripStart = tripStart;
+    state.tripEnd = tripEnd;
 
     for (const [stopId, bucket] of rowsByStop) {
-      this.departuresByStop.set(
+      state.departuresByStop.set(
         stopId,
-        bucket.takeSorted((a, b) => this.stopTimes.departure[a] - this.stopTimes.departure[b]),
+        bucket.takeSorted((a, b) => state.stopTimes.departure[a] - state.stopTimes.departure[b]),
       );
     }
 
@@ -471,23 +649,27 @@ class GtfsStore {
     arrivalColumn.buffer = new Int32Array(0);
     departureColumn.buffer = new Int32Array(0);
 
-    this.#buildVariants(representativeTripByShape, representativeStops, shapePoints);
+    const variantsStart = performance.now();
+    this.#buildVariants(state, representativeTripByShape, representativeStops, shapePoints);
+    stages.variants = performance.now() - variantsStart;
+    // The parse, per-stop index and cleanup above, without the variants pass.
+    stages.stopTimes = variantsStart - startedAt;
 
-    this.status.counts = {
-      routes: this.routesByLine.size,
-      variants: [...this.variantsByLine.values()].reduce((total, list) => total + list.length, 0),
-      stops: this.stopsById.size,
-      trips: this.trips.length,
-      stopTimes: this.stopTimes.trip.length,
+    state.counts = {
+      routes: state.routesByLine.size,
+      variants: [...state.variantsByLine.values()].reduce((total, list) => total + list.length, 0),
+      stops: state.stopsById.size,
+      trips: state.trips.length,
+      stopTimes: state.stopTimes.trip.length,
       shapes: shapePoints.size,
     };
 
-    return this.status.counts;
+    return state.counts;
   }
 
-  #buildVariants(representativeTripByShape, representativeStops, shapePoints) {
+  #buildVariants(state, representativeTripByShape, representativeStops, shapePoints) {
     for (const [shapeId, tripIndex] of representativeTripByShape) {
-      const trip = this.trips[tripIndex];
+      const trip = state.trips[tripIndex];
       const points = shapePoints.get(shapeId);
       if (!points || points.length < 4) continue;
 
@@ -495,7 +677,7 @@ class GtfsStore {
       // Offsets are measured from the moment the trip leaves its first stop, so
       // they hold for every run of the shape rather than only the one sampled
       // here — that is what lets a live vehicle be timed against any departure.
-      const base = this.tripStart[tripIndex] >= 0 ? this.tripStart[tripIndex] : null;
+      const base = state.tripStart[tripIndex] >= 0 ? state.tripStart[tripIndex] : null;
 
       // Stops are projected onto the shape in order, each search starting where
       // the previous stop landed. A route that passes the same street twice
@@ -505,7 +687,7 @@ class GtfsStore {
       const stops = (representativeStops.get(tripIndex) ?? [])
         .sort((a, b) => a.sequence - b.sequence)
         .map((entry) => {
-          const stop = this.stopsById.get(entry.stopId);
+          const stop = state.stopsById.get(entry.stopId);
           if (!stop) return null;
 
           const projection = projectToPolyline(stop.lat, stop.lon, points, {
@@ -535,7 +717,7 @@ class GtfsStore {
       const first = stops[0]?.name ?? '';
       const last = stops[stops.length - 1]?.name ?? '';
 
-      const tripIndices = this.tripsByShape.get(shapeId) ?? [tripIndex];
+      const tripIndices = state.tripsByShape.get(shapeId) ?? [tripIndex];
 
       const variant = {
         shapeId,
@@ -550,21 +732,21 @@ class GtfsStore {
         // Sorted so the runs of this shape can be walked in departure order.
         trips: Int32Array.from(
           tripIndices
-            .filter((index) => this.tripStart[index] >= 0)
-            .sort((a, b) => this.tripStart[a] - this.tripStart[b]),
+            .filter((index) => state.tripStart[index] >= 0)
+            .sort((a, b) => state.tripStart[a] - state.tripStart[b]),
         ),
         stops,
         bounds: boundsOf(points),
       };
 
-      const existing = this.variantsByLine.get(trip.line);
+      const existing = state.variantsByLine.get(trip.line);
       if (existing) existing.push(variant);
-      else this.variantsByLine.set(trip.line, [variant]);
-      this.variantByShapeId.set(shapeId, variant);
+      else state.variantsByLine.set(trip.line, [variant]);
+      state.variantByShapeId.set(shapeId, variant);
     }
 
     // Most used variant first — that is the one riders recognise as "the" route.
-    for (const variants of this.variantsByLine.values()) {
+    for (const variants of state.variantsByLine.values()) {
       variants.sort((a, b) => b.tripCount - a.tripCount);
     }
   }
@@ -681,22 +863,32 @@ class GtfsStore {
     return found.sort((a, b) => a.distance - b.distance).slice(0, limit);
   }
 
-  /** Case/diacritic-insensitive stop search, ranked by prefix match. */
+  /** Case/diacritic-insensitive stop search, ranked by match quality. */
   searchStops(query, limit = 20) {
-    const needle = query.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+    const needle = normalizeSearchText(query);
     if (!needle) return [];
 
+    // Every stop is examined — a few thousand entries is a cheap scan, and the
+    // ranking below must not depend on where a stop sits in insertion order
+    // (an early break on "enough matches" used to drop exact and prefix hits
+    // that happened to be indexed late).
     const results = [];
-    for (const stop of this.stopsById.values()) {
-      const haystack = stop.name.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
-      const position = haystack.indexOf(needle);
-      if (position === -1) continue;
-      results.push({ stop, rank: position });
-      if (results.length > limit * 10) break;
+    for (const entry of this.stopSearchIndex) {
+      const rank = matchRank(entry.normalized, needle);
+      if (rank === -1) continue;
+      results.push({ stop: entry.stop, rank });
     }
 
     return results
-      .sort((a, b) => a.rank - b.rank || a.stop.name.localeCompare(b.stop.name, 'pl'))
+      .sort((a, b) => {
+        const nameOf = (entry) => entry.stop.name;
+        return (
+          a.rank - b.rank ||
+          nameOf(a).length - nameOf(b).length ||
+          nameOf(a).localeCompare(nameOf(b), 'pl') ||
+          a.stop.id.localeCompare(b.stop.id)
+        );
+      })
       .slice(0, limit)
       .map((entry) => entry.stop);
   }
