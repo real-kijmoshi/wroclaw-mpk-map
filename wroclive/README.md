@@ -40,27 +40,37 @@ with detents on iOS, a modal elsewhere — not places you navigate to.
 | Path | |
 | --- | --- |
 | `src/lib/api.ts` | Every request to the server, and the validation of every reply |
-| `src/lib/map-html.ts` | The OpenStreetMap surface — a Leaflet page rendered in a WebView |
+| `src/lib/map-html.ts` | The Leaflet page behind the web/OSM surface, with its message bridge |
 | `src/lib/lines.ts` | Line colours and category labels |
 | `src/lib/selection.ts` | The line filter, persisted across launches |
 | `src/lib/preferences.ts` | Settings, persisted the same way |
-| `src/components/map-view.tsx` | Android `react-native-maps` surface |
-| `src/components/map-view.ios.tsx` | Picks Apple Maps or the safe Leaflet fallback on iOS |
-| `src/components/map-view.web.tsx` | Picks the Leaflet surface for browsers |
-| `src/components/native-map.tsx` | Native markers, route polylines, MapKit/Google camera |
+| `src/components/map-view.tsx` | Android surface: `react-native-maps` (Google Maps) |
+| `src/components/map-view.ios.tsx` | iOS surface: `react-native-maps` (MapKit) |
+| `src/components/map-view.web.tsx` | Web surface: the Leaflet page |
+| `src/components/native-map.tsx` | The `react-native-maps` renderer used by both native platforms |
+| `src/components/apple-map.ios.tsx` | `expo-maps` MapKit surface — **not wired into the live screen**; kept behind a runtime check for a future switch (`apple-map.tsx` is the stub elsewhere) |
 | `src/components/osm-map.tsx` | The Leaflet page used by the web build |
-| `src/components/live-map.tsx` | Hosts that page and bridges it to React (`.web.tsx` uses an iframe) |
+| `src/components/live-map.tsx` | Hosts that page in a `WebView` and bridges it to React (`.web.tsx` uses an iframe) |
 | `src/app/` | The map, and the three popups over it |
 
 ## Which map you get
 
-Android uses `react-native-maps` with Google Maps. iOS uses Expo's Apple Maps
-surface in a development or release build, avoiding the red MapKit rendering
-artifact from `react-native-maps`; Expo Go falls back to the Leaflet map because
-it does not contain `expo-maps`.
+`MapView` in `src/app/index.tsx` resolves to `map-view.tsx` on Android,
+`map-view.ios.tsx` on iOS and `map-view.web.tsx` on web. The first two render
+`native-map.tsx`, the same `react-native-maps` surface on both platforms (Google
+Maps on Android, MapKit on iOS) — `react-native-maps` is included in Expo Go, so
+this is the live screen in Expo Go and in builds. The web build gets the Leaflet
+page (`map-html.ts`) in an iframe instead, because `react-native-maps` has no web
+implementation.
 
-The OpenStreetMap preference uses a native `UrlTile` layer on Android and
-Leaflet on iOS and web.
+The OpenStreetMap preference replaces the native tiles with a `UrlTile` layer on
+Android and iOS, and is what the Leaflet page uses on web.
+
+An `expo-maps` MapKit surface (`apple-map.ios.tsx`) is in the tree but is not
+wired into the screen. `expo-maps` is alpha and is *not* in Expo Go, so that
+component stays behind its `appleMapsAvailable` runtime check
+(`requireOptionalNativeModule('ExpoMaps')`) and a guarded `require` — a plain
+import crashes the bundle.
 
 ## Things that will bite you
 

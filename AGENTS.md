@@ -1,14 +1,22 @@
 # AGENTS.md
 
-Context for Codex working in this repo. Read this before changing anything.
+Context for coding agents working in this repo. Read this before changing anything.
+
+The authoritative operating guide lives here and in
+[`wroclive/AGENTS.md`](wroclive/AGENTS.md) — that file carries the app-specific
+rules (Expo SDK 57, the map surfaces, the WebView bridge). This file carries the
+repo-wide invariants, which are historical bugs re-stated as rules.
 
 ## What this is
 
 Live map of Wrocław's trams and buses. Two halves:
 
 - `server/` — Express (CommonJS, Node ≥ 22). Discovers and ingests the city's
-  GTFS feed, polls MPK for vehicle positions, scrapes service notices.
-- `app/` — Expo SDK 57 (React Native 0.86, React 19.2). iOS + Android.
+  GTFS feed, polls MPK for vehicle positions, scrapes service notices. Also
+  serves the browser map at `/map` (`server/views/map.html`).
+- `wroclive/` — the mobile app: Expo SDK 57 (React Native 0.86, React 19.2),
+  iOS + Android + web. This directory was previously called `app/`; the
+  migration is complete, so there is no `app/` directory anymore.
 
 ## Commands
 
@@ -22,18 +30,24 @@ npm start           # first boot takes 30–60s (feed discovery + ingest)
 curl localhost:3000/health   # says what actually loaded
 
 # app
-cd app && npm install
+cd wroclive && npm install
+npm run lint
+npm run typecheck   # tsc --noEmit
+npx expo export --platform web --output-dir dist   # real compile + preview build
 npx expo start
 npx expo-doctor              # run after any dependency change
 npx expo install --fix       # pins expo-* to the SDK
 ```
 
 Tests must pass before you commit. They are fast and need no network — there is
-no excuse for skipping them.
+no excuse for skipping them. CI runs the same commands (see
+`.github/workflows/ci.yml`).
 
 ## Invariants
 
 These are not style preferences. Each one is a bug that already happened.
+Server-only rules are unchanged from the original client; app rules name the
+current `wroclive/` paths and say explicitly when the story is historical.
 
 **1. Never hardcode a GTFS download URL.**
 Resolution lives in `server/src/gtfs/catalogue.js`: the CUI data API
@@ -89,31 +103,36 @@ validation inside that loop.
 For up to a minute after boot, `/lines` and friends return `{error, state}` with
 status 503 and a `Retry-After` header. The app once parsed that as data and set
 it as the line list, which crashed the picker on every cold start. **Every** app
-request goes through `apiGet()` in `app/api.js`, which retries 503 with backoff;
-`normaliseLines()` validates the payload before it reaches state. Do not call
-`fetch` directly in a component.
+request goes through `apiGet()` in `wroclive/src/lib/api.ts`, which retries 503
+with backoff; the `normalise*` functions validate every payload before it
+reaches state. Do not call `fetch` directly in a component.
 
 **8. Shape points have changed format twice.**
 GTFS column names (`shape_pt_lat`) → `{lat, lon}` → compact `[lat, lon]` pairs.
 When the server switched the first time, the map kept reading the old names,
-every coordinate parsed as `NaN`, the filter dropped them all, and `<Polyline>`
-silently rendered nothing. `toCoordinates()` accepts all three — if you change
-the wire format again, change it there and nowhere else.
+every coordinate parsed as `NaN`, the filter dropped them all, and the route
+silently stopped rendering. *Historical:* the old client normalised all three in
+one place. *Current:* the server owns the conversion — `/shapes/:line` with
+`?format=compact` emits `[lat, lon]` pairs and `normaliseShape()` in
+`wroclive/src/lib/api.ts` reads exactly those (it rejects anything else). The
+app always requests `?format=compact`; if the wire format ever changes again,
+`normaliseShape()` is the single reader.
 
 **9. `/shapes/:line` stays backwards compatible.**
 It returns the verbose legacy payload by default and the compact one only for
 `?format=compact`, so app builds already on people's phones keep working after
-a server deploy.
+a server deploy. The current app (`wroclive`) requests the compact form.
 
 **10. Amber is for countdowns.**
-`color.amber` in `app/theme.js` is reserved for departure minutes. It is the one
-loud colour in the app and it works because nothing else competes for it. If you
-need emphasis elsewhere, use weight or spacing.
+`theme.amber` in `wroclive/src/constants/theme.ts` is reserved for departure
+minutes. It is the one loud colour in the app and it works because nothing else
+competes for it. If you need emphasis elsewhere, use weight or spacing.
 
 **11. Line colours must clear 4.5:1 on white.**
 The original palette put white text on `#F8E71C` at roughly 1.4:1 — illegible in
 the sunlight you are standing in at a stop. Check any new value before adding it
-to `lineColor`.
+to `LINE_COLOR` in `wroclive/src/lib/lines.ts`, which stays in step with
+`LINE_COLOR` in `server/views/map.html` (invariant 19).
 
 **12. `npm test` uses an unquoted glob on purpose.**
 `node --test test/*.test.js`. The runner only expands globs itself from Node 22;
@@ -124,32 +143,34 @@ anything older. Let the shell expand it.
 `stopBackgroundWork()` exists because the cron task keeps the event loop alive,
 so `test/boot.test.js` hung forever without it.
 
-**14. Do not reintroduce `react-native-maps` (or `react-native-map-clustering`,
-which pins an old copy of it).**
-`react-native-maps` is native-only — it needs a custom dev-client build, which
-Expo Go does not run. Scanning into plain Expo Go showed no map at all, no
-crash, nothing in the console: the JS still ran and fetched `/locations`
-fine, the native module just was not there to render into. The map is a
-WebView showing plain HTML (Leaflet) instead — `app/components/mapHtml.js` —
-which is why Expo Go works again. `react-native-map-clustering` has not been
-published since 2021 on top of that.
+**14. `react-native-maps` is the current native map — this invariant is history.**
+The old `app/` client avoided `react-native-maps` because its Expo Go build
+rendered no map, and the whole client was a Leaflet page in a WebView. That
+ruling does not carry over. Per the SDK 57 docs, `react-native-maps` is
+**included in Expo Go**, and `wroclive/` uses it as its native surface on both
+iOS and Android (`src/components/native-map.tsx`, picked by `map-view.tsx` and
+`map-view.ios.tsx`). `expo-maps` (SDK 57, alpha) is installed and provides the
+`apple-map.ios.tsx` MapKit surface, but that component is **not wired into the
+live screen** — it exists for a future switch and must stay behind its
+`appleMapsAvailable` runtime check (`requireOptionalNativeModule('ExpoMaps')`),
+because `expo-maps` is *not* in Expo Go and importing it unconditionally crashes
+the bundle at module scope. The Leaflet page (`wroclive/src/lib/map-html.ts`)
+now belongs to the web build and to nothing else. Do not reintroduce the old
+"react-native-maps must never be used" rule.
 
 **15. Do not declare capabilities the app does not use.**
-`expo-notifications` was in the config with an iOS usage string and no code
-behind it. An unused permission is an App Review question you cannot answer.
+*Historical:* `expo-notifications` was in the old app's config with an iOS usage
+string and no code behind it. An unused permission is an App Review question you
+cannot answer. Still true today: every permission in `wroclive/app.json` maps to
+real code (`expo-location` for the locate button and nearby stops).
 
-**16. `expo-updates` and `expo-dev-client` have no imports, and are not dead
-weight.**
-Invariant 15 does not reach them: both are wired up through config rather than
-code, so a grep for imports finds nothing and they look removable. `eas.json`
-names a `channel` on the preview and production profiles, and `app.config.js`
-carries the matching `updates.url` and `runtimeVersion` — without
-`expo-updates` installed, `eas build` warns that the channel does nothing and
-then errors with `You need to be on SDK 46 or higher, and use expo-updates >=
-0.14.4 to use appVersion runtime policy`. The development profile sets
-`developmentClient: true`, which needs `expo-dev-client` for the same reason.
-Both are pinned by `expo install`, so bump them with `npx expo install --fix`
-and not by hand.
+**16. `expo-updates` and `expo-dev-client` — historical, not applicable.**
+The old app wired both through config (an `eas.json` channel, `app.config.js`
+`updates.url`) rather than imports, so a grep found no imports and they looked
+removable; removing them broke `eas build`. The `wroclive/` app has neither
+dependency. The lesson that survives: a dependency wired through config rather
+than imports is not dead weight — check `app.json` plugins and `eas.json`
+before deleting one.
 
 **17. A vehicle's direction cannot be decided by distance alone.**
 Both directions of a line run down the same street, and a tram line runs on
@@ -158,7 +179,8 @@ decided by GPS noise, and half the time it is the one going the other way. That
 is not a cosmetic error: it announces the opposite terminus and a stop list the
 vehicle will never reach. The heading is folded into the score
 (`HEADING_PENALTY_METERS` in `server/src/gtfs/store.js`), which is why
-`/shapes/:line` takes `?heading=` and why both the app and `views/map.html` send
+`/shapes/:line` takes `?heading=` and why both the app
+(`wroclive/src/app/index.tsx` sends it in `getShape`) and `views/map.html` send
 it. The penalty is graded by the cosine of the angle rather than a cutoff at
 90°, because a heading is noisy and a hard threshold flips the answer on a bend.
 
@@ -182,24 +204,26 @@ happens to be one file with no build step. It has already reproduced two bugs
 from this list on its own: it kept the pre-2026 rainbow palette long after
 invariant 11 retired it (white on `#F8E71C`, about 1.4:1), and it parsed the
 boot-time 503 as data the way invariant 7 describes, rendering categories out
-of `{error, state}`. When you change `lineColor` in `app/theme.js`, change
-`LINE_COLOR` here; when a payload shape changes, check both readers. It also
-stops click propagation on its own markers by hand — without that a tap on a
+of `{error, state}`. When you change `LINE_COLOR` in `wroclive/src/lib/lines.ts`,
+change `LINE_COLOR` here; when a payload shape changes, check both readers. It
+also stops click propagation on its own markers by hand — without that a tap on a
 stop reaches the map's click handler, which clears the very route the stop
 belongs to.
 
-**20. `views/map.html` moves its markers; it does not rebuild them.**
+**20. Maps move their markers; they do not rebuild them.**
 The browser map used to clear the marker layer and recreate every vehicle on
 each ten-second poll. The whole fleet blinked, anything open closed, and the
 selection was lost — and it costs more than moving the markers that are already
-there. `renderVehicles()` keeps a `Map` of id → marker, moves what moved, and
-only touches the icon when the look actually changes (heading is bucketed to
-15°, or a marker redraws on every degree of GPS jitter). Everything reaching
-`innerHTML` goes through `escapeHtml()`, because line and stop names come from
-upstream feeds. `app/components/mapHtml.js` is the same page rendered inside
-the mobile app's WebView and deliberately mirrors this logic rather than
-reimplementing it — `setVehicles()` there is `renderVehicles()` by another
-name, same `Map`-of-markers, same 15° bucketing.
+there. `renderVehicles()` in `server/views/map.html` keeps a `Map` of id →
+marker, moves what moved, and only touches the icon when the look actually
+changes (heading is bucketed to 15°, or a marker redraws on every degree of GPS
+jitter). Everything reaching `innerHTML` goes through `escapeHtml()`, because
+line and stop names come from upstream feeds. The app's Leaflet page
+(`wroclive/src/lib/map-html.ts`, `setVehicles()`) deliberately mirrors this
+logic rather than reimplementing it — same `Map`-of-markers, same 15° bucketing.
+The native surface (`wroclive/src/components/native-map.tsx`) keeps the same
+cost model: custom markers freeze `tracksViewChanges` and re-enable it only
+while an appearance change is being re-captured.
 
 ## Fragile by nature
 
@@ -310,50 +334,45 @@ live on a notice reading "(11 - 16 lipca)": the single-day pattern matched only
 - **Do not gate PRs on third-party uptime.** Any job that reaches out to MPK or
   the city portal belongs on a schedule that opens an issue, not on a merge gate.
   US-based runners plus a municipal WAF will block merges for reasons unrelated
-  to the diff.
+  to the diff. The scheduled `upstream-watch` workflow is where the doctor runs;
+  `ci.yml` stays offline.
 - **Prefer failing soft on upstream, loudly on our own bugs.** A stale feed
   should keep serving the last good data and say so in `/health`. A programming
   error should throw.
 - Keep the app's Polish copy in Polish, sentence case, no filler.
+- The app's own operating rules (SDK 57, map surfaces, WebView bridge, state
+  flow) are in [`wroclive/AGENTS.md`](wroclive/AGENTS.md). Read it before
+  touching `wroclive/src`.
 
 ## Previewing the app without a device
 
-`react-native-webview` has no web build target, so `app/metro.config.js` swaps
-it for `app/.preview/webview-stub.js` **on web only**. Unlike the old
-`react-native-maps` stub this is not a fake: the map itself is plain HTML
-(`app/components/mapHtml.js`, Leaflet), so a browser can render it for real
-inside an `<iframe>`. The stub only replaces the native WebView *host* —
-`injectJavaScript` and `onMessage` are bridged over `window.postMessage`
-instead of the native channel. `npx expo export --platform web` is therefore
-both a real compile check and an actual working preview of the map, not just
-everything around it. If you change the native ↔ web message shape in
-`MapView.jsx` or `mapHtml.js`, keep both sides of the bridge (the stub's
-`postMessage` relay and `mapHtml.js`'s own `window.addEventListener('message')`
-fallback) in step, or the preview goes silent where the app still works.
-
-The page the bundle is rendered into is `app/public/index.html`, which Expo's
-metro web bundler picks up as the HTML template (it injects the favicon and the
-script tag into it). It is where `viewport-fit=cover` lives, and that one
-attribute is what makes `env(safe-area-inset-*)` — and therefore every
-`useSafeAreaInsets()` value in the web build — anything other than zero.
+The map is plain HTML, so the web build is a real preview of the map — the same
+Leaflet page the phone's WebView loads, rendered in an `<iframe>` instead.
+`react-native-webview` has no web target, which is fine: `live-map.web.tsx`
+bridges the page over `window.postMessage` where the native `live-map.tsx` uses
+`injectJavaScript`/`onMessage`. Keep both sides of the bridge in step — the
+`postMessage` relay in `live-map.web.tsx`, the iframe's
+`window.addEventListener('message')` fallback, and the `window.__wroclive`
+handler in `map-html.ts` — or the preview goes silent where the app still works.
+There is no `metro.config.js` stub and no `public/` template in `wroclive/`;
+`viewport-fit=cover` lives in the generated page itself (`map-html.ts`).
 
 ```bash
-cd app && API_URL=http://localhost:3000 npx expo export --platform web --output-dir /tmp/web
+cd wroclive && EXPO_PUBLIC_API_URL=http://localhost:3000 npx expo export --platform web --output-dir /tmp/web
 python3 -m http.server 4620 --directory /tmp/web
 ```
 
-The map itself renders for real, vehicles included — it is the same HTML page
-the phone would load, in an iframe instead of a native WebView.
+`npx expo export --platform web` is both a real compile check (every import
+resolves) and a working preview, which is why CI runs it.
 
 ## Open work
 
-- Nothing here has been run against the real MPK or city endpoints — the sandbox
-  this was built in blocks them. `npm run doctor` from a normal network is the
-  first thing to do, and it will say which sources answer.
 - The app has not been run on a simulator or device. `npx expo start` is the real
   check — especially the font load and the departures sheet's clearance above the
   tab bar.
 - Production still runs the pre-2026 server and has never been redeployed.
-- Before store submission: backend on HTTPS with a real hostname, `API_URL` set
-  in the EAS production profile, privacy policy URL, Play Data Safety and Apple
-  privacy labels.
+- Before store submission: backend on HTTPS with a real hostname,
+  `EXPO_PUBLIC_API_URL` set in the EAS production profile, privacy policy URL,
+  Play Data Safety and Apple privacy labels. Note `react-native-maps` with
+  Google Maps on Android needs a Maps SDK API key and the `react-native-maps`
+  config plugin before a store build (SDK 57 docs).

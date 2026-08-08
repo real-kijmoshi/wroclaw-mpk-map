@@ -91,7 +91,8 @@
   },
 
   "cache": {
-    "shapeEntries": 200
+    "shapeEntries": 200,
+    "vehicleDetailEntries": 512
   },
 
   "admin": {

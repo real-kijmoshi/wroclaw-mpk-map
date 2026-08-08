@@ -11,9 +11,7 @@ export type { MapSurfaceHandle, MapSurfaceProps, MapRoute } from './map-surface.
  * The rider's provider preference is handled inside the surface: Google Maps
  * is the default and the OSM option replaces its tiles.
  *
- * iOS and web resolve their platform files instead. iOS deliberately avoids
- * react-native-maps because its MapKit renderer can show the red rendering
- * artifact seen in development runtimes.
+ * iOS and web resolve their platform files instead.
  */
 export const MapView = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function MapView(props, ref) {
   return <NativeMap ref={ref} {...props} />;

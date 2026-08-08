@@ -209,4 +209,19 @@ describe('VehicleTracker against a stand-in endpoint', () => {
     assert.equal(tracker.snapshot.locations[0].trip, null);
     assert.equal(tracker.status.described, 0);
   });
+
+  it('answers getVehicle in O(1) from the current snapshot only', async () => {
+    let lat = 51.11;
+    const tracker = await trackerFor(() => [{ name: '4', type: 'tram', x: lat, y: 17.03, k: 5 }]);
+
+    assert.equal(tracker.getVehicle('4-5'), null, 'nothing before the first poll');
+
+    await tracker.poll();
+    assert.equal(tracker.getVehicle('4-5').id, '4-5');
+    assert.equal(tracker.getVehicle('4-nope'), null);
+
+    lat += 0.01;
+    await tracker.poll();
+    assert.equal(tracker.getVehicle('4-5').lat, lat, 'the id map is rebuilt every poll');
+  });
 });

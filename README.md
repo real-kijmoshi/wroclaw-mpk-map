@@ -19,15 +19,19 @@ scraped from public city and MPK pages.
 ```bash
 # API
 cd server
-npm install
+npm ci
 npm run doctor   # confirms MPK and the city portal are answering right now
 npm start        # http://localhost:3000
 
 # App (in another terminal)
-cd app
-npm install
-API_URL=http://localhost:3000 npm start
+cd wroclive
+npm ci
+npx expo start
 ```
+
+The app finds the API by itself: in development it uses the machine that served
+the bundle, on port 3000, so a phone on the same Wi-Fi works with no edits.
+Point it somewhere else with `EXPO_PUBLIC_API_URL` (see `wroclive/README.md`).
 
 Open <http://localhost:3000/map> for a browser map and <http://localhost:3000/status> for a
 dashboard showing which upstream sources are live.
@@ -99,11 +103,6 @@ people's phones keep working; `?format=compact` is what the current app requests
 ## Repository layout
 
 ```
-app/                 Expo app (SDK 57, React Native 0.86)
-  api.js             API client — retries the server's 503 cold start, validates payloads
-  theme.js           Design tokens; amber is reserved for departure countdowns
-  components/        Map, departures and vehicle sheets, line badge, status pill
-  modals/            Line picker, alerts, settings
 server/
   index.js           Entry point: starts HTTP first, loads data in the background
   src/config.js      Every tunable and upstream source
@@ -116,6 +115,13 @@ server/
   src/routes.js      HTTP endpoints
   scripts/doctor.js  Upstream connectivity check
   test/              Unit and HTTP tests, no network required
+wroclive/            Expo app (SDK 57, React Native 0.86, React 19.2) — iOS + Android + web
+  src/app/           expo-router screens: the map, plus lines, alerts, settings
+  src/lib/api.ts     The only app→server path — retries the 503 cold start, validates payloads
+  src/lib/map-html.ts   The Leaflet map page (web build), mirroring server/views/map.html
+  src/lib/lines.ts   Line colours (kept in step with the browser map) and category labels
+  src/components/    Map surfaces, vehicle and stop sheets, line badge, glass chrome
+  README.md          App-specific operating notes
 landing/             Static Polish landing page (index.html + screenshots)
   map.html           The same browser map as /map, statically served; the API
                      defaults to api.wroclive.kijmoshi.xyz (localhost:3000 on
@@ -129,13 +135,18 @@ cd server
 npm test       # unit + HTTP integration tests against an in-memory GTFS fixture
 npm run lint
 npm run dev    # restarts on change
+
+cd wroclive
+npm run lint
+npm run typecheck
+npx expo export --platform web --output-dir dist   # compile check + browser preview
 ```
 
 Tests build a small GTFS archive in memory, so they run offline and in CI.
 
-`CLAUDE.md` at the repo root documents the invariants — each one is written as a rule
-because it is a bug that already happened. Read it before changing the feed, the wire
-format or the app's data flow.
+`AGENTS.md` at the repo root documents the invariants — each one is written as a rule
+because it is a bug that already happened. Read it (and `wroclive/AGENTS.md` before
+touching the app) before changing the feed, the wire format or the app's data flow.
 
 ## Deploying
 
@@ -155,11 +166,12 @@ See [`server/.env.example`](server/.env.example) for every setting.
 
 ## Publishing the app
 
-`app/app.config.js` holds the store metadata; the API URL comes from `API_URL` at build
-time (set per profile in `app/eas.json`), so no plain-HTTP address ships in the bundle.
+`wroclive/app.json` holds the store metadata; the API URL comes from
+`EXPO_PUBLIC_API_URL` at build time (set per profile in `wroclive/eas.json`), so no
+plain-HTTP address ships in the bundle.
 
 ```bash
-cd app
+cd wroclive
 npx expo-doctor                                    # config and dependency check
 eas build --platform android --profile production
 eas submit --platform android
@@ -169,14 +181,17 @@ The Android build runs unattended. The **first** iOS build must be run from a re
 terminal — EAS creates the distribution certificate by signing in to Apple and cannot
 prompt for that in CI, which surfaces as `Credentials are not set up. Run this command
 again in interactive mode.` See
-[`app/README.md`](app/README.md#signing-credentials) for the one-time setup.
+[`wroclive/README.md`](wroclive/README.md) for app-specific notes.
 
 Before the first submission you still need to, outside this repo:
 
 - create the Play Console and App Store Connect listings,
 - provide a privacy policy URL (the app collects nothing; location stays on the device),
 - upload screenshots and a feature graphic,
-- point `API_URL` in `eas.json` at your deployed API.
+- point `EXPO_PUBLIC_API_URL` in `eas.json` at your deployed API.
+- on Android, register a Google Maps SDK key and wire the `react-native-maps` config
+  plugin (`wroclive/app.json`), since a store build cannot use the API key Expo Go
+  carries.
 
 ## Data sources
 

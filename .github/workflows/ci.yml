@@ -33,12 +33,12 @@ jobs:
       - run: npm run lint
       - run: npm test
 
-  app:
-    name: Mobile app
+  wroclive:
+    name: Mobile app (wroclive)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: app
+        working-directory: wroclive
     steps:
       - uses: actions/checkout@v4
 
@@ -46,9 +46,11 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: app/package-lock.json
+          cache-dependency-path: wroclive/package-lock.json
 
       - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
 
       # Bundling for web exercises every import and the Expo config without
       # needing an Android or iOS toolchain.

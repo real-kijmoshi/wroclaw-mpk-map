@@ -165,3 +165,127 @@ describe('summarise', () => {
     assert.equal(summarise(null), null);
   });
 });
+
+/**
+ * The fast path re-projects a vehicle only around where it was last seen. The
+ * rule is that it must never be *more* wrong than the full matcher: whenever
+ * it accepts, its answer has to be identical to the full match; whenever it
+ * cannot be sure, it hands back and the full match runs.
+ */
+describe('describeVehicle fast path', () => {
+  const gtfs = new GtfsStore();
+
+  // 2026-06-15 is a Monday, so the fixture's WEEKDAY services run.
+  const at = (time) => new Date(`2026-06-15T${time}+02:00`);
+
+  before(async () => {
+    await gtfs.build(buildFixtureZip());
+    gtfs.status.state = 'ready';
+  });
+
+  const json = (described) => JSON.stringify(described);
+
+  // Where the fixture's s4a runs Rynek → Świdnicka → Oporów: a point on the
+  // long straight between Świdnicka and Oporów.
+  const p1 = { line: '4', lat: 51.1, lon: 17.0215, heading: 250 };
+  // ~200 m further along the same straight.
+  const p2 = { line: '4', lat: 51.098, lon: 17.018, heading: 250 };
+
+  it('matches the full matcher as a vehicle advances along its route', () => {
+    const first = describeVehicle(gtfs, p1, { now: at('08:07:06') });
+    assert.equal(first.shapeId, 's4a');
+    assert.ok(first.state, 'an on-route match seeds the fast path');
+
+    const fast = describeVehicle(gtfs, p2, { now: at('08:07:06'), previousState: first.state });
+    const full = describeVehicle(gtfs, p2, { now: at('08:07:06') });
+
+    assert.equal(fast.shapeId, 's4a');
+    assert.ok(fast.state);
+    assert.equal(json(fast), json(full), 'the fast answer must be byte-identical to the full match');
+  });
+
+  it('absorbs a few metres of GPS jitter without changing the answer', () => {
+    const first = describeVehicle(gtfs, p1, { now: at('08:07:06') });
+    const wobble = describeVehicle(
+      gtfs,
+      { ...p1, lat: p1.lat + 0.00002, lon: p1.lon + 0.00002 },
+      { now: at('08:07:06') },
+    );
+    const fast = describeVehicle(
+      gtfs,
+      { ...p1, lat: p1.lat + 0.00002, lon: p1.lon + 0.00002 },
+      { now: at('08:07:06'), previousState: first.state },
+    );
+    assert.ok(fast.state);
+    assert.equal(json(fast), json(wobble));
+  });
+
+  it('falls back to the full matcher when the vehicle jumps past the window', () => {
+    const first = describeVehicle(gtfs, p1, { now: at('08:07:06') });
+    // At Oporów, the far end of s4a — far beyond the fast path's forward window.
+    const jumped = { line: '4', lat: 51.081, lon: 16.983, heading: 231 };
+    const fast = describeVehicle(gtfs, jumped, { now: at('08:07:06'), previousState: first.state });
+    const full = describeVehicle(gtfs, jumped, { now: at('08:07:06') });
+    assert.equal(fast.shapeId, 's4a', 'still the same leg, just further on');
+    assert.equal(json(fast), json(full), 'fell back, so it must equal the full match');
+  });
+
+  it('lets a terminus turnaround re-match instead of staying on the old leg', () => {
+    // Arriving at Oporów on the outbound leg seeds the fast path on s4a.
+    const arriving = { line: '4', lat: 51.081, lon: 16.983, heading: 231 };
+    const first = describeVehicle(gtfs, arriving, { now: at('08:14:00') });
+    assert.equal(first.shapeId, 's4a');
+
+    // The same spot, now heading back the other way: the heading penalty must
+    // reject the old leg and let the full matcher pick the return leg.
+    const leaving = { line: '4', lat: 51.081, lon: 16.983, heading: 78 };
+    const fast = describeVehicle(gtfs, leaving, { now: at('10:01:00'), previousState: first.state });
+    const full = describeVehicle(gtfs, leaving, { now: at('10:01:00') });
+    assert.equal(full.shapeId, 's4b');
+    assert.equal(fast.shapeId, 's4b');
+    assert.equal(json(fast), json(full));
+  });
+
+  it('does not carry a match across a line change', () => {
+    const first = describeVehicle(gtfs, p1, { now: at('08:07:06') });
+    // The same corner, but this vehicle is now a 128 — a different shape that
+    // happens to run nearby. The seeded shape must not win by inertia.
+    const swapped = { line: '128', lat: 51.09, lon: 17.031, heading: 180 };
+    const fast = describeVehicle(gtfs, swapped, { now: at('08:07:06'), previousState: first.state });
+    const full = describeVehicle(gtfs, swapped, { now: at('08:07:06') });
+    assert.equal(full.shapeId, 's128');
+    assert.equal(fast.shapeId, 's128');
+    assert.equal(json(fast), json(full));
+  });
+
+  it('gives up and full-matches when the vehicle is off route', () => {
+    const first = describeVehicle(gtfs, p1, { now: at('08:07:06') });
+    const far = { line: '4', lat: 51.2, lon: 17.3 };
+    const fast = describeVehicle(gtfs, far, { now: at('08:07:06'), previousState: first.state });
+    const full = describeVehicle(gtfs, far, { now: at('08:07:06') });
+    assert.equal(fast.onRoute, false);
+    assert.equal(json(fast), json(full));
+    assert.equal(fast.state, undefined, 'an off-route vehicle seeds nothing for the next poll');
+  });
+
+  it('stays anchored on its own direction where the two legs of a line meet', () => {
+    // At Oporów both s4a and s4b pass; with a heading that says "arriving" the
+    // full matcher picks s4a, and the fast path must keep it there rather than
+    // flapping to s4b.
+    const arriving = { line: '4', lat: 51.081, lon: 16.983, heading: 231 };
+    const first = describeVehicle(gtfs, arriving, { now: at('08:14:00') });
+    assert.equal(first.shapeId, 's4a');
+
+    const again = describeVehicle(gtfs, arriving, { now: at('08:14:02'), previousState: first.state });
+    const full = describeVehicle(gtfs, arriving, { now: at('08:14:02') });
+    assert.equal(again.shapeId, 's4a');
+    assert.equal(json(again), json(full));
+  });
+
+  it('keeps the projection state off the wire', () => {
+    const described = describeVehicle(gtfs, p1, { now: at('08:07:06') });
+    assert.ok(described.state);
+    assert.equal(json(described).includes('"state"'), false, 'state must not serialize');
+    assert.equal(Object.keys(described).includes('state'), false, 'state must not enumerate');
+  });
+});
