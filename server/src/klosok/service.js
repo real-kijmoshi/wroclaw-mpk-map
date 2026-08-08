@@ -9,6 +9,42 @@ const { parseRealtime, resolveEnrichment } = require('./realtime');
 
 const OPERATOR = 'PT KŁOSOK';
 
+// Fields read by routes.js toMapVehicle() for Kłosok vehicles — the authoritative
+// set that drives mapRevision. Every field that can appear in
+// /locations?format=map must participate, so adding a field to toMapVehicle
+// means adding it here.
+const KLOSOK_MAP_FIELDS = [
+  'id', 'line', 'type', 'lat', 'lon', 'heading',
+  'positionUpdatedAt', 'source',
+  'operator', 'routeId', 'tripId', 'vehicleLabel',
+  'delaySeconds', 'brigade', 'vehicleNumber',
+  'occupancyStatus', 'occupancyPercentage', 'destination',
+];
+
+// Extra fields present only in the full /locations body (not read by
+// toMapVehicle), so a change to them advances fullRevision without touching
+// mapRevision. `updatedAt` is per-vehicle and recomputed on every poll, so a
+// quiet Kłosok poll advances fullRevision but not mapRevision.
+const KLOSOK_FULL_EXTRA_FIELDS = ['updatedAt', 'currentStopSequence', 'tripHeadsign', 'vehicleId'];
+
+/** @returns {boolean} true when two Kłosok vehicles serialise identically in map format. */
+function mapVehicleEquals(a, b) {
+  for (const f of KLOSOK_MAP_FIELDS) {
+    if ((a?.[f] ?? undefined) !== (b?.[f] ?? undefined)) return false;
+  }
+  if (JSON.stringify(a?.trip ?? null) !== JSON.stringify(b?.trip ?? null)) return false;
+  return true;
+}
+
+/** @returns {boolean} true when two Kłosok vehicles serialise identically in full format. */
+function fullVehicleEquals(a, b) {
+  if (!mapVehicleEquals(a, b)) return false;
+  for (const f of KLOSOK_FULL_EXTRA_FIELDS) {
+    if (JSON.stringify(a?.[f]) !== JSON.stringify(b?.[f])) return false;
+  }
+  return true;
+}
+
 // How far apart a Kłosok bus and a same-line Wrocław bus can be and still be
 // read as the same vehicle by position. Same threshold used when a fresh
 // Open Data record with no identifier match sits near an MPK vehicle.
@@ -20,7 +56,7 @@ const MAX_TIMESTAMP_SKEW_MS = 120_000;
 /** Is `when` recent enough that this vehicle is still being served? */
 const isFresh = (positionUpdatedAt, nowMs) => {
   const timestamp = Date.parse(positionUpdatedAt ?? '');
-  return Number.isFinite(timestamp) && nowMs - timestamp <= config.klosok.maxAgeMs;
+  return Number.isFinite(timestamp) && nowMs - timestamp < config.klosok.maxAgeMs;
 };
 
 /** Wall-clock recency shared by a Kłosok fix and a Wrocław one. */
@@ -59,18 +95,29 @@ class KlosokService {
     this.gtfs = gtfs;
     this.getWroclawLocations = getWroclawLocations;
     this.snapshot = { locations: [], count: 0, lastUpdated: null, stale: false, source: 'klosok-gtfs-rt' };
-    /** Monotonic counter bumped on every poll that replaced the snapshot. */
-    this.revision = 0;
+    /** Monotonic counter bumped on every accepted poll (success or failure). */
+    this.pollRevision = 0;
     /**
-     * Content revision: bumps only when /locations-visible state in the Kłosok
-     * snapshot changes (vehicles added/removed, positions, headings, delays,
-     * stale/live state). Drives the combined-fleet key in /locations.
+     * Map revision: bumps only when /locations?format=map output changes —
+     * vehicle positions, headings, destinations, delays, brigade…
+     * A quiet poll that returned identical positions keeps the same value,
+     * so the map-format body cache and ETag stay valid and the client gets 304.
      */
-    this.snapshotRevision = 0;
+    this.mapRevision = 0;
+    /**
+     * Full revision: like mapRevision but also advances when full-only fields
+     * change — most notably per-vehicle `updatedAt`, which `#enrich` recomputes
+     * on every poll. A quiet Kłosok poll therefore advances fullRevision but
+     * not mapRevision, matching the quiet-poll contract: /locations answers 200
+     * with a new ETag, /locations?format=map answers 304.
+     */
+    this.fullRevision = 0;
     /** @type {Map<string, object>} last parsed trip updates, startDate|tripId -> update */
     this.tripUpdates = new Map();
     this.timer = null;
     this.started = false;
+    /** True after stop() so an in-flight poll never re-arms its timer. */
+    this._stopped = false;
     this.status = {
       enabled: config.klosok.enabled,
       state: config.klosok.enabled && config.klosok.gtfsRtUrl ? 'idle' : 'disabled',
@@ -102,26 +149,52 @@ class KlosokService {
   }
 
   /** Load the timetable, then start the periodic RT poll. */
-  async start() {
+  start() {
     if (this.started) return;
     this.started = true;
+    this._stopped = false;
 
     if (!config.klosok.enabled || !config.klosok.gtfsRtUrl) {
       logger.info('Kłosok disabled — set KLOSOK_ENABLED=true to enable');
       return;
     }
 
-    await this.poll().catch((error) => logger.error(`Kłosok first poll failed: ${error.message}`));
-    this.timer = setInterval(() => this.poll().catch(() => {}), config.klosok.pollIntervalMs);
+    // First poll immediately. A placeholder handle keeps `timer` non-null
+    // from the first instant — stop() and callers that inspect the timer rely
+    // on it — and is replaced by the real arm the moment the first poll
+    // settles. The next arm is queued from the *end* of #runPollLoop, which is
+    // the only code that schedules a Kłosok timer.
+    this.timer = setTimeout(() => {}, 0);
     this.timer.unref?.();
+    void this.#runPollLoop();
+  }
+
+  #scheduleNextPoll() {
+    if (this._stopped) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.#runPollLoop(), config.klosok.pollIntervalMs);
+    this.timer.unref?.();
+  }
+
+  /**
+   * One iteration of the Kłosok poll loop: run poll(), then arm the next from
+   * its completion. Same non-overlapping discipline as VehicleTracker.
+   */
+  async #runPollLoop() {
+    try {
+      await this.poll();
+    } catch (error) {
+      logger.error(`Kłosok poll threw, rescheduling: ${error.message}`);
+    } finally {
+      this.#scheduleNextPoll();
+    }
   }
 
   /** Stop the poll timer. Anything scheduled must be stoppable (CLAUDE.md). */
   stop() {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
+    this._stopped = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
     this.started = false;
   }
 
@@ -163,8 +236,10 @@ class KlosokService {
 
       // Detect whether anything /locations-visible changed: vehicle count,
       // stale/live state, or per-vehicle position/heading/timestamp/delay.
-      // `updatedAt` is a freshness timestamp, not content, so it is excluded.
-      const changed = this.#snapshotChanged(this.snapshot, enriched, parsed.stale);
+      // `updatedAt` (per-vehicle) is excluded from mapChange detection — it is a
+      // freshness timestamp recomputed on every poll — but IS included in
+      // fullChange because the full format serialises it.
+      const changed = this.#computeRevisionChanges(this.snapshot, enriched, parsed.stale);
 
       this.snapshot = {
         locations: enriched,
@@ -173,8 +248,9 @@ class KlosokService {
         stale: parsed.stale,
         source: 'klosok-gtfs-rt',
       };
-      this.revision += 1;
-      if (changed) this.snapshotRevision += 1;
+      this.pollRevision += 1;
+      if (changed.map) this.mapRevision += 1;
+      if (changed.full) this.fullRevision += 1;
       this.status = {
         ...this.status,
         state: 'ready',
@@ -196,6 +272,7 @@ class KlosokService {
       );
     } catch (error) {
       // Fail soft: keep the last good snapshot, and say why on /health.
+      this.pollRevision += 1;
       this.status.state = this.snapshot.count > 0 ? 'stale' : 'error';
       this.status.lastError = error.message;
       logger.error(`Kłosok GTFS-RT poll failed: ${error.message}`);
@@ -234,32 +311,53 @@ class KlosokService {
   }
 
   /**
-   * Compare the previous snapshot against the newly parsed fleet to decide
-   * whether the snapshotRevision should advance. Only /locations-visible
-   * fields participate: `updatedAt` is a per-poll freshness timestamp that
-   * is not on the wire, so excluding it avoids a spurious content change every
-   * poll.
+   * Earliest time at which a currently-fresh Kłosok vehicle will expire,
+   * expressed as an absolute epoch-ms deadline. routes.js stores this in the
+   * merged-fleet cache as `validUntil`; if Date.now() reaches it the cache is
+   * rebuilt so an aged-out bus vanishes from /locations even though the Kłosok
+   * snapshot itself hasn't been re-polled yet.
+   *
+   * Null when the fleet is empty (no expiry to track).
    */
-  #snapshotChanged(prev, next, stale) {
-    if (!prev.locations || prev.locations.length !== next.length) return true;
-    if (prev.stale !== stale) return true;
+  get nextExpiryAt() {
+    const maxAgeMs = config.klosok.maxAgeMs;
+    let earliest = null;
+    for (const vehicle of this.snapshot.locations) {
+      if (!isFresh(vehicle.positionUpdatedAt, Date.now())) continue;
+      const expiry = Date.parse(vehicle.positionUpdatedAt) + maxAgeMs;
+      if (!Number.isFinite(expiry)) continue;
+      if (earliest === null || expiry < earliest) earliest = expiry;
+    }
+    return earliest;
+  }
+
+  /**
+   * Compare the previous snapshot against the newly parsed fleet to decide
+   * which revisions should advance. Only /locations-visible fields participate:
+   * lastUpdated and stale are NOT on the /locations wire for Kłosok (they live
+   * in /health), so a quiet poll that returned identical positions advances
+   * neither mapRevision nor fullRevision from content — but fullRevision ALSO
+   * advances when per-vehicle `updatedAt` changes (it is in the full format).
+   *
+   * Returns { map: boolean, full: boolean }.
+   */
+  #computeRevisionChanges(prev, next, stale) {
+    if (!prev.locations || prev.locations.length !== next.length) {
+      return { map: true, full: true };
+    }
+    if (prev.stale !== stale) {
+      return { map: true, full: true };
+    }
+    let mapChanged = false;
+    let fullChanged = false;
     for (let i = 0; i < next.length; i++) {
       const a = prev.locations[i];
       const b = next[i];
-      if (
-        a.id !== b.id ||
-        a.line !== b.line ||
-        a.type !== b.type ||
-        a.lat !== b.lat ||
-        a.lon !== b.lon ||
-        a.heading !== b.heading ||
-        a.positionUpdatedAt !== b.positionUpdatedAt ||
-        a.delaySeconds !== b.delaySeconds
-      ) {
-        return true;
-      }
+      if (!mapVehicleEquals(a, b)) mapChanged = true;
+      if (!fullVehicleEquals(a, b)) fullChanged = true;
+      if (mapChanged && fullChanged) break;
     }
-    return false;
+    return { map: mapChanged, full: fullChanged };
   }
 
   /**
@@ -333,4 +431,4 @@ class KlosokService {
   }
 }
 
-module.exports = { KlosokService, OPERATOR };
+module.exports = { KlosokService, OPERATOR, mapVehicleEquals, fullVehicleEquals };

@@ -211,23 +211,30 @@ describe('VehicleTracker against a stand-in endpoint', () => {
     assert.equal(tracker.snapshot.locations[0].heading, 0, 'moved north');
   });
 
-  it('freezes lastUpdated while the fleet is unchanged and advances it when it moves', async () => {
-    // /locations derives its ETag from the serialized body; lastUpdated is the
-    // only field that changes every poll, so if it advanced with nothing moving
-    // the app would re-download the whole fleet every ten seconds.
+  it('advances lastUpdated on every poll but keeps mapRevision on a quiet poll', async () => {
+    // lastUpdated is the only field that changes every poll. The full /locations
+    // format carries it, so fullRevision must advance and the full body gets a
+    // fresh ETag. The map format's body cache is keyed on mapRevision, so it
+    // still answers 304 — the app stops re-downloading the whole fleet every
+    // ten seconds.
     let lat = 51.11;
     const tracker = await trackerFor(() => [{ name: '4', type: 'tram', x: lat, y: 17.03, k: 3 }]);
 
     await tracker.poll();
     const first = tracker.snapshot.lastUpdated;
+    const mapRev0 = tracker.mapRevision;
+    const fullRev0 = tracker.fullRevision;
     assert.ok(first, 'a successful poll stamps lastUpdated');
 
     await tracker.poll();
-    assert.equal(tracker.snapshot.lastUpdated, first, 'an unchanged fleet keeps lastUpdated');
+    assert.notEqual(tracker.snapshot.lastUpdated, first, 'lastUpdated advances every poll');
+    assert.equal(tracker.mapRevision, mapRev0, 'mapRevision frozen on a quiet poll');
+    assert.equal(tracker.fullRevision, fullRev0 + 1, 'fullRevision advances on a quiet poll');
 
     lat += 0.01; // the tram moves
     await tracker.poll();
     assert.notEqual(tracker.snapshot.lastUpdated, first, 'a moved vehicle advances lastUpdated');
+    assert.equal(tracker.mapRevision, mapRev0 + 1, 'mapRevision advances on a content change');
   });
 
   it('attaches the destination and next stop when a timetable is loaded', async () => {
@@ -404,40 +411,42 @@ describe('VehicleTracker against a stand-in endpoint', () => {
     config.vehicles.openDataUrl = originalOpenDataUrl;
   });
 
-  it('snapshotRevision stays put when the fleet is unchanged', async () => {
+  it('mapRevision stays put when the fleet is unchanged', async () => {
     const rows = [{ name: '4', type: 'tram', x: 51.11, y: 17.032, k: 1 }];
     const tracker = await trackerFor(() => rows);
 
     await tracker.poll();
-    const rev = tracker.snapshotRevision;
+    const mapRev = tracker.mapRevision;
+    const fullRev = tracker.fullRevision;
     assert.equal(tracker.pollRevision, 1, 'poll revision advances on every accepted poll');
-    assert.equal(rev, 1, 'content revision advances on first poll');
+    assert.equal(mapRev, 1, 'content revision advances on first poll');
 
     await tracker.poll(); // identical fleet
-    assert.equal(tracker.snapshotRevision, rev, 'quiet poll does not advance content revision');
+    assert.equal(tracker.mapRevision, mapRev, 'quiet poll does not advance mapRevision');
+    assert.equal(tracker.fullRevision, fullRev + 1, 'quiet poll advances fullRevision (lastUpdated changed)');
     assert.equal(tracker.pollRevision, 2, 'poll revision still advances');
   });
 
-  it('snapshotRevision advances on each visible field change', async () => {
+  it('mapRevision advances on each visible field change', async () => {
     let rows = [{ name: '4', type: 'tram', x: 51.11, y: 17.032, k: 1 }];
     const tracker = await trackerFor(() => rows);
 
     await tracker.poll();
-    const rev0 = tracker.snapshotRevision;
+    const mapRev0 = tracker.mapRevision;
 
     // Movement
     rows = [{ name: '4', type: 'tram', x: 51.12, y: 17.032, k: 1 }];
     await tracker.poll();
-    assert.equal(tracker.snapshotRevision, rev0 + 1, 'movement advances revision');
+    assert.equal(tracker.mapRevision, mapRev0 + 1, 'movement advances mapRevision');
 
     // Unchanged fleet keeps revision
     await tracker.poll();
-    assert.equal(tracker.snapshotRevision, rev0 + 1, 'quiet poll does not advance');
+    assert.equal(tracker.mapRevision, mapRev0 + 1, 'quiet poll does not advance mapRevision');
 
     // Heading change (move far enough to trigger bearing calc)
     rows = [{ name: '4', type: 'tram', x: 51.12, y: 17.04, k: 1 }];
     await tracker.poll();
-    assert.equal(tracker.snapshotRevision, rev0 + 2, 'heading change advances revision');
+    assert.equal(tracker.mapRevision, mapRev0 + 2, 'heading change advances mapRevision');
 
     // Vehicle added
     rows = [
@@ -445,7 +454,7 @@ describe('VehicleTracker against a stand-in endpoint', () => {
       { name: '128', type: 'bus', x: 51.09, y: 17.03, k: 99 },
     ];
     await tracker.poll();
-    assert.equal(tracker.snapshotRevision, rev0 + 3, 'added vehicle advances revision');
+    assert.equal(tracker.mapRevision, mapRev0 + 3, 'added vehicle advances mapRevision');
 
     // Vehicle removed: age out the departed vehicle so the drop logic fires.
     const oldVehicle = tracker.mpkFleet.get('128-99');
@@ -453,21 +462,25 @@ describe('VehicleTracker against a stand-in endpoint', () => {
     oldVehicle.updatedAt = Date.now() - config.vehicles.staleAfterMs * 2 - 1;
     rows = [{ name: '4', type: 'tram', x: 51.12, y: 17.04, k: 1 }];
     await tracker.poll();
-    assert.equal(tracker.snapshotRevision, rev0 + 4, 'removed vehicle advances revision');
+    assert.equal(tracker.mapRevision, mapRev0 + 4, 'removed vehicle advances mapRevision');
   });
 
-  it('does not advance snapshotRevision when only updatedAt changes', async () => {
-    // updatedAt is a per-poll freshness timestamp, not content — it must not
-    // by itself cause an ETag / cache invalidation.
+  it('does not advance mapRevision when only updatedAt changes', async () => {
+    // updatedAt is a per-poll freshness timestamp, not content. On a quiet poll
+    // it must not advance mapRevision (the map body cache stays valid), but
+    // fullRevision DOES advance because lastUpdated (snapshot-level) changes
+    // and the full format carries it.
     const rows = [{ name: '4', type: 'tram', x: 51.11, y: 17.032, k: 1 }];
     const tracker = await trackerFor(() => rows);
 
     await tracker.poll();
-    const rev0 = tracker.snapshotRevision;
+    const mapRev0 = tracker.mapRevision;
+    const fullRev0 = tracker.fullRevision;
     const ts0 = tracker.snapshot.locations[0].updatedAt;
 
     await tracker.poll();
-    assert.equal(tracker.snapshotRevision, rev0, 'unchanged fleet keeps revision');
+    assert.equal(tracker.mapRevision, mapRev0, 'unchanged fleet keeps mapRevision');
+    assert.equal(tracker.fullRevision, fullRev0 + 1, 'quiet poll advances fullRevision');
     assert.notEqual(tracker.snapshot.locations[0].updatedAt, ts0, 'updatedAt still ticks');
   });
 

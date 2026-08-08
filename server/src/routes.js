@@ -223,27 +223,28 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
    * seconds, and without this each request re-runs the Kłosok dedup, re-maps
    * the whole fleet into wire objects and re-stringifies a payload whose
    * inputs changed not at all since the last poll. The merged fleet is keyed
-   * on the sources' content revisions (snapshotRevision), incremented only when
-   * /locations-visible state changes; serialized bodies additionally key on
-   * the query that shapes them.
+   * on two format-aware combined keys — one for the map format, one for the
+   * full format — each incremented only when /locations-visible state for
+   * that format changes. serialized bodies additionally key on the query
+   * that shapes them, validated against the matching format key before being
+   * served.
    *
    * Freshness is checked on *every* request, before any body-cache lookup —
    * a cached serialized body must never be served past the moment the fleet it
-   * represents has changed. allLocations() compares the combined key and clears
-   * the body cache when it has; a body-cache hit on its own never skips this.
+   * represents has changed. Kłosok's nextExpiryAt is folded into validUntil,
+   * so a bus that ages out between polls still vanishes from the response.
    */
-  let mergedCache = { key: null, merged: null };
-  /** `line|type|format` -> { etag, body } */
+  let mergedCache = { mapKey: null, fullKey: null, merged: null, validUntil: null };
+  /** `line|type|format` -> { etag, body, mapKey, fullKey } */
   const locationsBodyCache = new Map();
 
-  /**
-   * Combined public-state key for the merged fleet. Incremented only when
-   * /locations-visible state changes in any of the three vehicle sources.
-   * Using snapshotRevision (not pollRevision) means a quiet poll — one that
-   * observed identical positions — does not invalidate cached bodies.
-   */
-  const combinedFleetKey = () =>
-    `${vehicles.snapshotRevision ?? 0}|${klosok?.snapshotRevision ?? 0}|${kd?.snapshotRevision ?? 0}`;
+  /** Combined key for the map format — advances only when map-visible state changes. */
+  const combinedMapKey = () =>
+    `${vehicles.mapRevision ?? 0}|${klosok?.mapRevision ?? 0}|${kd?.mapRevision ?? 0}`;
+
+  /** Combined key for the full format — advances when full-visible state changes (incl. lastUpdated). */
+  const combinedFullKey = () =>
+    `${vehicles.fullRevision ?? 0}|${klosok?.fullRevision ?? 0}|${kd?.fullRevision ?? 0}`;
 
   /**
    * Merge the Wrocław, PT KŁOSOK (when enabled) and Koleje Dolnośląskie
@@ -251,18 +252,39 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
    * deduplicate against the other two; Kłosok positions are deduplicated
    * against the Wrocław fleet first (a fresh Kłosok fix outranks MPK/Open
    * Data for the same physical bus), then KD is appended.
+   *
+   * The fleet is rebuilt when EITHER format key changes — a quiet poll that
+   * only advanced fullKey keeps the same mapKey, so the fleet (which does
+   * not carry lastUpdated at the vehicle level) is reused. The body cache
+   * is cleared only when the fleet actually changes; per-format body entries
+   * are validated against their own key in the handler below.
    */
   const allLocations = () => {
-    const key = combinedFleetKey();
-    if (key !== mergedCache.key || mergedCache.merged === null) {
+    const mapKey = combinedMapKey();
+    const fullKey = combinedFullKey();
+    const now = Date.now();
+
+    // Kłosok vehicles age out by wall-clock, not by poll revision. If the
+    // earliest remaining fix is past its maxAge, rebuild so it vanishes from
+    // /locations even though no poll has run.
+    const expired = mergedCache.validUntil != null && now >= mergedCache.validUntil;
+
+    if (mergedCache.merged === null || mapKey !== mergedCache.mapKey || expired) {
       const wroclaw = vehicles.snapshot.locations;
       const merged = klosok?.enabled ? klosok.mergeLocations(wroclaw) : wroclaw;
       mergedCache = {
-        key,
+        mapKey,
+        fullKey,
         merged: kd?.snapshot.count ? [...merged, ...kd.snapshot.locations] : merged,
+        validUntil: klosok?.nextExpiryAt ?? null,
       };
       // A new fleet invalidates every serialized body derived from it.
       locationsBodyCache.clear();
+    } else {
+      // Fleet unchanged (same mapKey, no expiry): but fullKey may have
+      // advanced on a quiet poll. Keep the fleet; let the handler validate
+      // per-format bodies against their own key.
+      mergedCache.fullKey = fullKey;
     }
     return mergedCache.merged;
   };
@@ -353,12 +375,21 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
     const { line, type, format } = req.query;
     const variantKey = `${line ?? ''}|${type ?? ''}|${format ?? ''}`;
 
-    // Check freshness before any body-cache lookup. If the combined revision
-    // changed since the last request, allLocations() clears the body cache —
-    // so a stale serialized body is never served.
+    // Check freshness before any body-cache lookup. If the merged fleet
+    // changed, allLocations() clears the body cache — so a stale serialized
+    // body is never served.
     const merged = allLocations();
 
     let entry = locationsBodyCache.get(variantKey);
+
+    // Validate the cached body against the key for THIS format only. A quiet
+    // poll advances fullKey but not mapKey: the map body stays valid (304),
+    // while the full body is discarded and re-serialised (200).
+    if (entry) {
+      const currentKey = format === 'map' ? mergedCache.mapKey : mergedCache.fullKey;
+      const entryKey = format === 'map' ? entry.mapKey : entry.fullKey;
+      if (entryKey !== currentKey) entry = undefined;
+    }
 
     if (!entry) {
       const snapshot = vehicles.snapshot;
@@ -374,7 +405,12 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
             // shape — the merge must not be skipped by an unfiltered shortcut.
             { ...snapshot, locations, count: locations.length };
       const body = JSON.stringify(payload);
-      entry = { etag: `"${crypto.createHash('sha1').update(body).digest('hex')}"`, body };
+      entry = {
+        etag: `"${crypto.createHash('sha1').update(body).digest('hex')}"`,
+        body,
+        mapKey: mergedCache.mapKey,
+        fullKey: mergedCache.fullKey,
+      };
       locationsBodyCache.set(variantKey, entry);
     }
 
