@@ -15,3 +15,10 @@
 - Writes deterministic tests for time-sensitive logic by injecting `now`/TTL/revision/generation into the cache constructor and methods rather than sleeping on the real clock or mocking `Date`. Confidence: 0.85
 - Asserts rejections with a matching regex (`assert.rejects(() => store.refresh(), /pattern/)`) rather than catching and re-throwing. Confidence: 0.8
 - Specialized caches extend the shared `LruCache` base class (e.g. `VehicleDetailCache extends LruCache`) instead of being built from scratch or wrapping it opaquely. Confidence: 0.75
+- Avoid modifying CI configuration as part of feature work; the user manages CI separately and doesn't want it touched. Confidence: 0.65
+- Avoids external monitoring services and specialized search/indexing libraries (e.g. Elasticsearch, SQLite FTS, Fuse.js, third-party observability stacks); prefers lightweight in-house solutions and a dependency-free stack. Confidence: 0.85
+- Precomputes derived/normalized data once at load or index time and reuses a single shared function for both indexing and querying, instead of recomputing the same derivation per query. Confidence: 0.8
+- Does not expose internal/normalized/derived fields, secrets, upstream request bodies, or raw upstream data through API responses; keeps responses compact and free of implementation details. Confidence: 0.8
+- Performance instrumentation must use bounded O(1) per-metric state (latest, EWMA, max, count — no unbounded history or arrays), sample expensive measurements (e.g. memory) only at meaningful build/poll boundaries rather than on a continuous background timer, and avoid measurably slowing hot paths (few sub-µs timing calls, e.g. `performance.now()`). Confidence: 0.85
+- Factors shared cross-cutting utilities (e.g. rolling metrics) into a very small, dependency-free internal helper module with a minimal API (`record`/`snapshot`); does not build an observability framework. Confidence: 0.75
+- For final task delivery, expects a comprehensive structured report covering: approach/structure chosen, the bug reproduced and fixed, metrics added, estimated instrumentation overhead, tests added, and files changed. Confidence: 0.7

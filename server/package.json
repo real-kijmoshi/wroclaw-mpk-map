@@ -15,6 +15,8 @@
     "doctor:kd": "node scripts/doctor.js --kd",
     "doctor:klosok": "node scripts/doctor.js --klosok",
     "lint": "eslint .",
+    "benchmark:progress": "node --expose-gc scripts/benchmark-progress.js",
+    "benchmark:open-data": "node --expose-gc scripts/benchmark-open-data.js",
     "scrape:nitter": "node scripts/verify-nitter.js"
   },
   "keywords": [

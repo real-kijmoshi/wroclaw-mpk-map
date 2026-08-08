@@ -106,24 +106,6 @@ const firstTripIndexAtLeast = (trips, tripStart, target) => {
   return low;
 };
 
-/**
- * First index into a stops array whose `alongMeters` is strictly greater than
- * `target`, or -1 when none is. Matches `stops.findIndex(...)` on a monotonic
- * array; non-monotonic arrays (see `isMonotonic`) keep the linear scan.
- */
-const firstStopBeyond = (stops, alongMeters) => {
-  if (!isMonotonic(stops)) return stops.findIndex((stop) => stop.alongMeters > alongMeters);
-
-  let low = 0;
-  let high = stops.length;
-  while (low < high) {
-    const mid = (low + high) >> 1;
-    if (stops[mid].alongMeters <= alongMeters) low = mid + 1;
-    else high = mid;
-  }
-  return low < stops.length ? low : -1;
-};
-
 const secondsOfDay = (date) => date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds();
 
 /**
@@ -164,8 +146,12 @@ const isMonotonic = (stops) => {
  */
 const offsetAtScan = (stops, alongMeters) => {
   const last = stops[stops.length - 1];
-  if (alongMeters <= stops[0].alongMeters) return stops[0].arrivalOffset;
-  if (alongMeters >= last.alongMeters) return last.arrivalOffset;
+  if (alongMeters <= stops[0].alongMeters) {
+    return { offset: stops[0].arrivalOffset, segmentIndex: 0, sorted: false };
+  }
+  if (alongMeters >= last.alongMeters) {
+    return { offset: last.arrivalOffset, segmentIndex: -1, sorted: false };
+  }
 
   for (let i = 0; i < stops.length - 1; i += 1) {
     const from = stops[i];
@@ -174,10 +160,14 @@ const offsetAtScan = (stops, alongMeters) => {
 
     const span = to.alongMeters - from.alongMeters;
     const fraction = span > 0 ? (alongMeters - from.alongMeters) / span : 0;
-    return from.departureOffset + fraction * (to.arrivalOffset - from.departureOffset);
+    return {
+      offset: from.departureOffset + fraction * (to.arrivalOffset - from.departureOffset),
+      segmentIndex: i,
+      sorted: false,
+    };
   }
 
-  return last.arrivalOffset;
+  return { offset: last.arrivalOffset, segmentIndex: -1, sorted: false };
 };
 
 /**
@@ -185,17 +175,37 @@ const offsetAtScan = (stops, alongMeters) => {
  * has travelled. Interpolates between the two stops it sits between, from the
  * departure of the one behind to the arrival of the one ahead, so a scheduled
  * wait at a stop is not spread over the road either side of it.
+ *
+ * Returns the offset together with the index of the segment's first stop, so
+ * the caller can say which stop comes next without walking the list again.
+ * The segment index is the one the linear walk would have stopped at: 0 when
+ * the vehicle is at or before the first stop, the `from` stop of the
+ * interpolated segment in between, and -1 at or beyond the last stop.
+ *
+ * Stops are ordered along the shape by construction (store.js projects each
+ * one from where the previous landed), so the segment is found by a binary
+ * search over alongMeters. A stop list that turns out not to be non-decreasing
+ * falls back to the linear walk rather than trusting the search — a wrong
+ * offset here is a wrong delay with no error anywhere. The `sorted` flag tells
+ * the caller whether the segment index is trustworthy, so it can use the old
+ * findIndex walk where the list is not sorted.
  */
 const offsetAt = (stops, alongMeters) => {
+  const sorted = isMonotonic(stops);
   const last = stops[stops.length - 1];
-  if (alongMeters <= stops[0].alongMeters) return stops[0].arrivalOffset;
-  if (alongMeters >= last.alongMeters) return last.arrivalOffset;
+
+  if (alongMeters <= stops[0].alongMeters) {
+    return { offset: stops[0].arrivalOffset, segmentIndex: 0, sorted };
+  }
+  if (alongMeters >= last.alongMeters) {
+    return { offset: last.arrivalOffset, segmentIndex: -1, sorted };
+  }
 
   // `from` is the first stop whose segment contains `alongMeters` — exactly
   // the segment the linear loop returned on a monotonic array (a position
   // exactly on a stop boundary resolves with fraction 1 to the boundary stop's
   // *arrival* offset, not its departure). Non-monotonic stops keep the scan.
-  if (!isMonotonic(stops)) return offsetAtScan(stops, alongMeters);
+  if (!sorted) return offsetAtScan(stops, alongMeters);
 
   let low = 0;
   let high = stops.length;
@@ -208,7 +218,30 @@ const offsetAt = (stops, alongMeters) => {
   const to = stops[low];
   const span = to.alongMeters - from.alongMeters;
   const fraction = span > 0 ? (alongMeters - from.alongMeters) / span : 0;
-  return from.departureOffset + fraction * (to.arrivalOffset - from.departureOffset);
+  return {
+    offset: from.departureOffset + fraction * (to.arrivalOffset - from.departureOffset),
+    segmentIndex: low - 1,
+    sorted,
+  };
+};
+
+/**
+ * The first stop still ahead of a vehicle, derived from the segment offsetAt()
+ * located instead of a fresh walk over the stop list.
+ *
+ * This reproduces `stops.findIndex((stop) => stop.alongMeters > alongMeters)`
+ * exactly: every stop at or before the vehicle's position is passed, the first
+ * with a larger one is next, and there is none when the vehicle is at or
+ * beyond the last stop. The segment index is where the walk starts, so the
+ * common case costs one comparison and only an exact boundary (a stop, or a
+ * run of stops at the same distance) is walked past.
+ */
+const nextStopIndex = (stops, segmentIndex, alongMeters) => {
+  if (segmentIndex < 0) return -1;
+
+  let index = segmentIndex;
+  while (index < stops.length && stops[index].alongMeters <= alongMeters) index += 1;
+  return index >= stops.length ? -1 : index;
 };
 
 /**
@@ -251,6 +284,7 @@ const matchTrip = (gtfs, variant, progressOffset, now) => {
     const from = firstTripIndexAtLeast(trips, tripStart, targetStart - MAX_DELAY_SECONDS);
     for (let i = from; i < trips.length; i += 1) {
       const start = tripStart[trips[i]];
+      if (start < 0) continue;
       if (start - targetStart > MAX_DELAY_SECONDS) break;
 
       const delaySeconds = targetStart - start;
@@ -424,7 +458,8 @@ const describeVehicle = (
     stops.length > 1 && stops.every((stop) => stop.arrivalOffset !== null && stop.departureOffset !== null);
   if (!projection || !described.onRoute || !timed) return described;
 
-  const progressOffset = offsetAt(stops, projection.along);
+  const progress = offsetAt(stops, projection.along);
+  const progressOffset = progress.offset;
   const run = matchTrip(gtfs, variant, progressOffset, now);
 
   if (run) {
@@ -435,7 +470,13 @@ const describeVehicle = (
     if (run.trip.headsign) described.headsign = run.trip.headsign;
   }
 
-  const nextIndex = firstStopBeyond(stops, projection.along);
+  // For a stop list in shape order the segment located by offsetAt() finds the
+  // next stop in one step; an unsorted list (offsetAt fell back to the scan)
+  // keeps the old findIndex walk, which is the only derivation that stays
+  // correct without ordering.
+  const nextIndex = progress.sorted
+    ? nextStopIndex(stops, progress.segmentIndex, projection.along)
+    : stops.findIndex((stop) => stop.alongMeters > projection.along);
   const upcoming = nextIndex === -1 ? [] : stops.slice(nextIndex, nextIndex + Math.max(limit, 0));
   const passedFrom = nextIndex === -1 ? stops.length : nextIndex;
 
@@ -512,10 +553,8 @@ module.exports = {
   MAX_DELAY_SECONDS,
   MAX_OFF_ROUTE_METERS,
   describeVehicle,
-  firstStopBeyond,
-  isMonotonic,
   matchTrip,
+  nextStopIndex,
   offsetAt,
-  offsetAtScan,
   summarise,
 };
