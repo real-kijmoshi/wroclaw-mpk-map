@@ -1,4 +1,8 @@
-- Communicates via detailed written task specs with explicit required semantics, architecture guidance, test lists, and "do not break" constraints. Confidence: 0.6
+- Performance instrumentation must use bounded O(1) per-metric state (latest, EWMA, max, count — no unbounded history or arrays), sample expensive measurements (e.g. memory) only at meaningful build/poll boundaries rather than than a continuous background timer, and avoid measurably slowing hot paths (few sub-µs timing calls, e.g. `performance.now()`). Confidence: 0.85
+- Times distinct pipeline stages separately (e.g. fetch, normalize, merge, describe, snapshot) rather than wrapping the whole operation in a single timer and copying that one value into multiple metrics. Confidence: 0.85
+- Keeps a separate metric set per independent subsystem/poll cycle (e.g. Open Data polling vs. the primary MPK polling) rather than conflating their timings into one shared block. Confidence: 0.8
+- On failure, records the overall poll duration but does not record per-stage timings for stages that never executed — last successful stage values are preserved rather than overwritten, and no NaN/Infinity is ever stored. Confidence: 0.8
+- Factors shared cross-cutting utilities (e.g. rolling metrics) into a very small, dependency-free internal helper module with a minimal API (`record`/`snapshot`); does not build an observability framework. Confidence: 0.75- Communicates via detailed written task specs with explicit required semantics, architecture guidance, test lists, and "do not break" constraints. Confidence: 0.6
 - At continuation points mid-task, prefers terse, polite signals ("carry on pls") rather than re-explaining or demanding full status reports — trusts the work to resume from where it left off. Confidence: 0.75# Taste — Backend / Engineering
 - Prefers transactional/atomic state updates: build a candidate snapshot separately, fully parse/index/validate it, then atomically swap it in — never mutate the live/active state in place during a refresh. Confidence: 0.9
 - Prioritizes correctness and availability; on any failure the previous good state must stay fully intact and keep serving requests (fail-safe design, no partial old/new data). Confidence: 0.8
@@ -22,3 +26,22 @@
 - Performance instrumentation must use bounded O(1) per-metric state (latest, EWMA, max, count — no unbounded history or arrays), sample expensive measurements (e.g. memory) only at meaningful build/poll boundaries rather than on a continuous background timer, and avoid measurably slowing hot paths (few sub-µs timing calls, e.g. `performance.now()`). Confidence: 0.85
 - Factors shared cross-cutting utilities (e.g. rolling metrics) into a very small, dependency-free internal helper module with a minimal API (`record`/`snapshot`); does not build an observability framework. Confidence: 0.75
 - For final task delivery, expects a comprehensive structured report covering: approach/structure chosen, the bug reproduced and fixed, metrics added, estimated instrumentation overhead, tests added, and files changed. Confidence: 0.7
+- Expects final reports to include before/after complexity analysis and an explicit list of any optimizations deliberately skipped (with rationale) — not just what was changed. Confidence: 0.8
+
+### Differential testing & benchmarks
+- Practices differential testing against a frozen-in-time reference implementation: before removing old logic, copies the previous algorithm verbatim into test helpers and asserts both produce identical output over generated/randomized cases. Confidence: 0.8
+- Benchmark scripts must not depend on live network access; they synthesize data locally. Confidence: 0.85
+- Expects benchmark scripts as a deliverable, run via `npm run`, reporting operations/sec (or total duration) and approximate temporary allocation behavior (heap deltas with `--expose-gc`). Confidence: 0.8
+- Wants benchmark coverage across problem-size scales (e.g. ~10, ~100, ~1,000, ~10,000 items) plus realistic production-scale sizes, so asymptotic behavior is visible. Confidence: 0.75
+- Benchmark scripts that compare an old vs. new implementation first assert numerical equivalence between the two on the same generated dataset (differential correctness check) before reporting any timings. Confidence: 0.8
+- Benchmark output directly compares reference vs. optimized: labels each implementation, prints per-dataset timings, and reports a speedup ratio (e.g. `reference: X ms / optimized: Y ms / speedup: Zx`). Confidence: 0.8
+- Generates synthetic benchmark datasets with realistic structure (multiple routes/lines and spatially-distributed vehicle positions) using a deterministic seed, never live network data. Confidence: 0.75
+- Will accept a benchmark being skipped if it proves negligible or complicates correctness, provided the skip is explained in the final report. Confidence: 0.75
+
+### Unicode & string processing
+- Prefers Unicode-aware text processing (e.g. `\p{L}`/`\p{N}` Unicode property escapes with the `u` flag) over ASCII-only patterns like `[a-z0-9]` when handling non-Latin text such as Polish diacritics. Confidence: 0.9
+- Avoids blindly transliterating non-Latin letters (e.g. `ł` is preserved rather than collapsed to `l`) unless intentional, lossy normalization is required; letters must remain letters when determining word boundaries. Confidence: 0.8
+
+### Algorithmic & design conventions
+- Prefers returning richer results (e.g. offset + segment index + sorted flag) so callers can reuse the located segment and avoid a second linear walk over the same data. Confidence: 0.7
+- Requires documenting any change to timing/interval semantics (e.g. interval measured from completion instead of start) rather than silently changing operational behavior. Confidence: 0.8

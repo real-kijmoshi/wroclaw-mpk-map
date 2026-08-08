@@ -6,6 +6,7 @@ const { before, describe, it } = require('node:test');
 const { GtfsStore, assertComplete } = require('../src/gtfs/store');
 const { simplify, distanceMeters } = require('../src/gtfs/geo');
 const { secondsToTime, timeToSeconds } = require('../src/gtfs/parse');
+const { matchRank, normalizeSearchText } = require('../src/search');
 const { buildFixtureZip } = require('./fixtures/gtfs');
 
 describe('GtfsStore', () => {
@@ -323,6 +324,105 @@ describe('stop search', () => {
     assert.equal(names[0], 'Rynek');
     assert.equal(names.length, 2);
     assert.notEqual(names[1], 'Rynek', 'the second hit is a prefix match, not a duplicate');
+  });
+
+  it('treats Ł/ł as a letter, not a word boundary', async () => {
+    // Ł has no canonical decomposition, so NFD normalization leaves it in place
+    // — and the old ASCII-only WORD_BREAK treated it as a separator. That split
+    // "aleja łowiecka" into ["aleja", "owiecka"], downgrading a word-prefix
+    // match ("ło") to a generic substring match. The Unicode regex keeps ł as a
+    // letter so the word is "łowiecka" and the prefix rank is preserved.
+    const store = await buildWithStops(stops([['1', 'Aleja Łowiecka']]));
+    assert.deepEqual(store.searchStops('ło').map((stop) => stop.name), ['Aleja Łowiecka']);
+    assert.deepEqual(store.searchStops('łow').map((stop) => stop.name), ['Aleja Łowiecka']);
+  });
+
+  it('treats every Polish letter as a letter for word boundaries', async () => {
+    // Ł/ł have no canonical decomposition and survive normalizeSearchText()
+    // as-is, so the word boundary must not split on them. The other Polish
+    // letters (Ś, Ź, Ć, Ń, Ó, Ę, Ą, Ż) DO decompose to ASCII under NFD, so
+    // they work with any word-boundary regex — these tests pin that end-to-end
+    // behaviour through searchStops for both groups.
+    const store = await buildWithStops(
+      stops([
+        ['1', 'Aleja Łowiecka'],
+        ['2', 'Aleja Świdnicka'],
+        ['3', 'Aleja Żmigrodzka'],
+        ['4', 'Aleja Źródlana'],
+        ['5', 'Aleja Ćwiartki'],
+        ['6', 'Aleja Ńuty'],
+        ['7', 'Aleja Ówczysko'],
+        ['8', 'Aleja Ędka'],
+        ['9', 'Aleja Ąbługa'],
+      ]),
+    );
+    // Each query is a word-prefix: "łowiecka" starts with "ło", etc.
+    assert.deepEqual(store.searchStops('łow').map((s) => s.name), ['Aleja Łowiecka']);
+    assert.deepEqual(store.searchStops('świ').map((s) => s.name), ['Aleja Świdnicka']);
+    assert.deepEqual(store.searchStops('żmig').map((s) => s.name), ['Aleja Żmigrodzka']);
+    assert.deepEqual(store.searchStops('źród').map((s) => s.name), ['Aleja Źródlana']);
+    assert.deepEqual(store.searchStops('ćwia').map((s) => s.name), ['Aleja Ćwiartki']);
+    assert.deepEqual(store.searchStops('ńut').map((s) => s.name), ['Aleja Ńuty']);
+    assert.deepEqual(store.searchStops('ówcz').map((s) => s.name), ['Aleja Ówczysko']);
+    assert.deepEqual(store.searchStops('ędk').map((s) => s.name), ['Aleja Ędka']);
+    assert.deepEqual(store.searchStops('ąbł').map((s) => s.name), ['Aleja Ąbługa']);
+  });
+
+  it('ranks a Polish word-prefix above a generic substring', async () => {
+    // "Aleja Łowiecka" — querying "ło" is a word-prefix (rank 2).
+    // "Członkowie" — querying "ło" is a substring mid-word (rank 3).
+    // The word-prefix must win even though "Członkowie" sorts later.
+    const store = await buildWithStops(
+      stops([
+        ['1', 'Aleja Łowiecka'],
+        ['2', 'Członkowie'],
+      ]),
+    );
+    assert.deepEqual(
+      store.searchStops('ło').map((stop) => stop.name),
+      ['Aleja Łowiecka', 'Członkowie'],
+    );
+  });
+
+  it('matchRank keeps ł as part of a word (unit-level regression)', () => {
+    // Normalize both sides the same way searchStops does.
+    const name = normalizeSearchText('Aleja Łowiecka');
+    assert.equal(name, 'aleja łowiecka', 'ł survives NFD + diacritic stripping');
+
+    // Word-prefix, not substring: ł is a letter, so "łowiecka" is a word.
+    assert.equal(matchRank(name, normalizeSearchText('ło')), 2);
+    assert.equal(matchRank(name, normalizeSearchText('łow')), 2);
+
+    // Other Polish letters that decompose to ASCII behave the same way in
+    // multi-word names: the second word still starts with the query letter.
+    assert.equal(matchRank(normalizeSearchText('Aleja Świdnicka'), normalizeSearchText('świ')), 2);
+    assert.equal(matchRank(normalizeSearchText('Aleja Żmigrodzka'), normalizeSearchText('żmig')), 2);
+    assert.equal(matchRank(normalizeSearchText('Aleja Źródlana'), normalizeSearchText('źr')), 2);
+    assert.equal(matchRank(normalizeSearchText('Aleja Ćwiartki'), normalizeSearchText('ćw')), 2);
+    assert.equal(matchRank(normalizeSearchText('Aleja Ńuty'), normalizeSearchText('ńut')), 2);
+    assert.equal(matchRank(normalizeSearchText('Aleja Ówczysko'), normalizeSearchText('ówcz')), 2);
+    assert.equal(matchRank(normalizeSearchText('Aleja Ędka'), normalizeSearchText('ęd')), 2);
+    assert.equal(matchRank(normalizeSearchText('Aleja Ąbługa'), normalizeSearchText('ąb')), 2);
+
+    // Ranking order still holds: exact > prefix > word-prefix > substring.
+    assert.equal(matchRank(name, name), 0, 'exact');
+    assert.equal(matchRank(name, normalizeSearchText('aleja')), 1, 'full-name prefix');
+    assert.equal(matchRank(name, normalizeSearchText('ło')), 2, 'word-prefix');
+    assert.equal(matchRank(name, normalizeSearchText('owiec')), 3, 'substring');
+  });
+
+  it('is deterministic with mixed Latin and Polish text', async () => {
+    const store = await buildWithStops(
+      stops([
+        ['a', 'Łowiecka'],
+        ['b', 'Świdnicka'],
+        ['c', 'Żmigrodzka'],
+        ['d', 'Źródlana'],
+      ]),
+    );
+    const first = store.searchStops('ło', 10).map((s) => s.id);
+    const second = store.searchStops('ło', 10).map((s) => s.id);
+    assert.deepEqual(first, second, 'identical input yields identical order');
   });
 });
 

@@ -13,7 +13,12 @@
 const normalizeSearchText = (value) =>
   value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
 
-const WORD_BREAK = /[^a-z0-9]+/;
+// Unicode-aware: Polish letters like ł, ą, ś have no canonical decomposition, so
+// they survive normalizeSearchText() and must still count as letters here.
+// Without the `\p{L}` property, `ł` would be treated as a separator and split
+// "aleja łowiecka" into ["aleja", "owiecka"], downgrading a word-prefix match
+// ("ło") to a generic substring match.
+const WORD_BREAK = /[^\p{L}\p{N}]+/u;
 
 /**
  * Rank one folded stop name against a folded query.
