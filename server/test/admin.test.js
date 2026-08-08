@@ -42,6 +42,10 @@ const fakeVehicles = {
     source: 'test',
     stale: false,
   },
+  getVehicle(id) {
+    return this.snapshot.locations.find((entry) => entry.id === id) ?? null;
+  },
+  describeCache: new Map(),
 };
 
 const fakeAlerts = {

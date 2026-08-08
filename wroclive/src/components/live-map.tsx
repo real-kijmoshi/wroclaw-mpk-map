@@ -17,6 +17,15 @@ export type { LiveMapHandle, LiveMapProps, MapCommand };
  *
  * Commands sent before the page reports `ready` are queued — the first poll of
  * /locations regularly wins the race against the WebView's own load.
+ *
+ * The transport is `postMessage` in both directions, on every host. The native
+ * page posts back through `window.ReactNativeWebView.postMessage` and receives
+ * host commands from the `message` listeners it installs at load; the web
+ * build posts across the iframe. Commands used to be injected as JavaScript
+ * (`window.__wroclive.handle(...)`), which needed a guard for a page that had
+ * not defined its handler yet and a second JSON round-trip to survive
+ * embedding — the message channel needs neither, so one bridge shape serves
+ * the WebView, the iframe preview and the page alike.
  */
 export const LiveMap = forwardRef<LiveMapHandle, LiveMapProps>(function LiveMap(
   { dark, onMessage },
@@ -33,18 +42,16 @@ export const LiveMap = forwardRef<LiveMapHandle, LiveMapProps>(function LiveMap(
   const html = useMemo(() => mapHtml(dark), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const post = useCallback((command: MapCommand) => {
-    const payload = JSON.stringify(command);
-    webRef.current?.injectJavaScript(
-      `window.__wroclive && window.__wroclive.handle(${JSON.stringify(payload)}); true;`,
-    );
+    webRef.current?.postMessage(JSON.stringify(command));
   }, []);
 
   /**
    * Flush whatever was sent before the page could receive it.
    *
    * Reached both from the page's own announcement and from `onLoadEnd`,
-   * because injecting into a page that has not defined its handler yet is a
-   * silent no-op — a map with tiles and no vehicles on it.
+   * because a WebView can load before the message channel is accepting
+   * commands — a silent no-op that would leave a map with tiles and no
+   * vehicles on it.
    */
   const markReady = useCallback(() => {
     if (readyRef.current) return;

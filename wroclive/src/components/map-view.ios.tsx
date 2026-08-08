@@ -6,11 +6,12 @@ import { NativeMap } from './native-map';
 export type { MapSurfaceHandle, MapSurfaceProps, MapRoute } from './map-surface.types';
 
 /**
- * Avoid react-native-maps' affected MapKit renderer on iOS.
+ * The iOS surface: the native `react-native-maps` renderer, MapKit.
  *
- * Keep both native iOS choices on the native surface. `NativeMap` switches to
- * its UrlTile layer when OpenStreetMap is selected; the Leaflet WebView is
- * reserved for browsers, where it is reliable.
+ * `NativeMap` switches to its UrlTile layer when OpenStreetMap is selected; the
+ * Leaflet page is reserved for browsers, where `react-native-maps` has no
+ * implementation. The `expo-maps` MapKit surface (`apple-map.ios.tsx`) exists
+ * for a future switch but is not wired in here.
  */
 export const MapView = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function MapView(props, ref) {
   return <NativeMap ref={ref} {...props} />;

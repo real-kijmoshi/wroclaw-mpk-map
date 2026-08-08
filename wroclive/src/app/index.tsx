@@ -110,10 +110,17 @@ export default function MapScreen() {
     // fetch or draw — the vehicle board still lists their stops.
     if (vehicle.id.indexOf('kd:') === 0) return;
 
-    let cancelled = false;
-    getShape(vehicle.line, { lat: vehicle.lat, lon: vehicle.lon, heading: vehicle.heading })
+    // Abort, not a flag: a vehicle tapped in quick succession would otherwise
+    // leave the first request running its 503-retry backoff for up to a minute
+    // after it stopped being relevant.
+    const controller = new AbortController();
+    getShape(
+      vehicle.line,
+      { lat: vehicle.lat, lon: vehicle.lon, heading: vehicle.heading },
+      { signal: controller.signal },
+    )
       .then((shape) => {
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         setFetched({
           vehicleId,
           route: { points: shape.points, color: colorFor(vehicle.type), stops: shape.stops },
@@ -121,12 +128,11 @@ export default function MapScreen() {
       })
       .catch(() => {
         // A line whose snapshot shipped without geometry still shows its
-        // vehicle and its stop list; only the drawn route is missing.
+        // vehicle and its stop list; only the drawn route is missing. An
+        // abort lands here too and is just as fine.
       });
 
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, [vehicleId]);
 
   const handleVehicle = useCallback((id: string) => setSelection({ kind: 'vehicle', id }), []);

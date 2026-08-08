@@ -16,6 +16,7 @@ const {
   simplify,
 } = require('./geo');
 const { inWarsaw, parseTable, secondsToTime, streamTableFast, timeToSeconds } = require('./parse');
+const { GrowableFloat64Array, GrowableInt32Array } = require('./typed-arrays');
 
 const SHAPE_SIMPLIFY_METERS = 4;
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
@@ -44,6 +45,9 @@ const HEADING_PENALTY_METERS = 400;
 class GtfsStore {
   constructor() {
     this.reset();
+    // Bumped on every successful build; caches keyed on timetable data use it
+    // to refuse entries that were computed against older geometry.
+    this.generation = 0;
     this.status = {
       state: 'empty',
       source: null,
@@ -66,6 +70,8 @@ class GtfsStore {
     this.agencies = new Map();
     /** @type {Map<string, object[]>} short name -> route variants */
     this.variantsByLine = new Map();
+    /** @type {Map<string, object>} shape_id -> route variant */
+    this.variantByShapeId = new Map();
     /** @type {Map<string, object>} stop_id -> stop */
     this.stopsById = new Map();
     /** @type {object[]} compact trip records, addressed by index */
@@ -145,7 +151,9 @@ class GtfsStore {
     this.#buildCalendar(zip);
     const shapePoints = await this.#buildShapes(zip);
 
-    return this.#buildStopTimes(zip, representativeTripByShape, shapePoints);
+    const counts = await this.#buildStopTimes(zip, representativeTripByShape, shapePoints);
+    this.generation += 1;
+    return counts;
   }
 
   #buildAgency(zip) {
@@ -301,11 +309,15 @@ class GtfsStore {
     const buffer = entryBuffer(zip, 'shapes.txt');
     if (!buffer) return new Map();
 
-    /** @type {Map<string, {seq: number[], lat: number[], lon: number[]}>} */
+    /**
+     * @type {Map<string, {seq: GrowableInt32Array, lat: GrowableFloat64Array,
+     *   lon: GrowableFloat64Array}>}
+     */
     const raw = new Map();
 
     // shapes.txt is hundreds of thousands of rows; stream it so the parsed
-    // array never exists all at once, and keep only the numbers per shape.
+    // array never exists all at once, and keep only the numbers per shape,
+    // in typed arrays so no value is ever a boxed JS number.
     let colShapeId;
     let colLat;
     let colLon;
@@ -324,7 +336,7 @@ class GtfsStore {
       const shapeId = fields[colShapeId];
       let shape = raw.get(shapeId);
       if (!shape) {
-        shape = { seq: [], lat: [], lon: [] };
+        shape = { seq: new GrowableInt32Array(64), lat: new GrowableFloat64Array(64), lon: new GrowableFloat64Array(64) };
         raw.set(shapeId, shape);
       }
       shape.seq.push(Number.parseInt(fields[colSequence], 10) || shape.seq.length);
@@ -335,16 +347,26 @@ class GtfsStore {
     /** @type {Map<string, Float64Array>} shape_id -> interleaved [lat, lon, ...] */
     const shapes = new Map();
     for (const [shapeId, shape] of raw) {
-      const order = shape.seq
-        .map((sequence, index) => [sequence, index])
-        .sort((a, b) => a[0] - b[0]);
+      // Points are ordered by sequence. Sorting indices (an Int32Array with a
+      // comparator) rather than materialising `[sequence, index]` pairs for
+      // every point avoids millions of tiny object allocations; GTFS shapes
+      // are usually already in order, so TimSort on the near-sorted indices
+      // is near-linear.
+      const count = shape.seq.length;
+      const order = new Int32Array(count);
+      for (let i = 0; i < count; i += 1) order[i] = i;
+      order.sort((a, b) => shape.seq.buffer[a] - shape.seq.buffer[b]);
 
-      const points = new Float64Array(order.length * 2);
-      order.forEach(([, index], position) => {
-        points[position * 2] = shape.lat[index];
-        points[position * 2 + 1] = shape.lon[index];
-      });
+      const points = new Float64Array(count * 2);
+      for (let position = 0; position < count; position += 1) {
+        const index = order[position];
+        points[position * 2] = shape.lat.buffer[index];
+        points[position * 2 + 1] = shape.lon.buffer[index];
+      }
       shapes.set(shapeId, simplify(points, SHAPE_SIMPLIFY_METERS));
+      // The raw arrays are no longer needed once this shape is simplified;
+      // dropping them keeps the peak from holding every shape twice.
+      raw.delete(shapeId);
     }
 
     return shapes;
@@ -356,10 +378,13 @@ class GtfsStore {
     const representativeStops = new Map();
     for (const tripIndex of representativeTripByShape.values()) representativeStops.set(tripIndex, []);
 
-    const tripColumn = [];
-    const arrivalColumn = [];
-    const departureColumn = [];
-    /** @type {Map<string, number[]>} stop_id -> row indices */
+    // Column values are collected into growable typed arrays — not JS arrays
+    // copied later with Int32Array.from — so the peak holds one buffer per
+    // column plus the final exact-size arrays, and no boxed numbers.
+    const tripColumn = new GrowableInt32Array(1 << 16);
+    const arrivalColumn = new GrowableInt32Array(1 << 16);
+    const departureColumn = new GrowableInt32Array(1 << 16);
+    /** @type {Map<string, GrowableInt32Array>} stop_id -> row indices */
     const rowsByStop = new Map();
 
     // One entry per trip rather than per row: cheap enough to keep for the
@@ -409,32 +434,42 @@ class GtfsStore {
         if (!config.gtfs.buildStopIndex) return;
         if (!this.stopsById.has(fields[colStopId])) return;
 
-        const index = tripColumn.length;
         tripColumn.push(tripIndex);
         arrivalColumn.push(arrival);
         departureColumn.push(departure);
 
         let bucket = rowsByStop.get(fields[colStopId]);
         if (!bucket) {
-          bucket = [];
+          bucket = new GrowableInt32Array(64);
           rowsByStop.set(fields[colStopId], bucket);
         }
-        bucket.push(index);
+        bucket.push(tripColumn.length - 1);
       });
     }
 
     this.stopTimes = {
-      trip: Int32Array.from(tripColumn),
-      arrival: Int32Array.from(arrivalColumn),
-      departure: Int32Array.from(departureColumn),
+      trip: tripColumn.toArray(),
+      arrival: arrivalColumn.toArray(),
+      departure: departureColumn.toArray(),
     };
     this.tripStart = tripStart;
     this.tripEnd = tripEnd;
 
     for (const [stopId, bucket] of rowsByStop) {
-      bucket.sort((a, b) => this.stopTimes.departure[a] - this.stopTimes.departure[b]);
-      this.departuresByStop.set(stopId, Int32Array.from(bucket));
+      this.departuresByStop.set(
+        stopId,
+        bucket.takeSorted((a, b) => this.stopTimes.departure[a] - this.stopTimes.departure[b]),
+      );
     }
+
+    // Everything above this line built per-stop indexes from the columns;
+    // release the row-based temporaries before the variants pass allocates
+    // the per-shape geometry. Clearing the bucket map and dropping the grown
+    // column buffers keeps the peak from holding two copies of the numbers.
+    rowsByStop.clear();
+    tripColumn.buffer = new Int32Array(0);
+    arrivalColumn.buffer = new Int32Array(0);
+    departureColumn.buffer = new Int32Array(0);
 
     this.#buildVariants(representativeTripByShape, representativeStops, shapePoints);
 
@@ -525,6 +560,7 @@ class GtfsStore {
       const existing = this.variantsByLine.get(trip.line);
       if (existing) existing.push(variant);
       else this.variantsByLine.set(trip.line, [variant]);
+      this.variantByShapeId.set(shapeId, variant);
     }
 
     // Most used variant first — that is the one riders recognise as "the" route.
@@ -539,6 +575,11 @@ class GtfsStore {
 
   getVariants(line) {
     return this.variantsByLine.get(line) ?? [];
+  }
+
+  /** The route variant running `shapeId`, or null. O(1). */
+  getVariantByShapeId(shapeId) {
+    return this.variantByShapeId.get(shapeId) ?? null;
   }
 
   /**
@@ -737,4 +778,4 @@ class GtfsStore {
   }
 }
 
-module.exports = { GtfsStore, SHAPE_SIMPLIFY_METERS, assertComplete, findEntry };
+module.exports = { GtfsStore, HEADING_PENALTY_METERS, SHAPE_SIMPLIFY_METERS, assertComplete, findEntry };

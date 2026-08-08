@@ -181,13 +181,15 @@ const cumulativeDistances = (points) => {
  * @param {number} lat
  * @param {number} lon
  * @param {Float64Array} points interleaved [lat, lon, ...]
- * @param {{ cumulative?: Float64Array, fromIndex?: number }} options
- *   `fromIndex` restricts the search to segments at or after that index, which
- *   is how stops are matched in order along a route that doubles back on itself.
+ * @param {{ cumulative?: Float64Array, fromIndex?: number, toIndex?: number }} options
+ *   `fromIndex` / `toIndex` restrict the search to a range of segment indices,
+ *   which is how stops are matched in order along a route that doubles back on
+ *   itself, and how a tracked vehicle is re-projected only around where it was
+ *   last seen. Both clamp to the polyline's own range.
  * @returns {{ distance: number, along: number, index: number, t: number,
  *   lat: number, lon: number, bearing: number|null } | null}
  */
-const projectToPolyline = (lat, lon, points, { cumulative = null, fromIndex = 0 } = {}) => {
+const projectToPolyline = (lat, lon, points, { cumulative = null, fromIndex = 0, toIndex = null } = {}) => {
   const count = points.length / 2;
   if (!count || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
 
@@ -207,8 +209,10 @@ const projectToPolyline = (lat, lon, points, { cumulative = null, fromIndex = 0 
   const px = lon * lonScale;
   const py = lat * METERS_PER_DEGREE_LAT;
 
+  const start = Math.max(0, Math.min(fromIndex, count - 2));
+  const end = Math.min(toIndex ?? count - 2, count - 2);
   let best = null;
-  for (let i = Math.max(0, Math.min(fromIndex, count - 2)); i < count - 1; i += 1) {
+  for (let i = start; i <= end; i += 1) {
     const ax = points[i * 2 + 1] * lonScale;
     const ay = points[i * 2] * METERS_PER_DEGREE_LAT;
     const bx = points[i * 2 + 3] * lonScale;

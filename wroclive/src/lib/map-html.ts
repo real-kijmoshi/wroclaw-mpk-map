@@ -1,12 +1,13 @@
 import { LINE_COLOR, VEHICLE_BORDER_COLOR, VEHICLE_COLOR } from './lines';
 
 /**
- * The map itself: a plain Leaflet page rendered inside a WebView.
+ * The map itself: a plain Leaflet page.
  *
- * It is HTML rather than a native map component on purpose. `react-native-maps`
- * is native-only — it needs a custom dev client, and in plain Expo Go it
- * renders nothing at all with no error anywhere. This page runs in Expo Go, in
- * a release build, and in a browser `<iframe>` for the web preview.
+ * It is HTML rather than a native map component on purpose: a page any host can
+ * render. The web build has no `react-native-maps` implementation, so this page
+ * is the web map, drawn in a browser `<iframe>` for the preview; on native it
+ * is the OpenStreetMap/fallback surface, hosted in a `WebView`. The native map
+ * on iOS and Android is `react-native-maps` (see `native-map.tsx`).
  *
  * It deliberately mirrors `server/views/map.html`'s `renderVehicles()` rather
  * than reimplementing it: a `Map` of id → marker that is *moved* between polls,
@@ -562,7 +563,13 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
   }
 
   window.__wroclive = { handle: handle };
-  // The WebView injects into the page; the iframe preview posts messages.
+  // The web host polls for this object's existence as its readiness signal
+  // (that, not a load event, is the real precondition for posting anything).
+  // Commands themselves arrive on the message channel: the native WebView
+  // dispatches a MessageEvent on window or document, the iframe preview posts
+  // across frames. The handlers exist purely so the page's handle is the one
+  // entry point for every host - keep them in step with live-map.tsx and
+  // live-map.web.tsx.
   window.addEventListener('message', function (event) { handle(event.data); });
   document.addEventListener('message', function (event) { handle(event.data); });
 

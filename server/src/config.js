@@ -223,6 +223,12 @@ module.exports = {
   cache: {
     // Number of route-shape responses kept in memory.
     shapeEntries: num(process.env.SHAPE_CACHE_ENTRIES, DEFAULTS.cache.shapeEntries),
+    // Number of /vehicle/:id detail responses kept in memory. One entry is one
+    // (vehicle, limit, history) combination; a position change invalidates it.
+    vehicleDetailEntries: num(
+      process.env.VEHICLE_DETAIL_CACHE_ENTRIES,
+      DEFAULTS.cache.vehicleDetailEntries,
+    ),
   },
 
   // Admin dashboard (/admin). Bearer-token protected; without ADMIN_TOKEN the

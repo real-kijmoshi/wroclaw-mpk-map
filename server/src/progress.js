@@ -1,7 +1,8 @@
 'use strict';
 
-const { distanceMeters } = require('./gtfs/geo');
+const { angleBetween, distanceMeters, projectToPolyline } = require('./gtfs/geo');
 const { inWarsaw, secondsToTime } = require('./gtfs/parse');
+const { HEADING_PENALTY_METERS } = require('./gtfs/store');
 
 /**
  * Where a live vehicle is on its route, where it is going, and when it reaches
@@ -46,6 +47,48 @@ const AT_STOP_METERS = 45;
  * "18 minut spóźnienia" that is really the next tram, on time.
  */
 const MAX_DELAY_SECONDS = 45 * 60;
+
+/**
+ * How far around a vehicle's last known position, in route metres, the fast
+ * path is willing to look before it hands back to the full matcher.
+ *
+ * The backward window only needs to cover GPS jitter pulling the nearest point
+ * back along the segment it is on; the forward window has to cover how far a
+ * vehicle can travel between two polls plus the same jitter. A tram doing
+ * 60 km/h covers ~170 m in ten seconds, so 600 m ahead leaves a comfortable
+ * margin, and a hit on either edge is rejected anyway (see `fastProjection`).
+ */
+const FAST_BACKWARD_METERS = 200;
+const FAST_FORWARD_METERS = 600;
+
+/** First index whose value is >= target in a strictly ascending array. */
+const firstIndexAtLeast = (array, target) => {
+  let low = 0;
+  let high = array.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (array[mid] < target) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+};
+
+/** Last index whose value is <= target in a strictly ascending array, or -1. */
+const lastIndexAtMost = (array, target) => {
+  let low = 0;
+  let high = array.length - 1;
+  let best = -1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (array[mid] <= target) {
+      best = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return best;
+};
 
 const secondsOfDay = (date) => date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds();
 
@@ -114,21 +157,111 @@ const matchTrip = (gtfs, variant, progressOffset, now) => {
 };
 
 /**
+ * Re-project a vehicle that was already on `variant` at `previousState`,
+ * searching only the stretch of polyline around its previous position.
+ *
+ * A vehicle that keeps running the same route moves a bounded distance per
+ * poll, so its next projection can only be near the last one — searching the
+ * whole polyline (and the whole line's other variants) for that answer is the
+ * cost this avoids. The answer is only trusted when it is clearly inside the
+ * window, close to the polyline, and running the way the vehicle is heading;
+ * anything ambiguous hands back `null` and the caller runs the full matcher,
+ * so the fast path can never be *more* wrong than today, only cheaper.
+ *
+ * @param {object} variant the variant the vehicle was last seen on
+ * @param {{ lat: number, lon: number, heading?: number|null }} vehicle
+ * @param {{ shapeId: string, alongMeters: number }} previousState
+ * @returns {object|null} a projection, or null when the fast answer is not
+ *   trustworthy enough to stand in for a full match.
+ */
+const fastProjection = (variant, vehicle, previousState) => {
+  const { points, cumulative } = variant;
+  const count = points.length / 2;
+  if (count < 2 || !cumulative) return null;
+
+  const minAlong = Math.max(0, previousState.alongMeters - FAST_BACKWARD_METERS);
+  const maxAlong = previousState.alongMeters + FAST_FORWARD_METERS;
+
+  // The window as a range of segment indices, from the vertex that first
+  // passes the start to the last whose distance is still inside the window.
+  // A segment spanning the window edge is kept whole, so no part of it is
+  // silently skipped, and one extra segment past the forward edge is searched
+  // as a probe (see below).
+  const lo = firstIndexAtLeast(cumulative, minAlong);
+  const hi = lastIndexAtMost(cumulative, maxAlong);
+  if (hi < 0) return null;
+
+  const lastSegment = count - 2;
+  const fromIndex = Math.max(0, lo - 1);
+  const toIndex = Math.min(hi + 1, lastSegment);
+  if (fromIndex > toIndex) return null;
+
+  const projection = projectToPolyline(vehicle.lat, vehicle.lon, points, {
+    cumulative,
+    fromIndex,
+    toIndex,
+  });
+  if (!projection) return null;
+
+  // A projection that lands on the probe segment past the window means the
+  // vehicle actually sits just beyond `maxAlong` — the windowed answer would
+  // then creep forward one window behind the vehicle forever. Reject and let
+  // the full matcher place it. Anything inside the window is trustworthy: the
+  // probe makes sure no nearer segment hides on the other side of the edge.
+  // (The backward edge needs no probe — between polls a vehicle can only
+  // drift a few metres against its direction of travel.)
+  if (toIndex > hi && projection.index === toIndex) return null;
+
+  // The same heading penalty the full matcher applies, so a vehicle that has
+  // turned around at a terminus is not locked onto the leg it just left.
+  const off =
+    Number.isFinite(vehicle.heading) && projection.bearing !== null
+      ? angleBetween(vehicle.heading, projection.bearing)
+      : 0;
+  const score =
+    projection.distance +
+    (HEADING_PENALTY_METERS * (1 - Math.cos((off * Math.PI) / 180))) / 2;
+  if (score > MAX_OFF_ROUTE_METERS) return null;
+
+  return projection;
+};
+
+/**
  * @param {import('./gtfs/store').GtfsStore} gtfs
  * @param {{ line: string, lat: number, lon: number, heading?: number|null }} vehicle
- * @param {{ now?: Date, limit?: number, history?: number }} options
+ * @param {{ now?: Date, limit?: number, history?: number, previousState?: object|null }} options
  *   `limit` caps the stops ahead, `history` the stops already passed.
+ *   `previousState` is the projection state captured on the last call for this
+ *   vehicle (`described.state`): when present and still on the same variant it
+ *   enables the fast path, which re-projects only around the previous position
+ *   instead of re-matching the whole line.
  * @returns {object|null} null when the timetable cannot place the vehicle at all
  */
-const describeVehicle = (gtfs, vehicle, { now = new Date(), limit = 8, history = 1 } = {}) => {
+const describeVehicle = (
+  gtfs,
+  vehicle,
+  { now = new Date(), limit = 8, history = 1, previousState = null } = {},
+) => {
   if (!gtfs?.isReady || !vehicle) return null;
 
-  const match = gtfs.matchVariant(vehicle.line, vehicle.lat, vehicle.lon, {
-    heading: vehicle.heading,
-  });
-  if (!match) return null;
+  let variant;
+  let projection;
+  if (previousState?.shapeId) {
+    const candidate = gtfs.getVariantByShapeId(previousState.shapeId);
+    if (candidate && candidate.line === vehicle.line) {
+      projection = fastProjection(candidate, vehicle, previousState);
+      if (projection) variant = candidate;
+    }
+  }
 
-  const { variant, projection } = match;
+  if (!variant) {
+    const match = gtfs.matchVariant(vehicle.line, vehicle.lat, vehicle.lon, {
+      heading: vehicle.heading,
+    });
+    if (!match) return null;
+    variant = match.variant;
+    projection = match.projection;
+  }
   const stops = variant.stops;
   const terminus = stops.length ? stops[stops.length - 1].name : null;
 
@@ -160,6 +293,20 @@ const describeVehicle = (gtfs, vehicle, { now = new Date(), limit = 8, history =
     stopsAhead: 0,
     stopCount: stops.length,
   };
+
+  // Where this vehicle was on this shape, for the next poll's fast path.
+  // Non-enumerable on purpose: `res.json` and `summarise` must not put it on
+  // the wire — it exists to seed `previousState` on the next call.
+  if (projection && described.onRoute) {
+    Object.defineProperty(described, 'state', {
+      value: {
+        shapeId: variant.shapeId,
+        polylineIndex: projection.index,
+        alongMeters: projection.along,
+      },
+      enumerable: false,
+    });
+  }
 
   // A snapshot with no times for this shape still knows where the vehicle is
   // headed; it just cannot say when it gets anywhere.

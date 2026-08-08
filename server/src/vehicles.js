@@ -151,6 +151,8 @@ class VehicleTracker {
     this.openDataFleet = new Map();
     /** Combined view: what /locations actually serves, rebuilt after every poll. */
     this.fleet = new Map();
+    /** id -> entry in the current `snapshot.locations`, so /vehicle/:id is O(1). */
+    this.byId = new Map();
     /** Memoized snapshot: what the `snapshot` getter returns between polls. */
     this._snapshot = { locations: [], count: 0, lastUpdated: null, source: null, stale: false };
     /** Monotonic counter bumped whenever the fleet changes; /locations uses it to reuse a serialized body. */
@@ -187,6 +189,17 @@ class VehicleTracker {
 
   get snapshot() {
     return this._snapshot;
+  }
+
+  /**
+   * One vehicle from the current snapshot, or null. O(1).
+   *
+   * /vehicle/:id used to scan `snapshot.locations` for every request; with
+   * every open app tapping vehicles the scan was a small per-request tax that
+   * only grows with the fleet. The id map is rebuilt alongside the snapshot.
+   */
+  getVehicle(id) {
+    return this.byId.get(id) ?? null;
   }
 
   /** Rebuild the memoized snapshot from the current fleet, once per poll. */
@@ -238,6 +251,10 @@ class VehicleTracker {
         prev.positionUpdatedAt !== next.positionUpdatedAt ||
         JSON.stringify(prev.trip) !== JSON.stringify(next.trip);
     }
+
+    // The O(1) id lookup /vehicle/:id uses. Built here from the same filtered
+    // list the snapshot serves, so it never answers for a stale vehicle.
+    this.byId = new Map(vehicles.map((entry) => [entry.id, entry]));
 
     this._snapshot = {
       locations: vehicles,
@@ -353,8 +370,16 @@ class VehicleTracker {
 
       try {
         // One stop ahead is all /locations carries; /vehicle/:id recomputes the
-        // full list when someone actually taps a vehicle.
-        vehicle.trip = summarise(describeVehicle(this.gtfs, vehicle, { now, limit: 1 }));
+        // full list when someone actually taps a vehicle. `previous?.state` is
+        // the projection from the last time this vehicle was described, which
+        // lets the matcher skip the full scan and only re-project around where
+        // the vehicle was (a stationary vehicle never gets here).
+        const result = describeVehicle(this.gtfs, vehicle, {
+          now,
+          limit: 1,
+          previousState: previous?.state ?? null,
+        });
+        vehicle.trip = summarise(result);
         if (vehicle.trip) described += 1;
         this.describeCache.set(vehicle.id, {
           lat: vehicle.lat,
@@ -362,6 +387,9 @@ class VehicleTracker {
           heading: vehicle.heading ?? null,
           at: nowMs,
           trip: vehicle.trip,
+          // Seeded by the projection the next poll's fast path needs; undefined
+          // (and so a full match next time) when this position was off route.
+          state: result?.state ?? null,
         });
       } catch (error) {
         vehicle.trip = null;

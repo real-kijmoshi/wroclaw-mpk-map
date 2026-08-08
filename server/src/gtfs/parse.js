@@ -111,18 +111,34 @@ const splitCsvLine = (line, onField) => {
  * @param {(fields: string[], columns: Map<string, number>) => void} onRow
  */
 const streamTableFast = async (buffer, onRow) => {
-  let text = buffer.toString('utf8');
-  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-  if (text.includes('\r')) text = text.replace(/\r/g, '');
+  // The file is read straight off the Buffer, line by line, rather than
+  // converted to one big string and split into an array of every line first:
+  // stop_times.txt is a million rows, and either whole-table structure is one
+  // of the largest transients of a cold GTFS build.
+  let from = 0;
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    from = 3; // UTF-8 BOM
+  }
 
-  const lines = text.split('\n');
   const columns = new Map();
-  splitCsvLine(lines[0] ?? '', (value, index) => columns.set(value.trim(), index));
-
   let processed = 0;
-  for (let i = 1; i < lines.length; i += 1) {
-    const line = lines[i];
+  while (from < buffer.length) {
+    let newline = buffer.indexOf(0x0a, from);
+    if (newline === -1) newline = buffer.length;
+    // Strip a CRLF line ending; a lone CR inside a quoted field is kept.
+    let end = newline;
+    if (end > from && buffer[end - 1] === 0x0d) end -= 1;
+
+    const line = buffer.toString('utf8', from, end);
+    from = newline + 1;
+
+    if (processed === 0) {
+      splitCsvLine(line, (value, index) => columns.set(value.trim(), index));
+      processed += 1;
+      continue;
+    }
     if (!line) continue;
+
     const fields = [];
     splitCsvLine(line, (value) => fields.push(value.trim()));
     onRow(fields, columns);

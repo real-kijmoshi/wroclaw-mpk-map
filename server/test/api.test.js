@@ -42,6 +42,10 @@ const fakeVehicles = {
     source: 'test',
     stale: false,
   },
+  getVehicle(id) {
+    return this.snapshot.locations.find((entry) => entry.id === id) ?? null;
+  },
+  describeCache: new Map(),
 };
 
 const fakeAlerts = {
@@ -194,6 +198,41 @@ describe('HTTP API', () => {
 
   it('404s for a vehicle that is not being tracked', async () => {
     assert.equal((await get('/vehicle/4-nope')).status, 404);
+  });
+
+  it('serves a repeated /vehicle/:id request from the detail cache', async () => {
+    const first = await get('/vehicle/4-1');
+    const second = await get('/vehicle/4-1');
+    assert.equal(first.status, 200);
+    assert.deepEqual(second.body, first.body, 'an unmoved vehicle answers identically');
+
+    const health = await get('/health');
+    assert.ok(
+      health.body.vehicleDetailCacheEntries >= 1,
+      'the detail cache records the response it served',
+    );
+  });
+
+  it('recomputes the detail when the vehicle moves', async () => {
+    const before = await get('/vehicle/4-1');
+    assert.equal(before.body.trip.atStop.name, 'Rynek');
+    const beforeStops = before.body.trip.nextStops.map((stop) => stop.name);
+
+    fakeVehicles.snapshot.locations[0].lat = 51.1;
+    fakeVehicles.snapshot.locations[0].lon = 17.0215;
+    try {
+      const after = await get('/vehicle/4-1');
+      assert.equal(after.status, 200);
+      const afterStops = after.body.trip.nextStops.map((stop) => stop.name);
+      assert.notDeepEqual(
+        afterStops,
+        beforeStops,
+        'a moved vehicle must not be served the old spot\u2019s trip',
+      );
+    } finally {
+      fakeVehicles.snapshot.locations[0].lat = 51.11;
+      fakeVehicles.snapshot.locations[0].lon = 17.032;
+    }
   });
 
   it('lists every variant of a line', async () => {

@@ -11,6 +11,10 @@ const { CATEGORIES } = require('./lines');
 const { describeVehicle } = require('./progress');
 
 const shapeCache = new LruCache(config.cache.shapeEntries);
+// One entry is one (vehicle, limit, history) detail payload. Bounded by config
+// and invalidated by position (a detail computed for one spot answers for a
+// vehicle that has not moved, and is wrong once it has).
+const vehicleDetailCache = new LruCache(config.cache.vehicleDetailEntries);
 const WIRE_SHAPE_SIMPLIFY_METERS = 8;
 
 /** Cache-Control helper: timetable data is stable, vehicle data is not. */
@@ -350,13 +354,44 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
   router.get('/vehicle/:id', requireGtfs, noStore, (req, res) => {
     const vehicle = req.params.id.startsWith('klosok:')
       ? klosok?.getVehicle(req.params.id)
-      : vehicles.snapshot.locations.find((entry) => entry.id === req.params.id);
+      : vehicles.getVehicle(req.params.id);
     if (!vehicle) {
       return res.status(404).json({ error: 'Vehicle not tracked', id: req.params.id });
     }
 
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 40, 200);
     const history = Math.min(Number.parseInt(req.query.history, 10) || 2, 20);
+
+    // Open-data vehicles go through the detail cache; the Kłosok feed is a
+    // separate tracker without the position fingerprint the cache needs.
+    if (!req.params.id.startsWith('klosok:')) {
+      const key = `${req.params.id}|${limit}|${history}`;
+      const cached = vehicleDetailCache.get(key);
+      // A detail computed for one lat/lon/heading stays true only while the
+      // vehicle is still there. The position is content; updatedAt is a
+      // freshness timestamp, so it is deliberately not part of the test.
+      if (
+        cached &&
+        cached.lat === vehicle.lat &&
+        cached.lon === vehicle.lon &&
+        cached.heading === vehicle.heading
+      ) {
+        return res.json({ vehicle, trip: cached.trip });
+      }
+
+      // Seed the projection fast path with the tracker's last position; the
+      // detail request then re-projects around the vehicle instead of scanning
+      // every shape variant for it.
+      const previousState = vehicles.describeCache.get(vehicle.id)?.state ?? null;
+      const trip = describeVehicle(gtfs, vehicle, { limit, history, previousState });
+      vehicleDetailCache.set(key, {
+        lat: vehicle.lat,
+        lon: vehicle.lon,
+        heading: vehicle.heading ?? null,
+        trip,
+      });
+      return res.json({ vehicle, trip });
+    }
 
     return res.json({
       vehicle,
@@ -544,6 +579,7 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
         trains: kd?.isReady ? kd.getLines().length : 0,
       },
       shapeCacheEntries: shapeCache.size,
+      vehicleDetailCacheEntries: vehicleDetailCache.size,
     });
   });
 
