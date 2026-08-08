@@ -106,7 +106,7 @@ const toMapVehicle = (vehicle) => {
     lat: vehicle.lat,
     lon: vehicle.lon,
     heading: vehicle.heading,
-    // KD vehicles carry the destination as `destination` rather than a trip;
+    // Kłosok vehicles carry the destination as `destination` rather than a trip;
     // fold it in so the tooltip still reads "Linia X → Y" on both clients.
     trip: vehicle.trip
       ? {
@@ -123,8 +123,8 @@ const toMapVehicle = (vehicle) => {
   if (vehicle.vehicleNumber !== undefined) entry.vehicleNumber = vehicle.vehicleNumber;
   if (vehicle.brigade !== undefined) entry.brigade = vehicle.brigade;
   if (vehicle.positionUpdatedAt !== undefined) entry.positionUpdatedAt = vehicle.positionUpdatedAt;
-  // KD trains carry extra realtime fields; the map uses them for the badge
-  // (operator), the click view (route/trip) and the delay label.
+  // Kłosok vehicles carry extra realtime fields; the map uses them for the
+  // badge (operator), the click view (route/trip) and the delay label.
   if (vehicle.operator !== undefined) entry.operator = vehicle.operator;
   if (vehicle.routeId !== undefined) entry.routeId = vehicle.routeId;
   if (vehicle.tripId !== undefined) entry.tripId = vehicle.tripId;
@@ -187,9 +187,9 @@ const parseHeading = (value) => {
 };
 
 /**
- * @param {{ gtfs: import('./gtfs/store').GtfsStore, vehicles: any, alerts: any, stats?: any, kd?: any, klosok?: any, startedAt: Date }} services
+ * @param {{ gtfs: import('./gtfs/store').GtfsStore, vehicles: any, alerts: any, stats?: any, klosok?: any, startedAt: Date }} services
  */
-const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null, startedAt }) => {
+const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt }) => {
   const router = express.Router();
 
   // Count finished requests for the admin dashboard. Runs first, but reads
@@ -219,75 +219,81 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
   };
 
   /**
-   * /locations memoization. Every open app polls the endpoint every ten
-   * seconds, and without this each request re-runs the Kłosok dedup, re-maps
-   * the whole fleet into wire objects and re-stringifies a payload whose
-   * inputs changed not at all since the last poll. The merged fleet is keyed
-   * on two format-aware combined keys — one for the map format, one for the
-   * full format — each incremented only when /locations-visible state for
-   * that format changes. serialized bodies additionally key on the query
-   * that shapes them, validated against the matching format key before being
-   * served.
-   *
-   * Freshness is checked on *every* request, before any body-cache lookup —
-   * a cached serialized body must never be served past the moment the fleet it
-   * represents has changed. Kłosok's nextExpiryAt is folded into validUntil,
-   * so a bus that ages out between polls still vanishes from the response.
-   */
-  let mergedCache = { mapKey: null, fullKey: null, merged: null, validUntil: null };
-  /** `line|type|format` -> { etag, body, mapKey, fullKey } */
-  const locationsBodyCache = new Map();
+    * /locations memoization. Every open app polls the endpoint every ten
+    * seconds, and without this each request re-runs the Kłosok dedup, re-maps
+    * the whole fleet into wire objects and re-stringifies a payload whose
+    * inputs changed not at all since the last poll.
+    *
+    * The merged fleet is cached in TWO independent caches — one for the map
+    * format, one for the full format — each keyed on a format-aware combined
+    * revision that only advances when /locations-visible state for that format
+    * changes. This split is what fixes the stale-merged-object bug: a quiet poll
+    * (fullRevision-only change) advances the full key but not the map key, so
+    * only the full cache is rebuilt — the map merged array is reused untouched,
+    * and the map body cache still answers 304. The full cache IS rebuilt, so the
+    * full body is re-serialised from fresh provider snapshots (per-vehicle
+    * updatedAt included) instead of stale objects.
+    *
+    * Serialized bodies are additionally keyed on the query that shapes them,
+    * and validated against the matching format cache's key before being served.
+    *
+    * Freshness is checked on every request, before any body-cache lookup —
+    * a cached serialized body must never be served past the moment the fleet it
+    * represents has changed. Kłosok's nextExpiryAt is folded into validUntil,
+    * so a bus that ages out between polls still vanishes from the response.
+    */
+   let mapMergedCache = { key: null, merged: null, validUntil: null };
+   let fullMergedCache = { key: null, merged: null, validUntil: null };
+   /** `line|type|format` -> { etag, body, mapKey, fullKey } */
+   const locationsBodyCache = new Map();
 
-  /** Combined key for the map format — advances only when map-visible state changes. */
-  const combinedMapKey = () =>
-    `${vehicles.mapRevision ?? 0}|${klosok?.mapRevision ?? 0}|${kd?.mapRevision ?? 0}`;
+   /** Combined key for the map format — advances only when map-visible state changes. */
+   const combinedMapKey = () =>
+     `${vehicles.mapRevision ?? 0}|${klosok?.mapRevision ?? 0}`;
 
-  /** Combined key for the full format — advances when full-visible state changes (incl. lastUpdated). */
-  const combinedFullKey = () =>
-    `${vehicles.fullRevision ?? 0}|${klosok?.fullRevision ?? 0}|${kd?.fullRevision ?? 0}`;
+   /** Combined key for the full format — advances when full-visible state changes (incl. lastUpdated). */
+   const combinedFullKey = () =>
+     `${vehicles.fullRevision ?? 0}|${klosok?.fullRevision ?? 0}`;
 
-  /**
-   * Merge the Wrocław, PT KŁOSOK (when enabled) and Koleje Dolnośląskie
-   * location lists. KD ids are kd:* namespaced so there is nothing to
-   * deduplicate against the other two; Kłosok positions are deduplicated
-   * against the Wrocław fleet first (a fresh Kłosok fix outranks MPK/Open
-   * Data for the same physical bus), then KD is appended.
-   *
-   * The fleet is rebuilt when EITHER format key changes — a quiet poll that
-   * only advanced fullKey keeps the same mapKey, so the fleet (which does
-   * not carry lastUpdated at the vehicle level) is reused. The body cache
-   * is cleared only when the fleet actually changes; per-format body entries
-   * are validated against their own key in the handler below.
-   */
-  const allLocations = () => {
-    const mapKey = combinedMapKey();
-    const fullKey = combinedFullKey();
-    const now = Date.now();
+   /**
+    * Merge the Wrocław and PT KŁOSOK (when enabled) location lists, returning the
+    * array for the requested format from a format-specific cache.
+    *
+    * `format` selects the cache and the revision key to compare against. A
+    * quiet poll advances fullKey only: the full cache is rebuilt from current
+    * provider snapshots (so per-vehicle updatedAt is fresh in the full body),
+    * while the map cache keeps its old array and the map body still answers 304.
+    *
+    * The fleet is rebuilt when the format's key changes or a Kłosok vehicle has
+    * aged out (validUntil). A rebuild invalidates only serialized bodies built
+    * for that same format, so the other format's body cache (and ETag) survive.
+    */
+   const getMergedLocations = (format) => {
+     const isMap = format === 'map';
+     const cache = isMap ? mapMergedCache : fullMergedCache;
+     const key = isMap ? combinedMapKey() : combinedFullKey();
+     const now = Date.now();
 
-    // Kłosok vehicles age out by wall-clock, not by poll revision. If the
-    // earliest remaining fix is past its maxAge, rebuild so it vanishes from
-    // /locations even though no poll has run.
-    const expired = mergedCache.validUntil != null && now >= mergedCache.validUntil;
+     // A Kłosok vehicle can age out by wall-clock, not by poll revision. If the
+     // earliest remaining fix is past its maxAge, rebuild so it vanishes from
+     // /locations even though no poll has run.
+     const expired = cache.validUntil != null && now >= cache.validUntil;
 
-    if (mergedCache.merged === null || mapKey !== mergedCache.mapKey || expired) {
-      const wroclaw = vehicles.snapshot.locations;
-      const merged = klosok?.enabled ? klosok.mergeLocations(wroclaw) : wroclaw;
-      mergedCache = {
-        mapKey,
-        fullKey,
-        merged: kd?.snapshot.count ? [...merged, ...kd.snapshot.locations] : merged,
-        validUntil: klosok?.nextExpiryAt ?? null,
-      };
-      // A new fleet invalidates every serialized body derived from it.
-      locationsBodyCache.clear();
-    } else {
-      // Fleet unchanged (same mapKey, no expiry): but fullKey may have
-      // advanced on a quiet poll. Keep the fleet; let the handler validate
-      // per-format bodies against their own key.
-      mergedCache.fullKey = fullKey;
-    }
-    return mergedCache.merged;
-  };
+     if (cache.merged === null || cache.key !== key || expired) {
+       const wroclaw = vehicles.snapshot.locations;
+       const merged = klosok?.enabled ? klosok.mergeLocations(wroclaw) : wroclaw;
+       cache.merged = merged;
+       cache.key = key;
+       cache.validUntil = klosok?.nextExpiryAt ?? null;
+       // Invalidate only bodies built from this format's merged fleet.
+       for (const [variantKey] of [...locationsBodyCache]) {
+         const entryIsMap = variantKey.split('|').pop() === 'map';
+         if (entryIsMap === isMap) locationsBodyCache.delete(variantKey);
+       }
+     }
+
+     return cache.merged;
+   };
 
   /** 503 until the timetable is loaded, so clients can retry instead of caching an empty answer. */
   const requireGtfs = (req, res, next) => {
@@ -301,12 +307,12 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
   };
 
   /**
-   * 503 until *a* timetable is loaded. /lines serves both Wrocław and KD, and
-   * either provider being ready is enough for the endpoint to be useful — a KD
-   * line list must not wait on the Wrocław store.
+   * /lines serves line numbers drawn from the Wrocław timetable. Either the
+   * stop index or the variants are enough for the endpoint to be useful — a
+   * GTFS build that has variants but not yet the stop index must still answer.
    */
   const requireAnyTimetable = (req, res, next) => {
-    if (gtfs.isReady || kd?.isReady) return next();
+    if (gtfs.isReady) return next();
     res.set('Retry-After', '15');
     return res.status(503).json({
       error: 'Timetable data is still loading',
@@ -325,7 +331,6 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
         { method: 'GET', path: '/lines/:category', description: `One category (${CATEGORIES.join(', ')})` },
         { method: 'GET', path: '/locations', description: 'Live vehicle positions, with destination and next stop' },
         { method: 'GET', path: '/vehicle/:id', description: 'One vehicle with its remaining stops and estimated times' },
-        { method: 'GET', path: '/kd/trip/:tripId/shape', description: 'KD trip geometry (when the feed links one to a shape)' },
         { method: 'GET', path: '/shapes/:line', description: 'Route shape; ?lat=&lon=&heading= picks the variant being run, ?format=compact for the smaller payload' },
         { method: 'GET', path: '/shapes/:line/variants', description: 'Every variant of a route' },
         { method: 'GET', path: '/stops', description: 'Search stops with ?q=' },
@@ -342,26 +347,12 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
   });
 
   router.get('/lines', requireAnyTimetable, cacheFor(300), (req, res) => {
-    const lines = { ...gtfs.lines };
-    // KD trains are a provider of their own: they go under a dedicated
-    // category and the allTrains convenience group — never into allBuses,
-    // and never through the MPK lineToType rules (D1/D6 must not be read
-    // as express buses).
-    if (kd?.isReady) {
-      lines.train = kd.getLines();
-      lines.allTrains = kd.getLines();
-      if (!lines.train.length) delete lines.train;
-      if (!lines.allTrains.length) delete lines.allTrains;
-    }
-    res.json(lines);
+    res.json({ ...gtfs.lines });
   });
 
   router.get('/lines/:category', requireAnyTimetable, cacheFor(300), (req, res) => {
     const { category } = req.params;
     const lines = { ...gtfs.lines };
-    if (kd?.isReady) {
-      if (category === 'train' || category === 'allTrains') lines[category] = kd.getLines();
-    }
     if (!Object.hasOwn(lines, category)) {
       return res.status(404).json({
         error: 'Category not found',
@@ -376,9 +367,9 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
     const variantKey = `${line ?? ''}|${type ?? ''}|${format ?? ''}`;
 
     // Check freshness before any body-cache lookup. If the merged fleet
-    // changed, allLocations() clears the body cache — so a stale serialized
-    // body is never served.
-    const merged = allLocations();
+    // changed, getMergedLocations() clears the body cache for this format —
+    // so a stale serialized body is never served.
+    const merged = getMergedLocations(format);
 
     let entry = locationsBodyCache.get(variantKey);
 
@@ -386,7 +377,7 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
     // poll advances fullKey but not mapKey: the map body stays valid (304),
     // while the full body is discarded and re-serialised (200).
     if (entry) {
-      const currentKey = format === 'map' ? mergedCache.mapKey : mergedCache.fullKey;
+      const currentKey = format === 'map' ? mapMergedCache.key : fullMergedCache.key;
       const entryKey = format === 'map' ? entry.mapKey : entry.fullKey;
       if (entryKey !== currentKey) entry = undefined;
     }
@@ -408,8 +399,8 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
       entry = {
         etag: `"${crypto.createHash('sha1').update(body).digest('hex')}"`,
         body,
-        mapKey: mergedCache.mapKey,
-        fullKey: mergedCache.fullKey,
+        mapKey: mapMergedCache.key,
+        fullKey: fullMergedCache.key,
       };
       locationsBodyCache.set(variantKey, entry);
     }
@@ -425,26 +416,14 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
     return res.send(entry.body);
   });
 
-  /**
-   * KD vehicle detail. Registered before the MPK handler below and without its
-   * `requireGtfs` gate: KD is a standalone provider, so a train can be asked
-   * about while Wrocław's timetable is still loading.
-   */
-  router.get('/vehicle/:id', noStore, (req, res, next) => {
-    if (!req.params.id.startsWith('kd:') || !kd) return next();
-    const detail = kd.getTrip(req.params.id);
-    if (!detail) return res.status(404).json({ error: 'Vehicle not tracked', id: req.params.id });
-    return res.json(detail);
-  });
-
-  /**
-   * One vehicle, with the whole stop list of the run it is on.
-   *
-   * /locations carries only the next stop for every vehicle — the full board
-   * for a few hundred of them would be several times the payload for something
-   * a rider looks at one vehicle at a time.
-   */
-  router.get('/vehicle/:id', requireGtfs, noStore, (req, res) => {
+   /**
+    * One vehicle, with the whole stop list of the run it is on.
+    *
+    * /locations carries only the next stop for every vehicle — the full board
+    * for a few hundred of them would be several times the payload for something
+    * a rider looks at one vehicle at a time.
+    */
+   router.get('/vehicle/:id', requireGtfs, noStore, (req, res) => {
     const vehicle = req.params.id.startsWith('klosok:')
       ? klosok?.getVehicle(req.params.id)
       : vehicles.getVehicle(req.params.id);
@@ -496,28 +475,7 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
     });
   });
 
-  /**
-   * Geometry of one KD trip, keyed by trip rather than line because a train
-   * line runs many trips and the feed does not link every one to a shape.
-   * The KD sample has no shapes.txt at all, so this answers "unavailable"
-   * instead of drawing a straight line between stations.
-   */
-  router.get('/kd/trip/:tripId/shape', revalidateShape, (req, res) => {
-    if (!kd) return res.status(404).json({ error: 'KD not enabled' });
-    const rawTripId = req.params.tripId.startsWith('kd:trip:')
-      ? req.params.tripId.slice('kd:trip:'.length)
-      : req.params.tripId;
-    const shape = kd.getTripShape(rawTripId);
-    if (!shape) {
-      return res.status(404).json({
-        available: false,
-        reason: 'GTFS feed does not link this trip to a shape',
-      });
-    }
-    return conditionalJson(req, res, { tripId: req.params.tripId, ...shape });
-  });
-
-  router.get('/shapes/:line/variants', requireGtfs, revalidateShape, (req, res) => {
+   router.get('/shapes/:line/variants', requireGtfs, revalidateShape, (req, res) => {
     const { line } = req.params;
     const variants = gtfs.getVariants(line);
     if (!variants.length) return res.status(404).json({ error: 'Line not found', line });
@@ -573,15 +531,7 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
     const query = String(req.query.q ?? '').trim();
     if (!query) return res.status(400).json({ error: 'Provide a search term with ?q=' });
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 20, 100);
-    const stops = [...gtfs.searchStops(query, limit)];
-    // KD stops are searched in the same box as MPK stops. The two id spaces
-    // are namespaced, so a union is safe.
-    if (kd?.isReady) {
-      for (const stop of kd.searchStops(query, limit)) {
-        if (!stops.some((entry) => entry.id === stop.id)) stops.push(stop);
-      }
-    }
-    return res.json({ query, stops: stops.slice(0, limit) });
+    return res.json({ query, stops: [...gtfs.searchStops(query, limit)].slice(0, limit) });
   });
 
   router.get('/stops/:line', requireGtfs, cacheFor(3600), (req, res) => {
@@ -604,20 +554,6 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
   });
 
   router.get('/stop/:id/departures', requireAnyTimetable, noStore, (req, res) => {
-    // KD departures come from the KD service — the Wrocław store does not know
-    // a kd: stop and would answer 404.
-    if (req.params.id.startsWith('kd:')) {
-      if (!kd) return res.status(404).json({ error: 'Stop not found', id: req.params.id });
-      const stop = kd.getStop(req.params.id);
-      if (!stop) return res.status(404).json({ error: 'Stop not found', id: req.params.id });
-      const limit = Math.min(Number.parseInt(req.query.limit, 10) || 20, 100);
-      const withinMinutes = Math.min(Number.parseInt(req.query.within, 10) || 120, 1440);
-      return res.json({
-        stop,
-        departures: kd.getDepartures(req.params.id, { limit, horizonSeconds: withinMinutes * 60 }),
-      });
-    }
-
     const stop = gtfs.getStop(req.params.id);
     if (!stop) return res.status(404).json({ error: 'Stop not found', id: req.params.id });
 
@@ -630,12 +566,6 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
   });
 
   router.get('/stop/:id', requireAnyTimetable, cacheFor(3600), (req, res) => {
-    if (req.params.id.startsWith('kd:')) {
-      if (!kd) return res.status(404).json({ error: 'Stop not found', id: req.params.id });
-      const stop = kd.getStop(req.params.id);
-      if (!stop) return res.status(404).json({ error: 'Stop not found', id: req.params.id });
-      return res.json(stop);
-    }
     const stop = gtfs.getStop(req.params.id);
     if (!stop) return res.status(404).json({ error: 'Stop not found', id: req.params.id });
     return res.json(stop);
@@ -661,7 +591,7 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
         : {},
       gtfs: gtfs.performance ?? null,
     };
-    res.status(healthy ? 200 : 503).json({
+   res.status(healthy ? 200 : 503).json({
       status: healthy ? 'ok' : 'starting',
       uptimeSeconds: Math.round((Date.now() - startedAt.getTime()) / 1000),
       memoryMb: Math.round(process.memoryUsage().heapUsed / 1e6),
@@ -673,17 +603,12 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
         openData: vehicles.openDataStatus,
       },
       performance: performanceBlock,
-      // KD and Kłosok are standalone providers: they are reported on, but
-      // their health does not decide the overall status — Wrocław must stay
-      // up when either is down.
-      kd: kd ? kd.status : { enabled: false },
       klosok: klosok ? klosok.status : { enabled: false },
       alerts: alerts.status,
       lines: {
         total: Object.values(gtfs.lines).flat().length,
         trams: gtfs.lines.allTrams.length,
         buses: gtfs.lines.allBuses.length,
-        trains: kd?.isReady ? kd.getLines().length : 0,
       },
       shapeCacheEntries: shapeCache.size,
       vehicleDetailCacheEntries: vehicleDetailCache.size,

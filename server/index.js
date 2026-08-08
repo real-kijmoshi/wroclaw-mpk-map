@@ -8,7 +8,6 @@ const logger = require('./src/logger');
 const { createApp } = require('./src/app');
 const { AlertsService } = require('./src/alerts');
 const { GtfsStore } = require('./src/gtfs/store');
-const { KdService } = require('./src/kd/service');
 const { KlosokService } = require('./src/klosok/service');
 const { StatsTracker } = require('./src/stats');
 const { VehicleTracker } = require('./src/vehicles');
@@ -29,14 +28,9 @@ const alerts = new AlertsService(
   () => new Set([...gtfs.routesByLine.keys()].map((line) => line.toUpperCase())),
 );
 
-// Koleje Dolnośląskie is a standalone provider. Its GTFS-RT poll and static
-// refresh are independent of Wrocław's, so a KD outage must never hold up the
-// MPK tracker below — hence it starts separately and fails soft.
-const kd = new KdService();
-
 // PT KŁOSOK is a live-position source with no timetable of its own: its buses
 // are matched against the Wrocław GTFS above, and it is merged into the MPK +
-// Open Data fleet by the KlosokService (dedup included). Like KD it starts
+// Open Data fleet by the KlosokService (dedup included). It starts
 // separately and fails soft, so an outage must never hold up MPK.
 const klosok = new KlosokService({
   gtfs,
@@ -70,7 +64,6 @@ const stopBackgroundWork = () => {
   scheduledRefresh = null;
   vehicles.stop();
   alerts.stop();
-  kd.stop();
   klosok.stop();
   stats?.stop();
 };
@@ -81,13 +74,10 @@ const stopBackgroundWork = () => {
  * process dying on a bad upstream — which is exactly what used to happen.
  */
 const loadGtfs = async (attempt = 0) => {
-  // KD is independent of Wrocław's timetable: it must boot (and be retried)
-  // even when the Wrocław feed is down, and its own failures must never delay
-  // or crash the Wrocław half. Kłosok is the same deal: its positions cannot
-  // be named until the timetable is here, but its poll must not be held back
-  // by the download below, and its failures must not stop it either.
+  // Kłosok is independent of Wrocław's timetable: it starts on the first
+  // attempt and its poll must not be held back by the download below, and its
+  // failures must not stop it either.
   if (attempt === 0) {
-    kd.start();
     klosok.start();
   }
   try {
@@ -102,7 +92,7 @@ const loadGtfs = async (attempt = 0) => {
 };
 
 const start = () => {
-  const app = createApp({ gtfs, vehicles, alerts, kd, klosok, stats, startedAt: new Date() });
+  const app = createApp({ gtfs, vehicles, alerts, klosok, stats, startedAt: new Date() });
   stats?.start();
 
   if (!config.admin.token) {
@@ -151,4 +141,4 @@ const start = () => {
 
 if (require.main === module) start();
 
-module.exports = { alerts, createApp, gtfs, kd, klosok, start, stopBackgroundWork, vehicles };
+module.exports = { alerts, createApp, gtfs, klosok, start, stopBackgroundWork, vehicles };

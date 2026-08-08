@@ -7,3 +7,6 @@
 - Prefers native map rendering (react-native-maps) over web-based map libraries in the mobile app ("dont use web maps"). Confidence: 0.8
 - Prefers the Expo workflow and latest Expo SDKs over native Xcode tooling (Xcode is not usable on their machine). Confidence: 0.7
 - Cares about app performance — proactively asks for optimization so the app runs smoother and loads faster. Confidence: 0.6
+- Strict TypeScript: never uses `any` or disables type checks (`# type: ignore`, `eslint-disable`) to make removed-or-refactored code compile — removal work must keep type safety intact. Confidence: 0.9
+- Validates app changes through the project's full gate — `npm run lint`, typecheck (`tsc --noEmit`), and `expo export`/`build` — treating all three as required before the change is considered done. Confidence: 0.85
+- Does not misrepresent HTTP cache freshness in the UI: a map payload whose ETag/timestamp persists across 304 revalidation responses must not be presented as "time since the latest successful poll"; avoids forcing server-side cache invalidation or adding per-second rerender timers purely to update a cosmetic freshness timestamp. Confidence: 0.8

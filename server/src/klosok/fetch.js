@@ -11,7 +11,7 @@ const { fetchWithTimeout } = require('../http');
 // scoped to this one endpoint: a dedicated undici Agent with
 // connect.rejectUnauthorized=false, attached only to the fetch below when
 // KLOSOK_TLS_ALLOW_INVALID_CERT is true (default false). It must never be used
-// for MPK, Open Data, KD or any other source, and it is not a global switch —
+// for MPK, Open Data or any other source, and it is not a global switch —
 // everything else in the process keeps full TLS verification.
 let klosokAgent = null;
 const getKlosokAgent = () => {

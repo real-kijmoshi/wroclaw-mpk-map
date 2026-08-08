@@ -45,28 +45,6 @@
     "ambiguityMeters": 75
   },
 
-  "kd": {
-    "enabled": false,
-    "gtfsUrl": "https://kd.kiedyprzyjedzie.pl/gtfs/kd_sample/google_transit.zip",
-    "username": "",
-    "password": "",
-    "refreshIntervalMs": 86400000,
-    "timeoutMs": 30000,
-    "cacheDir": "data/kd",
-    "useCache": true,
-    "realtimeUrl": "",
-    "realtimeUsername": "",
-    "realtimePassword": "",
-    "realtimePollIntervalMs": 15000,
-    "realtimeTimeoutMs": 10000,
-    "realtimeMaxAgeMs": 120000,
-    "publicRealtimeEnabled": true,
-    "publicRealtimeUrl": "https://kd.kiedyprzyjedzie.pl",
-    "publicRealtimePollIntervalMs": 30000,
-    "publicRealtimeChunkSize": 150,
-    "publicRealtimeTimeoutMs": 15000
-  },
-
   "klosok": {
     "enabled": true,
     "gtfsRtUrl": "https://mapadlugoleka.klosok.eu/vehicle_positions.pb",

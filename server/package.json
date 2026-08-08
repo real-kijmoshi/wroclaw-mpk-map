@@ -12,7 +12,6 @@
     "dev": "node --watch index.js",
     "test": "node --test test/*.test.js",
     "doctor": "node scripts/doctor.js",
-    "doctor:kd": "node scripts/doctor.js --kd",
     "doctor:klosok": "node scripts/doctor.js --klosok",
     "lint": "eslint .",
     "benchmark:progress": "node --expose-gc scripts/benchmark-progress.js",

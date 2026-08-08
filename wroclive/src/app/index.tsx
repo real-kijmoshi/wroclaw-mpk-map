@@ -18,7 +18,7 @@ import { usePoll } from '@/hooks/use-poll';
 import { useTheme } from '@/hooks/use-theme';
 import { getDepartures, getLocations, getShape, getStopsNear, getVehicle, type Stop } from '@/lib/api';
 import { REFRESH_MS } from '@/lib/config';
-import { formatAge, plural } from '@/lib/format';
+import { plural } from '@/lib/format';
 import { colorFor } from '@/lib/lines';
 import { usePreferences } from '@/lib/preferences';
 import { selectionStore, useSelectedLines } from '@/lib/selection';
@@ -105,10 +105,6 @@ export default function MapScreen() {
 
     const vehicle = fleetRef.current?.locations.find((entry) => entry.id === vehicleId);
     if (!vehicle) return;
-
-    // KD trains have no shape geometry in the feed, so there is nothing to
-    // fetch or draw — the vehicle board still lists their stops.
-    if (vehicle.id.indexOf('kd:') === 0) return;
 
     // Abort, not a flag: a vehicle tapped in quick succession would otherwise
     // leave the first request running its 503-retry backoff for up to a minute
@@ -217,11 +213,6 @@ export default function MapScreen() {
               <ThemedText type="smallBold" numberOfLines={1}>
                 {status.text}
               </ThemedText>
-              {!!fleet.data?.lastUpdated && (
-                <ThemedText type="small" themeColor="textSecondary" style={styles.statusAge}>
-                  {formatAge(fleet.data.lastUpdated)}
-                </ThemedText>
-              )}
             </View>
           </Glass>
 
@@ -366,7 +357,6 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     ...shadow,
   },
-  statusAge: { fontSize: 11, lineHeight: 14 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   filterChip: {
     flexDirection: 'row',

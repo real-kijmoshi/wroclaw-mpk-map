@@ -24,8 +24,10 @@ const KLOSOK_MAP_FIELDS = [
 // Extra fields present only in the full /locations body (not read by
 // toMapVehicle), so a change to them advances fullRevision without touching
 // mapRevision. `updatedAt` is per-vehicle and recomputed on every poll, so a
-// quiet Kłosok poll advances fullRevision but not mapRevision.
-const KLOSOK_FULL_EXTRA_FIELDS = ['updatedAt', 'currentStopSequence', 'tripHeadsign', 'vehicleId'];
+// quiet Kłosok poll advances fullRevision but not mapRevision. `startDate`
+// is part of the trip identity served in the full format — a date change means
+// a different day's timetable, so it must also advance fullRevision.
+const KLOSOK_FULL_EXTRA_FIELDS = ['updatedAt', 'currentStopSequence', 'startDate', 'vehicleId'];
 
 /** @returns {boolean} true when two Kłosok vehicles serialise identically in map format. */
 function mapVehicleEquals(a, b) {
@@ -361,7 +363,7 @@ class KlosokService {
   }
 
   /**
-   * Combine the Kłosok fleet with the Wrocław (MPK + Open Data + KD) list.
+   * Combine the Kłosok fleet with the Wrocław (MPK + Open Data) list.
    * Kłosok wins when it is fresh: a Wrocław vehicle a Kłosok one is clearly
    * the same bus as is dropped rather than shown twice.
    */

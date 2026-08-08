@@ -123,62 +123,12 @@ module.exports = {
     ambiguityMeters: num(process.env.VEHICLE_MATCH_AMBIGUITY_METERS, DEFAULTS.vehicles.ambiguityMeters),
   },
 
-  // Koleje Dolnośląskie: an independent provider with its own GTFS + GTFS-RT.
-  // KD is a separate service (src/kd/) merged into the API responses in
-  // routes.js — never into VehicleTracker, which stays MPK + Open Data only.
-  kd: {
-    enabled: bool(process.env.KD_ENABLED, DEFAULTS.kd.enabled),
-    gtfsUrl: process.env.KD_GTFS_URL || DEFAULTS.kd.gtfsUrl,
-    username: process.env.KD_GTFS_USERNAME || DEFAULTS.kd.username,
-    password: process.env.KD_GTFS_PASSWORD || DEFAULTS.kd.password,
-    // How often the static timetable is re-downloaded.
-    refreshIntervalMs: num(process.env.KD_GTFS_REFRESH_MS, DEFAULTS.kd.refreshIntervalMs),
-    timeoutMs: num(process.env.KD_GTFS_TIMEOUT_MS, DEFAULTS.kd.timeoutMs),
-    // Where the last good archive is kept so an outage does not empty the service.
-    cacheDir: process.env.KD_GTFS_CACHE_DIR || cachePath(DEFAULTS.kd.cacheDir),
-    useCache: bool(process.env.KD_GTFS_USE_CACHE, DEFAULTS.kd.useCache),
-
-    realtimeUrl: process.env.KD_GTFS_RT_URL || DEFAULTS.kd.realtimeUrl,
-    realtimeUsername: process.env.KD_GTFS_RT_USERNAME || DEFAULTS.kd.realtimeUsername,
-    realtimePassword: process.env.KD_GTFS_RT_PASSWORD || DEFAULTS.kd.realtimePassword,
-    realtimePollIntervalMs: num(
-      process.env.KD_GTFS_RT_POLL_MS,
-      DEFAULTS.kd.realtimePollIntervalMs,
-    ),
-    realtimeTimeoutMs: num(process.env.KD_GTFS_RT_TIMEOUT_MS, DEFAULTS.kd.realtimeTimeoutMs),
-    // Positions / updates older than this are dropped.
-    realtimeMaxAgeMs: num(process.env.KD_GTFS_RT_MAX_AGE_MS, DEFAULTS.kd.realtimeMaxAgeMs),
-
-    // Fallback live source for when KD has no official GTFS-RT feed (the
-    // kd_sample account only ever ships static GTFS — see src/kd/publicRealtime.js
-    // for how this was found and why it works). Only used when KD_GTFS_RT_URL
-    // is unset; the official feed always takes priority. Undocumented and
-    // unauthenticated, so it is off-switchable independently of KD itself.
-    publicRealtimeEnabled: bool(process.env.KD_PUBLIC_RT_ENABLED, DEFAULTS.kd.publicRealtimeEnabled),
-    publicRealtimeUrl: process.env.KD_PUBLIC_RT_BASE_URL || DEFAULTS.kd.publicRealtimeUrl,
-    publicRealtimePollIntervalMs: num(
-      process.env.KD_PUBLIC_RT_POLL_MS,
-      DEFAULTS.kd.publicRealtimePollIntervalMs,
-    ),
-    // How many stop ids go in one /api/departures?places= call — the site's
-    // backend answers 502 past ~250-300 ids in one request (measured, not
-    // documented), so this stays well under that.
-    publicRealtimeChunkSize: num(
-      process.env.KD_PUBLIC_RT_CHUNK_SIZE,
-      DEFAULTS.kd.publicRealtimeChunkSize,
-    ),
-    publicRealtimeTimeoutMs: num(
-      process.env.KD_PUBLIC_RT_TIMEOUT_MS,
-      DEFAULTS.kd.publicRealtimeTimeoutMs,
-    ),
-  },
-
   // PT KŁOSOK: a subcontractor running suburban bus lines (911, 921, 931, …)
-  // in Wrocław and the surrounding gminy. It publishes a public GTFS-RT feed
+  // in Wrocław and the surrounding gminas. It publishes a public GTFS-RT feed
   // of live positions but no timetable of its own — buses are matched against
-  // the Wrocław GTFS above (trip id, then route id, then vehicle/brigade), so
-  // this is a live-position source only. Independent of MPK and KD; an
-  // outage must never touch either.
+  // the Wrocław GTFS above (trip id, route id, then vehicle/brigade), so
+  // this is a live-position source only. Independent of MPK; an
+  // outage must never touch it.
   klosok: {
     enabled: bool(process.env.KLOSOK_ENABLED, DEFAULTS.klosok.enabled),
     gtfsRtUrl: process.env.KLOSOK_GTFS_RT_URL || DEFAULTS.klosok.gtfsRtUrl,

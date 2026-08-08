@@ -120,14 +120,6 @@
     const counts = health.gtfs.counts || {};
     const providers = health.alerts.providers || [];
     const stats = health.vehicles.stats || {};
-    const kd = health.kd || { enabled: false };
-    const kdStatic = kd.static || {};
-    const kdCounts = kdStatic.counts || {};
-    const kdRt = kd.realtime || {};
-
-    const kdReady = kd.enabled && kdStatic.state === 'ready';
-    const kdRtFresh = kdRt.state === 'ready' && Boolean(kdRt.lastSuccessAt) &&
-      Date.now() - Date.parse(kdRt.lastSuccessAt) < 120000;
 
     document.getElementById('content').innerHTML =
       '<div class="grid">' +
@@ -137,10 +129,6 @@
         card('Linie', health.lines.total, health.lines.trams + ' tramwajowych · ' + health.lines.buses + ' autobusowych') +
         card('Przystanki', counts.stops ?? '—', (counts.variants ?? '—') + ' wariantów tras') +
         card('Pamięć', (health.memoryMb ?? 0) + '<small> MB</small>', health.shapeCacheEntries + ' tras w cache') +
-        (kd.enabled
-          ? card('Pociągi KD', health.lines.trains ?? 0,
-              (kdCounts.stops ?? '—') + ' przystanków · ' + (kdRt.vehiclePositions ?? 0) + ' pojazdów RT')
-          : '') +
         (klosok.enabled
           ? card('Autobusy Kłosok', klosok.finalVehiclesAdded ?? 0,
               (klosok.freshPositions ?? '—') + ' świeżych pozycji · ' + (klosok.unmatched ?? '—') + ' bez linii')
@@ -165,19 +153,6 @@
           '<td>' + ago(openData.lastSuccessAt) + '</td>' +
           '<td><span class="pill ' + (openDataFresh ? 'ok' : 'bad') + '">' +
             escapeHtml(openDataFresh ? 'ok' : (openData.lastError ?? 'brak danych')) + '</span></td></tr>' +
-        (kd.enabled
-          ? '<tr><td>Rozkłady GTFS — KD</td>' +
-            '<td><code>' + escapeHtml(kdStatic.source ?? '—') + '</code></td>' +
-            '<td>' + ago(kdStatic.lastSuccessAt) + '</td>' +
-            '<td><span class="pill ' + (kdReady ? 'ok' : 'bad') + '">' +
-              escapeHtml(kdStatic.state) + (kdStatic.fromCache ? ' (cache)' : '') + '</span></td></tr>' +
-            '<tr><td>Pozycje pociągów — KD</td>' +
-            '<td><code>' + escapeHtml(kdRt.source ?? '—') + '</code></td>' +
-            '<td>' + ago(kdRt.lastSuccessAt) + '</td>' +
-            '<td><span class="pill ' + (kdRtFresh ? 'ok' : (kdRt.configured ? 'bad' : 'ok')) + '">' +
-              escapeHtml(kdRt.configured ? (kdRtFresh ? 'ok' : (kdRt.lastError ?? 'brak danych')) : 'nie skonfigurowany') +
-              '</span></td></tr>'
-          : '') +
         providers.map((provider) =>
           '<tr><td>Komunikaty</td>' +
             '<td><code>' + escapeHtml(provider.name) + '</code></td>' +
