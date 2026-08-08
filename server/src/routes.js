@@ -570,6 +570,9 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
     // with no history, and the GTFS block is only the last successful build.
     const performanceBlock = {
       vehicles: vehicles.performanceSnapshot ? vehicles.performanceSnapshot() : {},
+      openData: vehicles.openDataPerformanceSnapshot
+        ? vehicles.openDataPerformanceSnapshot()
+        : {},
       gtfs: gtfs.performance ?? null,
     };
     res.status(healthy ? 200 : 503).json({

@@ -210,12 +210,36 @@ class VehicleTracker {
       descriptionsReused: new Metric(),
       descriptionsRecomputed: new Metric(),
     };
+    /**
+     * Separate rolling metrics for the Open Data poll cycle, so its timings are
+     * visible independently of the MPK primary source. Same bounded Metric
+     * shape — O(1) memory, no history arrays.
+     */
+    this.openDataPerformance = {
+      totalPollMs: new Metric(),
+      fetchMs: new Metric(),
+      normalizationMs: new Metric(),
+      mergeMs: new Metric(),
+      descriptionMs: new Metric(),
+      snapshotBuildMs: new Metric(),
+      incomingVehicleCount: new Metric(),
+      acceptedVehicleCount: new Metric(),
+      descriptionsReused: new Metric(),
+      descriptionsRecomputed: new Metric(),
+    };
   }
 
   /** Rolling metrics as a flat object, for /health. */
   performanceSnapshot() {
     return Object.fromEntries(
       Object.entries(this.performance).map(([name, metric]) => [name, metric.snapshot()]),
+    );
+  }
+
+  /** Rolling Open Data poll metrics as a flat object, for /health. */
+  openDataPerformanceSnapshot() {
+    return Object.fromEntries(
+      Object.entries(this.openDataPerformance).map(([name, metric]) => [name, metric.snapshot()]),
     );
   }
 
@@ -449,7 +473,6 @@ class VehicleTracker {
   async poll() {
     const lines = this.getLines();
     if (!lines || (!lines.allBuses.length && !lines.allTrams.length)) {
-      this.#scheduleNextPoll();
       return this.status;
     }
 
@@ -545,7 +568,6 @@ class VehicleTracker {
       log(`Vehicle poll failed (${this.status.consecutiveFailures}x): ${error.message}`);
     }
 
-    this.#scheduleNextPoll();
     return this.status;
   }
 
@@ -558,12 +580,19 @@ class VehicleTracker {
   async pollOpenData() {
     this.openDataStatus.lastAttemptAt = new Date().toISOString();
 
+    const pollStart = performance.now();
+    const perf = this.openDataPerformance;
+
     try {
+      const fetchStart = performance.now();
       const rows = await fetchOpenDataVehicles(config.vehicles.openDataUrl, {
         timeoutMs: config.vehicles.openDataTimeoutMs,
       });
+      perf.fetchMs.record(performance.now() - fetchStart);
+      perf.incomingVehicleCount.record(rows.length);
 
       const now = Date.now();
+      const normalizeStart = performance.now();
       let accepted = 0;
 
       for (const row of rows) {
@@ -575,6 +604,8 @@ class VehicleTracker {
         accepted += 1;
         this.openDataFleet.set(vehicle.id, { ...vehicle, updatedAt: now });
       }
+      perf.normalizationMs.record(performance.now() - normalizeStart);
+      perf.acceptedVehicleCount.record(accepted);
 
       // Drop records that stopped being refreshed a while ago.
       const cutoff = now - config.vehicles.staleAfterMs * 2;
@@ -582,13 +613,21 @@ class VehicleTracker {
         if (vehicle.updatedAt < cutoff) this.openDataFleet.delete(id);
       }
 
+      const mergeStart = performance.now();
       this.#merge();
-      // Restore route projections after the merge too: the rebuild drops every
-      // trip (a fresh fleet has none), so without this an Open Data poll wiped
-      // the destination/next stop of every vehicle until the next MPK poll.
-      // The describe cache makes this near-free for vehicles that have not moved.
-      this.#describe();
+      perf.mergeMs.record(performance.now() - mergeStart);
+
+      const describeStart = performance.now();
+      const { reused, recomputed } = this.#describe();
+      perf.descriptionMs.record(performance.now() - describeStart);
+      perf.descriptionsReused.record(reused);
+      perf.descriptionsRecomputed.record(recomputed);
+
+      const snapshotStart = performance.now();
       this.#rebuildSnapshot();
+      perf.snapshotBuildMs.record(performance.now() - snapshotStart);
+
+      perf.totalPollMs.record(performance.now() - pollStart);
 
       this.openDataStatus = {
         ...this.openDataStatus,
@@ -600,13 +639,17 @@ class VehicleTracker {
 
       //if (accepted === 0) logger.warn('Open Data poll returned rows but none were usable');
     } catch (error) {
+      // The total duration is always recorded so a slow upstream shows up in
+      // /health even when every stage after it was skipped. Stage timings that
+      // never ran stay at their previous value — a failed fetch does not pretend
+      // merge or describe work happened.
+      perf.totalPollMs.record(performance.now() - pollStart);
       this.openDataStatus.consecutiveFailures += 1;
       this.openDataStatus.lastError = error.message;
       const log = this.openDataStatus.consecutiveFailures === 1 ? logger.debug : logger.warn;
       log(`Open Data poll failed (${this.openDataStatus.consecutiveFailures}x): ${error.message}`);
     }
 
-    this.#scheduleNextOpenDataPoll();
     return this.openDataStatus;
   }
 
@@ -631,7 +674,7 @@ class VehicleTracker {
   #scheduleNextPoll() {
     if (this._stopped) return;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.poll(), config.vehicles.pollIntervalMs);
+    this.timer = setTimeout(() => this.#runPollLoop(), config.vehicles.pollIntervalMs);
     this.timer.unref?.();
   }
 
@@ -640,10 +683,38 @@ class VehicleTracker {
     if (this._stopped) return;
     if (this.openDataTimer) clearTimeout(this.openDataTimer);
     this.openDataTimer = setTimeout(
-      () => this.pollOpenData(),
+      () => this.#runOpenDataPollLoop(),
       config.vehicles.openDataPollIntervalMs,
     );
     this.openDataTimer.unref?.();
+  }
+
+  /**
+   * One iteration of the MPK poll loop: run a poll, then arm the next from its
+   * completion. This is the sole owner that can enqueue an MPK timer — poll()
+   * no longer self-schedules and start() only calls here — so a double start()
+   * or a stop() racing an in-flight poll can never stack timers. A throw from
+   * poll() is logged but rescheduled, so one bad poll cannot drop the live fleet.
+   */
+  async #runPollLoop() {
+    try {
+      await this.poll();
+    } catch (error) {
+      logger.error(`MPK poll threw, rescheduling: ${error.message}`);
+    } finally {
+      this.#scheduleNextPoll();
+    }
+  }
+
+  /** One iteration of the Open Data poll loop — sole armer of its timer. */
+  async #runOpenDataPollLoop() {
+    try {
+      await this.pollOpenData();
+    } catch (error) {
+      logger.error(`Open Data poll threw, rescheduling: ${error.message}`);
+    } finally {
+      this.#scheduleNextOpenDataPoll();
+    }
   }
 
   start() {
@@ -653,18 +724,19 @@ class VehicleTracker {
     // First poll immediately. A placeholder handle keeps `timer` non-null from
     // the first instant — stop() and callers that inspect the timers rely on
     // it — and is replaced by the real arm the moment the first poll settles.
-    // The arm is scheduled from the *end* of each poll (see #scheduleNextPoll),
-    // so even the first tick can never overlap the poll that preceded it.
+    // The next arm is queued from the *end* of each #runPollLoop, which is the
+    // only code that schedules an MPK timer, so even the first tick can never
+    // overlap the poll that preceded it.
     this.timer = setTimeout(() => {}, 0);
     this.timer.unref?.();
-    this.poll().finally(() => this.#scheduleNextPoll());
+    void this.#runPollLoop();
 
     // The Open Data source runs on its own timer and its own failure state, so
     // either source can go down without taking the fleet with it.
     if (config.vehicles.openDataUrl) {
       this.openDataTimer = setTimeout(() => {}, 0);
       this.openDataTimer.unref?.();
-      this.pollOpenData().finally(() => this.#scheduleNextOpenDataPoll());
+      void this.#runOpenDataPollLoop();
     }
   }
 

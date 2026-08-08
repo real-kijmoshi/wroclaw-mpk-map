@@ -2,12 +2,60 @@
 
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { after, before, describe, it } = require('node:test');
+const { after, afterEach, before, beforeEach, describe, it } = require('node:test');
 
 const config = require('../src/config');
+const logger = require('../src/logger');
 const { GtfsStore } = require('../src/gtfs/store');
 const { VehicleTracker, bearing, normalizeVehicle } = require('../src/vehicles');
 const { buildFixtureZip } = require('./fixtures/gtfs');
+
+// A dependency-free fake clock for the scheduling tests below: it swaps in an
+// ordered timer queue that we advance on demand, flushing microtasks between
+// ticks so promise-backed poll loops settle before we assert. Restored on
+// uninstall() so the rest of this file keeps the real clock.
+const installFakeClock = () => {
+  const realSetTimeout = global.setTimeout;
+  const realClearTimeout = global.clearTimeout;
+  let now = 0;
+  const timers = [];
+  const flushMicrotasks = async () => {
+    for (let i = 0; i < 16; i++) await Promise.resolve();
+  };
+  const advance = async (ms) => {
+    now += ms;
+    for (let guard = 0; guard < 100; guard += 1) {
+      timers.sort((a, b) => a.fireAt - b.fireAt);
+      let fired = false;
+      for (const t of timers) {
+        if (!t.cancelled && t.fireAt <= now) {
+          t.cancelled = true;
+          const result = t.cb();
+          fired = true;
+          if (result && typeof result.then === 'function') await result.catch(() => {});
+        }
+      }
+      await flushMicrotasks();
+      if (!fired && !timers.some((t) => !t.cancelled && t.fireAt <= now)) return;
+    }
+  };
+  global.setTimeout = (cb, delay, ...args) => {
+    const entry = { fireAt: now + (delay ?? 0), cb, args, cancelled: false };
+    timers.push(entry);
+    return entry;
+  };
+  global.clearTimeout = (handle) => {
+    if (handle && !handle.cancelled) handle.cancelled = true;
+  };
+  return {
+    advance,
+    uninstall: () => {
+      global.setTimeout = realSetTimeout;
+      global.clearTimeout = realClearTimeout;
+      timers.length = 0;
+    },
+  };
+};
 
 describe('normalizeVehicle', () => {
   it('maps the MPK payload, where x is latitude', () => {
@@ -354,5 +402,152 @@ describe('VehicleTracker against a stand-in endpoint', () => {
 
     config.vehicles.sources = originalSources;
     config.vehicles.openDataUrl = originalOpenDataUrl;
+  });
+});
+
+describe('VehicleTracker poll scheduling (fake timers)', () => {
+  const lines = { allTrams: ['4'], allBuses: ['128'] };
+  let clock;
+  let originalInterval;
+  let originalOpenDataUrl;
+  let originalOpenDataInterval;
+
+  beforeEach(() => {
+    originalInterval = config.vehicles.pollIntervalMs;
+    originalOpenDataUrl = config.vehicles.openDataUrl;
+    originalOpenDataInterval = config.vehicles.openDataPollIntervalMs;
+    clock = installFakeClock();
+  });
+
+  afterEach(() => {
+    clock.uninstall();
+    config.vehicles.pollIntervalMs = originalInterval;
+    config.vehicles.openDataUrl = originalOpenDataUrl;
+    config.vehicles.openDataPollIntervalMs = originalOpenDataInterval;
+  });
+
+  // A tracker whose poll is a synchronous stand-in: it lets us count poll runs
+  // without touching the network, so the clock advances deterministically.
+  const trackerWithMockPoll = (poll) => {
+    const tracker = new VehicleTracker(() => lines);
+    tracker.poll = poll;
+    return tracker;
+  };
+
+  it('start() runs one immediate poll and arms exactly one future timer', async () => {
+    config.vehicles.pollIntervalMs = 1000;
+    config.vehicles.openDataUrl = null;
+    let polls = 0;
+    const tracker = trackerWithMockPoll(async () => { polls += 1; return tracker.status; });
+
+    tracker.start();
+    await clock.advance(0);
+
+    assert.equal(polls, 1, 'one immediate poll');
+    assert.ok(tracker.timer, 'exactly one future timer is armed');
+    assert.equal(tracker.openDataTimer, null, 'no open-data timer while the source is disabled');
+    tracker.stop();
+  });
+
+  it('start() twice does not start a second loop', async () => {
+    config.vehicles.pollIntervalMs = 1000;
+    config.vehicles.openDataUrl = null;
+    let polls = 0;
+    const tracker = trackerWithMockPoll(async () => { polls += 1; return tracker.status; });
+
+    tracker.start();
+    tracker.start();
+    await clock.advance(0);
+
+    assert.equal(polls, 1, 'the guard at the top of start() skips the second run');
+    assert.ok(tracker.timer, 'a single armed timer, not two');
+    tracker.stop();
+  });
+
+  it('a completed poll re-arms exactly one next timer', async () => {
+    config.vehicles.pollIntervalMs = 1000;
+    config.vehicles.openDataUrl = null;
+    let polls = 0;
+    const tracker = trackerWithMockPoll(async () => { polls += 1; return tracker.status; });
+
+    tracker.start();
+    await clock.advance(0);
+    assert.equal(polls, 1);
+    assert.ok(tracker.timer, 'one future timer after the first poll settles');
+
+    await clock.advance(1000);
+    assert.equal(polls, 2, 'the single future timer fired exactly one poll');
+    assert.ok(tracker.timer, 'the loop re-armed itself once');
+    tracker.stop();
+  });
+
+  it('a poll that throws still arms exactly one next timer', async () => {
+    config.vehicles.pollIntervalMs = 1000;
+    config.vehicles.openDataUrl = null;
+    let polls = 0;
+    const tracker = trackerWithMockPoll(async () => { polls += 1; throw new Error('boom'); });
+
+    const logged = [];
+    const originalError = logger.error;
+    logger.error = (...args) => logged.push(args.join(' '));
+    try {
+      tracker.start();
+      await clock.advance(0);
+      assert.equal(polls, 1, 'the immediate poll ran even though it threw');
+      assert.ok(tracker.timer, 'a throwing poll still arms one next timer');
+      assert.equal(logged.length, 1, 'the throw is logged loudly, not swallowed');
+    } finally {
+      logger.error = originalError;
+      tracker.stop();
+    }
+  });
+
+  it('stop() during an in-flight poll leaves zero future timers', async () => {
+    config.vehicles.pollIntervalMs = 1000;
+    config.vehicles.openDataUrl = null;
+    let polls = 0;
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const tracker = trackerWithMockPoll(async () => { polls += 1; await gate; return tracker.status; });
+
+    tracker.start();
+    await clock.advance(0);
+    assert.equal(polls, 1, 'the immediate poll is in flight');
+    assert.ok(tracker.timer, 'a placeholder timer is held while the poll is in flight');
+
+    tracker.stop();
+    assert.equal(tracker.timer, null, 'stop() clears the timer immediately');
+
+    release();
+    await clock.advance(0);
+    assert.equal(tracker.timer, null, 'no timer is re-armed after stop()');
+    assert.equal(polls, 1, 'no second poll runs after stop()');
+  });
+
+  it('the open-data source follows the same single-owner lifecycle', async () => {
+    config.vehicles.pollIntervalMs = 1000;
+    config.vehicles.openDataPollIntervalMs = 1000;
+    config.vehicles.openDataUrl = 'http://127.0.0.1:1/open-data';
+    let mpkPolls = 0;
+    let odPolls = 0;
+    const tracker = new VehicleTracker(() => lines);
+    tracker.poll = async () => { mpkPolls += 1; return tracker.status; };
+    tracker.pollOpenData = async () => { odPolls += 1; return tracker.openDataStatus; };
+
+    tracker.start();
+    await clock.advance(0);
+
+    assert.equal(mpkPolls, 1, 'one MPK poll');
+    assert.equal(odPolls, 1, 'one open-data poll');
+    assert.ok(tracker.timer, 'MPK timer armed');
+    assert.ok(tracker.openDataTimer, 'open-data timer armed');
+
+    await clock.advance(1000);
+    assert.equal(mpkPolls, 2, 'one MPK re-arm');
+    assert.equal(odPolls, 2, 'one open-data re-arm');
+
+    tracker.stop();
+    assert.equal(tracker.timer, null);
+    assert.equal(tracker.openDataTimer, null);
   });
 });

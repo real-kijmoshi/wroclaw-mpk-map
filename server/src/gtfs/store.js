@@ -47,6 +47,15 @@ const HEADING_PENALTY_METERS = 400;
  */
 class GtfsStore {
   /**
+   * Reference to the most recently committed, live snapshot state, or null when
+   * no usable timetable is installed (freshly constructed, or after reset()).
+   * build() sets it when it commits a real candidate; reset() clears it. It must
+   * NOT be derived from `generation`: generation is monotonically increasing and
+   * survives a reset, so `generation > 0` is not a proof that a snapshot exists.
+   */
+  #activeSnapshot = null;
+
+  /**
    * @param {{ downloader?: (options: object) => Promise<object> }} [options]
    *   `downloader` is how `refresh()` obtains an archive — injectable for
    *   tests so atomic refresh can be exercised without the network. The
@@ -87,6 +96,7 @@ class GtfsStore {
    * want to forget everything.
    */
   reset() {
+    this.#activeSnapshot = null;
     this.#commit(this.#emptyState());
     this.status.state = 'empty';
     this.status.refreshing = false;
@@ -169,6 +179,11 @@ class GtfsStore {
     return this.status.state === 'ready';
   }
 
+  /** True when build() has committed a live snapshot and reset() has not since wiped it. */
+  get hasActiveSnapshot() {
+    return this.#activeSnapshot !== null;
+  }
+
   /**
    * Download the newest archive and rebuild every index, transactionally.
    *
@@ -193,8 +208,10 @@ class GtfsStore {
   async #doRefresh() {
     // Only the first-ever load is a cold boot; a refresh over a live snapshot
     // keeps serving it, so `state` must not leave 'ready' and isReady must not
-    // flicker.
-    const hasSnapshot = this.generation > 0;
+    // flicker. `generation` must not be the test — it is monotonic and survives
+    // a reset() that wipes the live snapshot — so the active-snapshot reference
+    // is what gates the loading-vs-ready and failed-vs-loading transitions.
+    const hasSnapshot = this.hasActiveSnapshot;
     this.status.refreshing = true;
     if (!hasSnapshot) this.status.state = 'loading';
 
@@ -253,6 +270,7 @@ class GtfsStore {
     // The candidate is fully built and valid — swap it in as one block, then
     // bump the generation so caches keyed on timetable data know to rebuild.
     this.#commit(state);
+    this.#activeSnapshot = state;
     this.generation += 1;
     return counts;
   }

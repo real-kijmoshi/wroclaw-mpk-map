@@ -51,6 +51,11 @@ const fakeVehicles = {
     fetchMs: { latest: 1.0, ewma: 1.0, max: 1.0, count: 1 },
     acceptedVehicleCount: { latest: 2, ewma: 2, max: 2, count: 1 },
   }),
+  openDataPerformanceSnapshot: () => ({
+    totalPollMs: { latest: 2.0, ewma: 2.0, max: 2.0, count: 1 },
+    fetchMs: { latest: 1.0, ewma: 1.0, max: 1.0, count: 1 },
+    acceptedVehicleCount: { latest: 1, ewma: 1, max: 1, count: 1 },
+  }),
 };
 
 const fakeAlerts = {
@@ -310,6 +315,19 @@ describe('HTTP API', () => {
       max: 1.5,
       count: 1,
     });
+    // Open Data metrics appear alongside vehicles and GTFS, same shape.
+    assert.deepEqual(body.performance.openData.totalPollMs, {
+      latest: 2.0,
+      ewma: 2.0,
+      max: 2.0,
+      count: 1,
+    });
+    assert.equal(body.performance.openData.fetchMs.count, 1);
+    assert.equal(body.performance.openData.acceptedVehicleCount.latest, 1);
+    // The three existing performance sections are all still present.
+    assert.ok(body.performance.vehicles, 'vehicles metrics remain');
+    assert.ok(body.performance.openData, 'openData metrics present');
+    assert.ok(body.performance.gtfs, 'gtfs metrics remain');
     const gtfsPerf = body.performance.gtfs.lastBuild;
     assert.ok(Number.isFinite(gtfsPerf.totalMs));
     assert.ok(Number.isFinite(gtfsPerf.stages.variants));

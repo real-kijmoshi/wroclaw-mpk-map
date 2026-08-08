@@ -206,4 +206,61 @@ describe('atomic GTFS refresh', () => {
     assert.equal(store.status.state, 'failed');
     assert.equal(store.generation, 0, 'no generation without a snapshot');
   });
+
+  it('reset then a failed refresh stays not ready even though generation is non-zero', async () => {
+    const store = await buildToGeneration();
+    const generationBefore = store.generation;
+    assert.equal(store.isReady, true);
+    assert.equal(store.hasActiveSnapshot, true);
+
+    store.reset();
+    // reset() clears the live snapshot but leaves generation monotonic: it is a
+    // cache-invalidation sequence number, never a proof that data is installed.
+    assert.equal(store.hasActiveSnapshot, false, 'reset clears the active snapshot');
+    assert.equal(store.isReady, false, 'reset leaves the store empty');
+    assert.equal(store.status.state, 'empty');
+    assert.equal(store.generation, generationBefore, 'generation is monotonic, not zeroed');
+
+    store.downloader = failingDownload;
+    await assert.rejects(() => store.refresh(), /network down/);
+    // This is the regression this test guards: a failed refresh must not revive
+    // readiness merely because generation was previously non-zero.
+    assert.equal(store.hasActiveSnapshot, false);
+    assert.equal(store.isReady, false, 'failed refresh after reset never looks ready');
+    assert.equal(store.status.state, 'failed');
+    assert.equal(store.generation, generationBefore, 'generation unchanged on failure');
+  });
+
+  it('reset then a successful refresh installs a fresh, active snapshot', async () => {
+    const store = await buildToGeneration();
+    const generationBefore = store.generation;
+    assert.equal(store.isReady, true);
+
+    store.reset();
+    assert.equal(store.hasActiveSnapshot, false, 'snapshot gone before the rebuild');
+
+    store.downloader = archiveOf(fixtureB);
+    await store.refresh();
+
+    assert.equal(store.isReady, true, 'the fresh snapshot is ready');
+    assert.equal(store.hasActiveSnapshot, true, 'a new snapshot is now active');
+    assert.equal(store.generation, generationBefore + 1, 'generation advanced past the reset one');
+    assert.equal(store.getVariants('4')[0].points[0], 52.0, 'new shape geometry served');
+  });
+
+  it('generation is monotonic across resets and rebuilds', async () => {
+    const store = new GtfsStore({ downloader: archiveOf(fixtureA) });
+    assert.equal(store.generation, 0);
+
+    await store.refresh();
+    assert.equal(store.generation, 1);
+
+    store.reset();
+    assert.equal(store.generation, 1, 'reset does not recycle generation back to zero');
+    assert.equal(store.hasActiveSnapshot, false);
+
+    await store.refresh();
+    assert.equal(store.generation, 2, 'a following build advances to a fresh generation');
+    assert.equal(store.hasActiveSnapshot, true);
+  });
 });

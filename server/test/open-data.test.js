@@ -810,4 +810,108 @@ describe('VehicleTracker with two sources', () => {
     await new Promise((resolve) => setTimeout(resolve, 60));
     assert.equal(mpkPolls + odPolls, pollsAtStop, 'no poll runs after stop()');
   });
+
+  it('records Open Data poll timings on success', async () => {
+    config.vehicles.sources = [mpkUrl];
+    config.vehicles.openDataUrl = openDataUrl;
+
+    const tracker = new VehicleTracker(() => lines);
+    await tracker.pollOpenData();
+
+    const snap = tracker.openDataPerformanceSnapshot();
+    for (const name of [
+      'totalPollMs',
+      'fetchMs',
+      'normalizationMs',
+      'mergeMs',
+      'descriptionMs',
+      'snapshotBuildMs',
+      'incomingVehicleCount',
+      'acceptedVehicleCount',
+      'descriptionsReused',
+      'descriptionsRecomputed',
+    ]) {
+      assert.ok(snap[name], `metric ${name} exists`);
+      assert.equal(snap[name].count, 1, `${name} recorded once`);
+      assert.ok(Number.isFinite(snap[name].latest), `${name}.latest is a number`);
+    }
+    assert.equal(snap.incomingVehicleCount.latest, 1);
+    assert.equal(snap.acceptedVehicleCount.latest, 1);
+  });
+
+  it('failed Open Data fetch records totalPollMs but not stage timings', async () => {
+    config.vehicles.sources = [mpkUrl];
+    config.vehicles.openDataUrl = 'http://127.0.0.1:1/dead-od';
+
+    const tracker = new VehicleTracker(() => lines);
+    await tracker.pollOpenData();
+
+    const snap = tracker.openDataPerformanceSnapshot();
+    // Total duration is always recorded, even on failure.
+    assert.equal(snap.totalPollMs.count, 1);
+    assert.ok(Number.isFinite(snap.totalPollMs.latest));
+    // Fetch failed — its ms was never recorded, so count stays 0.
+    assert.equal(snap.fetchMs.count, 0);
+    assert.equal(snap.normalizationMs.count, 0);
+    assert.equal(snap.mergeMs.count, 0);
+    assert.equal(snap.descriptionMs.count, 0);
+    assert.equal(snap.snapshotBuildMs.count, 0);
+  });
+
+  it('preserves successful stage timings after a failed fetch', async () => {
+    config.vehicles.sources = [mpkUrl];
+    config.vehicles.openDataUrl = openDataUrl;
+
+    const tracker = new VehicleTracker(() => lines);
+    await tracker.pollOpenData();
+
+    const before = tracker.openDataPerformanceSnapshot();
+    assert.equal(before.fetchMs.count, 1);
+    assert.ok(Number.isFinite(before.fetchMs.latest));
+
+    // Now fail: switch to a dead URL.
+    config.vehicles.openDataUrl = 'http://127.0.0.1:1/dead-od';
+    await tracker.pollOpenData();
+
+    const after = tracker.openDataPerformanceSnapshot();
+    // totalPollMs got a second recording from the failed poll.
+    assert.equal(after.totalPollMs.count, 2);
+    // Fetch failed: its ms was NOT re-recorded, so it keeps the successful value.
+    assert.equal(after.fetchMs.count, 1, 'failed fetch does not add a bogus stage timing');
+  });
+
+  it('updates EWMA and max across repeated Open Data polls', async () => {
+    config.vehicles.sources = [mpkUrl];
+    config.vehicles.openDataUrl = openDataUrl;
+
+    const tracker = new VehicleTracker(() => lines);
+    for (let i = 0; i < 5; i += 1) {
+      await tracker.pollOpenData();
+    }
+
+    const snap = tracker.openDataPerformanceSnapshot();
+    assert.equal(snap.totalPollMs.count, 5, 'accumulates across polls');
+    assert.ok(Number.isFinite(snap.totalPollMs.ewma), 'EWMA is computed');
+    assert.ok(snap.totalPollMs.max >= snap.totalPollMs.latest, 'max >= latest');
+    // Counters also accumulate.
+    assert.equal(snap.incomingVehicleCount.count, 5);
+    assert.equal(snap.acceptedVehicleCount.count, 5);
+  });
+
+  it('keeps Open Data metrics bounded (no history arrays)', async () => {
+    config.vehicles.sources = [mpkUrl];
+    config.vehicles.openDataUrl = openDataUrl;
+
+    const tracker = new VehicleTracker(() => lines);
+    for (let i = 0; i < 50; i += 1) {
+      await tracker.pollOpenData();
+    }
+
+    const snap = tracker.openDataPerformanceSnapshot();
+    assert.equal(snap.totalPollMs.count, 50, 'count grows but state is O(1)');
+    // Each snapshot metric has exactly the four bounded fields.
+    for (const metric of Object.values(snap)) {
+      assert.deepEqual(Object.keys(metric), ['latest', 'ewma', 'max', 'count']);
+    }
+  });
 });

@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 'use strict';
 
 /* global performance */
@@ -5,10 +6,12 @@
 /**
  * Micro-benchmark for the Open Data merge hot path.
  *
- * Runs mergeFleet over a synthetic but realistic fleet — a few hundred MPK
- * vehicles clustered along per-line corridors (like trams on a track) plus a
- * few hundred Open Data records — and reports per-iteration wall time and an
- * approximate heap delta. No network, no dependencies.
+ * Compares the pre-optimization reference implementation (filter/map/sort per
+ * Open Data record) against the current one-pass implementation, across several
+ * realistic fleet sizes. No network, no dependencies.
+ *
+ * Run with `npm run benchmark:open-data`, which enables --expose-gc so heap
+ * deltas mean something.
  *
  * Why there is deliberately no spatial index:
  *
@@ -25,13 +28,97 @@
  *
  * Allocation stats are approximate by design: heapUsed deltas between
  * explicit GC runs include V8's own noise, and this script avoids pulling in
- * a profiler dependency. Run with `npm run benchmark:open-data`, which
- * enables --expose-gc so the deltas mean something.
+ * a profiler dependency.
  */
 
 const { mergeFleet } = require('../src/open-data');
+const { distanceMeters } = require('../src/gtfs/geo');
 
 const MERGE_OPTIONS = { matchMaxMeters: 250, dedupeMeters: 350, ambiguityMeters: 75 };
+
+// ---------------------------------------------------------------------------
+// Reference implementation (frozen in time).
+//
+// This is the pre-optimization version: for every Open Data record it builds a
+// candidate array of same-line, same-type MPK vehicles, maps each to a distance,
+// and sorts that array to find the nearest two. Deliberately duplicated here
+// (not imported from tests) so the benchmark stays a standalone script.
+// ---------------------------------------------------------------------------
+
+const mergeFleetReference = (mpkFleet, openDataFleet, { matchMaxMeters, dedupeMeters, ambiguityMeters }) => {
+  const fleet = new Map();
+  for (const [id, vehicle] of mpkFleet) {
+    fleet.set(id, { ...vehicle, source: 'mpk' });
+  }
+
+  const byLine = new Map();
+  for (const vehicle of mpkFleet.values()) {
+    if (!byLine.has(vehicle.line)) byLine.set(vehicle.line, []);
+    byLine.get(vehicle.line).push(vehicle);
+  }
+
+  const used = new Set();
+
+  for (const od of openDataFleet.values()) {
+    const candidates = (byLine.get(od.line) ?? [])
+      .filter((mpk) => mpk.type === od.type)
+      .map((mpk) => ({ mpk, meters: distanceMeters(mpk.lat, mpk.lon, od.lat, od.lon) }))
+      .sort((a, b) => a.meters - b.meters);
+
+    const nearest = candidates[0];
+    let matched = null;
+
+    if (nearest && nearest.meters <= matchMaxMeters && !used.has(nearest.mpk.id)) {
+      const second = candidates[1];
+      const ambiguous =
+        second &&
+        second.meters <= matchMaxMeters &&
+        second.meters - nearest.meters < ambiguityMeters;
+      if (!ambiguous) matched = nearest.mpk;
+    }
+
+    if (matched) {
+      used.add(matched.id);
+      const entry = fleet.get(matched.id);
+      entry.source = 'merged';
+      entry.vehicleNumber = od.vehicleNumber;
+      entry.brigade = od.brigade;
+      entry.positionUpdatedAt = od.positionUpdatedAt;
+      continue;
+    }
+
+    const nearMpk = (byLine.get(od.line) ?? []).some(
+      (mpk) => distanceMeters(mpk.lat, mpk.lon, od.lat, od.lon) <= dedupeMeters,
+    );
+    if (nearMpk) continue;
+
+    fleet.set(od.id, {
+      id: od.id,
+      line: od.line,
+      type: od.type,
+      lat: od.lat,
+      lon: od.lon,
+      heading: null,
+      vehicleNumber: od.vehicleNumber,
+      brigade: od.brigade,
+      positionUpdatedAt: od.positionUpdatedAt,
+      source: 'open-data',
+      updatedAt: od.updatedAt,
+    });
+  }
+
+  const stats = { mpk: 0, merged: 0, openData: 0, total: fleet.size, activeLines: 0 };
+  const lines = new Set();
+  for (const vehicle of fleet.values()) {
+    lines.add(vehicle.line);
+    if (vehicle.source === 'merged') stats.merged += 1;
+    else if (vehicle.source === 'open-data') stats.openData += 1;
+    else stats.mpk += 1;
+  }
+  stats.activeLines = lines.size;
+
+  return { fleet, stats };
+};
 
 /** Deterministic PRNG (mulberry32) so the benchmark is reproducible. */
 const mulberry32 = (seed) => {
@@ -122,50 +209,97 @@ const makeFleet = (rng, lineCount, mpkCount, odCount) => {
   return { mpkFleet, openDataFleet };
 };
 
-const main = () => {
-  const rng = mulberry32(20260808);
-  const lineCount = 60;
-  const mpkCount = 600;
-  const odCount = 400;
-  const iterations = 100;
-
-  const { mpkFleet, openDataFleet } = makeFleet(rng, lineCount, mpkCount, odCount);
-  const distinctLines = new Set([...mpkFleet.values()].map((v) => v.line)).size;
-
-  // Warm-up: JIT, and let the fleet reach a steady state.
-  mergeFleet(mpkFleet, openDataFleet, MERGE_OPTIONS);
-  mergeFleet(mpkFleet, openDataFleet, MERGE_OPTIONS);
-
-  const gc = typeof global.gc === 'function' ? global.gc : null;
-  if (gc) gc();
-  const heapBefore = process.memoryUsage().heapUsed;
+/**
+ * Time a function over N iterations of the same fleet pair, returning the
+ * total milliseconds and per-iteration average.
+ */
+const timeRun = (label, fn, iterations) => {
+  // Warm-up: JIT and let V8 optimize both paths before measuring.
+  fn();
+  fn();
 
   const start = performance.now();
-  for (let i = 0; i < iterations; i += 1) {
-    mergeFleet(mpkFleet, openDataFleet, MERGE_OPTIONS);
-  }
+  for (let i = 0; i < iterations; i += 1) fn();
   const elapsed = performance.now() - start;
 
-  let heapDeltaBytes = null;
-  if (gc) {
-    gc();
-    heapDeltaBytes = process.memoryUsage().heapUsed - heapBefore;
+  return { label, elapsed, perIteration: elapsed / iterations, iterations };
+};
+
+/** Sanity-check that the reference and optimized produce identical results. */
+const assertSameFleet = (actual, expected, message) => {
+  if (actual.size !== expected.size) {
+    throw new Error(`${message}: size ${actual.size} !== ${expected.size}`);
   }
+  const actualKeys = [...actual.keys()].sort();
+  const expectedKeys = [...expected.keys()].sort();
+  for (let i = 0; i < actualKeys.length; i += 1) {
+    if (actualKeys[i] !== expectedKeys[i]) {
+      throw new Error(`${message}: key mismatch at ${i}`);
+    }
+  }
+  for (const key of actualKeys) {
+    const a = actual.get(key);
+    const e = expected.get(key);
+    if (JSON.stringify(a) !== JSON.stringify(e)) {
+      throw new Error(`${message}: vehicle ${key} differs`);
+    }
+  }
+};
 
-  const totalMpk = mpkFleet.size;
-  const totalOd = openDataFleet.size;
-  const perIteration = elapsed / iterations;
+const main = () => {
+  const gc = typeof global.gc === 'function' ? global.gc : null;
 
-  console.log('mergeFleet benchmark (single-pass implementation)');
-  console.log(`  fleet:           ${totalMpk} MPK vehicles across ${distinctLines} lines, ${totalOd} Open Data records`);
-  console.log(`  iterations:      ${iterations}`);
-  console.log(`  total:           ${elapsed.toFixed(1)} ms`);
-  console.log(`  per iteration:   ${perIteration.toFixed(3)} ms (${(totalOd / (perIteration / 1000)).toFixed(0)} records/s)`);
-  if (heapDeltaBytes === null) {
-    console.log('  heap delta:      skipped (run `npm run benchmark:open-data` for --expose-gc)');
-  } else {
-    const sign = heapDeltaBytes >= 0 ? '+' : '-';
-    console.log(`  heap delta:      ${sign}${(Math.abs(heapDeltaBytes) / 1024).toFixed(1)} KiB per ${iterations} iterations`);
+  const configurations = [
+    { label: 'small', mpk: 50, od: 20, lineCount: 6, iterations: 1000 },
+    { label: 'typical', mpk: 250, od: 100, lineCount: 12, iterations: 200 },
+    { label: 'heavy', mpk: 700, od: 300, lineCount: 24, iterations: 50 },
+  ];
+
+  console.log('Open Data merge: reference (filter/map/sort) vs optimized (one-pass)');
+  console.log();
+
+  for (const { label, mpk: mpkCount, od: odCount, lineCount, iterations } of configurations) {
+    const rng = mulberry32(20260808);
+    const { mpkFleet, openDataFleet } = makeFleet(rng, lineCount, mpkCount, odCount);
+
+    // Correctness check: both implementations must agree.
+    const ref = mergeFleetReference(mpkFleet, openDataFleet, MERGE_OPTIONS);
+    const opt = mergeFleet(mpkFleet, openDataFleet, MERGE_OPTIONS);
+    assertSameFleet(opt.fleet, ref.fleet, `${label}: fleet mismatch`);
+    if (JSON.stringify(opt.stats) !== JSON.stringify(ref.stats)) {
+      throw new Error(`${label}: stats mismatch ${JSON.stringify(opt.stats)} !== ${JSON.stringify(ref.stats)}`);
+    }
+
+    // Heap delta: measure only the difference in allocations between runs.
+    if (gc) gc();
+    const heapBefore = process.memoryUsage().heapUsed;
+
+    const refResult = timeRun('reference', () => mergeFleetReference(mpkFleet, openDataFleet, MERGE_OPTIONS), iterations);
+    const optResult = timeRun('optimized', () => mergeFleet(mpkFleet, openDataFleet, MERGE_OPTIONS), iterations);
+
+    let heapDeltaBytes = null;
+    if (gc) {
+      gc();
+      heapDeltaBytes = process.memoryUsage().heapUsed - heapBefore;
+    }
+
+    const speedup = refResult.elapsed / optResult.elapsed;
+
+    console.log(`${label.toUpperCase()}: MPK=${mpkCount}, OpenData=${odCount} (${iterations} iterations)`);
+    console.log();
+    console.log(`  REFERENCE:   old filter/map/sort implementation`);
+    console.log(`  reference:   ${refResult.elapsed.toFixed(1)} ms total, ${refResult.perIteration.toFixed(3)} ms/iter`);
+    console.log();
+    console.log(`  OPTIMIZED:   new one-pass implementation`);
+    console.log(`  optimized:   ${optResult.elapsed.toFixed(1)} ms total, ${optResult.perIteration.toFixed(3)} ms/iter`);
+    console.log(`  speedup:     ${speedup.toFixed(1)}x`);
+    if (heapDeltaBytes !== null) {
+      const sign = heapDeltaBytes >= 0 ? '+' : '-';
+      console.log(`  heap delta:  ${sign}${(Math.abs(heapDeltaBytes) / 1024).toFixed(1)} KiB`);
+    } else {
+      console.log('  heap delta:  skipped (run with --expose-gc for allocation stats)');
+    }
+    console.log();
   }
 };
 
