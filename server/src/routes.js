@@ -35,6 +35,35 @@ const noStore = (req, res, next) => {
   next();
 };
 
+/**
+ * GTFS-derived shape endpoints: allow caching but force revalidation, so a
+ * proxy or browser can never serve a generation-old geometry without checking
+ * the server. Uses a strong ETag (sha1 of the body) checked manually —
+ * Express 5's built-in weak-ETag req.fresh comparison does not return 304
+ * for If-None-Match on this platform.
+ */
+const revalidateShape = (req, res, next) => {
+  res.set('Cache-Control', 'public, no-cache');
+  next();
+};
+
+/**
+ * Serialize JSON, set a strong ETag, and answer 304 on If-None-Match match.
+ * Used by shape endpoints (which carry Cache-Control: no-cache) and any
+ * future route that needs a strong, revalidating ETag instead of relying on
+ * Express's built-in (weak) comparison.
+ */
+const conditionalJson = (req, res, payload) => {
+  const body = JSON.stringify(payload);
+  const etag = `"${crypto.createHash('sha1').update(body).digest('hex')}"`;
+  if (req.headers['if-none-match'] && req.headers['if-none-match'] === etag) {
+    return res.status(304).end();
+  }
+  res.set('ETag', etag);
+  res.set('Content-Type', 'application/json; charset=utf-8');
+  return res.send(body);
+};
+
 /** Compact wire format used by the current app: half the bytes of the legacy one. */
 const toCompact = (variant) => {
   // Matching keeps the store's finer geometry; drawing gets a slightly
@@ -194,12 +223,27 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
    * seconds, and without this each request re-runs the Kłosok dedup, re-maps
    * the whole fleet into wire objects and re-stringifies a payload whose
    * inputs changed not at all since the last poll. The merged fleet is keyed
-   * on the sources' revision counters; serialized bodies additionally key on
+   * on the sources' content revisions (snapshotRevision), incremented only when
+   * /locations-visible state changes; serialized bodies additionally key on
    * the query that shapes them.
+   *
+   * Freshness is checked on *every* request, before any body-cache lookup —
+   * a cached serialized body must never be served past the moment the fleet it
+   * represents has changed. allLocations() compares the combined key and clears
+   * the body cache when it has; a body-cache hit on its own never skips this.
    */
   let mergedCache = { key: null, merged: null };
   /** `line|type|format` -> { etag, body } */
   const locationsBodyCache = new Map();
+
+  /**
+   * Combined public-state key for the merged fleet. Incremented only when
+   * /locations-visible state changes in any of the three vehicle sources.
+   * Using snapshotRevision (not pollRevision) means a quiet poll — one that
+   * observed identical positions — does not invalidate cached bodies.
+   */
+  const combinedFleetKey = () =>
+    `${vehicles.snapshotRevision ?? 0}|${klosok?.snapshotRevision ?? 0}|${kd?.snapshotRevision ?? 0}`;
 
   /**
    * Merge the Wrocław, PT KŁOSOK (when enabled) and Koleje Dolnośląskie
@@ -209,8 +253,8 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
    * Data for the same physical bus), then KD is appended.
    */
   const allLocations = () => {
-    const key = `${vehicles.revision}|${klosok?.revision ?? 0}|${kd?.snapshot.lastUpdated ?? ''}`;
-    if (mergedCache.key !== key || mergedCache.merged === null) {
+    const key = combinedFleetKey();
+    if (key !== mergedCache.key || mergedCache.merged === null) {
       const wroclaw = vehicles.snapshot.locations;
       const merged = klosok?.enabled ? klosok.mergeLocations(wroclaw) : wroclaw;
       mergedCache = {
@@ -308,12 +352,18 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
   router.get('/locations', noStore, (req, res) => {
     const { line, type, format } = req.query;
     const variantKey = `${line ?? ''}|${type ?? ''}|${format ?? ''}`;
+
+    // Check freshness before any body-cache lookup. If the combined revision
+    // changed since the last request, allLocations() clears the body cache —
+    // so a stale serialized body is never served.
+    const merged = allLocations();
+
     let entry = locationsBodyCache.get(variantKey);
 
     if (!entry) {
       const snapshot = vehicles.snapshot;
       const wanted = line ? new Set(String(line).split(',').map((item) => item.trim())) : null;
-      const locations = allLocations().filter(
+      const locations = merged.filter(
         (vehicle) => (!wanted || wanted.has(vehicle.line)) && (!type || vehicle.type === type),
       );
 
@@ -372,7 +422,7 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
     // Open-data vehicles go through the detail cache; the Kłosok feed is a
     // separate tracker without the position fingerprint the cache needs.
     if (!req.params.id.startsWith('klosok:')) {
-      const revision = vehicles.revision ?? 0;
+      const revision = vehicles.pollRevision ?? 0;
       const cached = vehicleDetailCache.get(
         gtfs.generation,
         revision,
@@ -416,7 +466,7 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
    * The KD sample has no shapes.txt at all, so this answers "unavailable"
    * instead of drawing a straight line between stations.
    */
-  router.get('/kd/trip/:tripId/shape', cacheFor(3600), (req, res) => {
+  router.get('/kd/trip/:tripId/shape', revalidateShape, (req, res) => {
     if (!kd) return res.status(404).json({ error: 'KD not enabled' });
     const rawTripId = req.params.tripId.startsWith('kd:trip:')
       ? req.params.tripId.slice('kd:trip:'.length)
@@ -428,22 +478,22 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
         reason: 'GTFS feed does not link this trip to a shape',
       });
     }
-    return res.json({ tripId: req.params.tripId, ...shape });
+    return conditionalJson(req, res, { tripId: req.params.tripId, ...shape });
   });
 
-  router.get('/shapes/:line/variants', requireGtfs, cacheFor(3600), (req, res) => {
+  router.get('/shapes/:line/variants', requireGtfs, revalidateShape, (req, res) => {
     const { line } = req.params;
     const variants = gtfs.getVariants(line);
     if (!variants.length) return res.status(404).json({ error: 'Line not found', line });
 
-    return res.json({
+    return conditionalJson(req, res, {
       line,
       route: gtfs.routesByLine.get(line) ?? null,
       variants: variants.map(toCompact),
     });
   });
 
-  router.get('/shapes/:line', requireGtfs, cacheFor(3600), (req, res) => {
+  router.get('/shapes/:line', requireGtfs, revalidateShape, (req, res) => {
     const { line } = req.params;
     const lat = parseCoordinate(req.query.lat);
     const lon = parseCoordinate(req.query.lon);
@@ -461,14 +511,14 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
     const cacheKey = `${gtfs.generation}|${line}|${positionKey}|${headingKey}|${compact ? 'compact' : 'legacy'}`;
 
     const cached = shapeCache.get(cacheKey);
-    if (cached) return res.json(cached);
+    if (cached) return conditionalJson(req, res, cached);
 
     const variant = gtfs.getBestVariant(line, lat, lon, { heading });
     if (!variant) return res.status(404).json({ error: 'No shape available for this line', line });
 
     const payload = compact ? toCompact(variant) : toLegacy(variant);
     shapeCache.set(cacheKey, payload);
-    return res.json(payload);
+    return conditionalJson(req, res, payload);
   });
 
   router.get('/stops/near', requireGtfs, cacheFor(60), (req, res) => {

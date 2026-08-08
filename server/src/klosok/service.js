@@ -59,8 +59,14 @@ class KlosokService {
     this.gtfs = gtfs;
     this.getWroclawLocations = getWroclawLocations;
     this.snapshot = { locations: [], count: 0, lastUpdated: null, stale: false, source: 'klosok-gtfs-rt' };
-    /** Monotonic counter bumped on every poll that replaced the snapshot; /locations keys its body cache on it. */
+    /** Monotonic counter bumped on every poll that replaced the snapshot. */
     this.revision = 0;
+    /**
+     * Content revision: bumps only when /locations-visible state in the Kłosok
+     * snapshot changes (vehicles added/removed, positions, headings, delays,
+     * stale/live state). Drives the combined-fleet key in /locations.
+     */
+    this.snapshotRevision = 0;
     /** @type {Map<string, object>} last parsed trip updates, startDate|tripId -> update */
     this.tripUpdates = new Map();
     this.timer = null;
@@ -155,6 +161,11 @@ class KlosokService {
       // what /locations would actually serve right now.
       const { added, dropped } = this.#dedupCounts(enriched);
 
+      // Detect whether anything /locations-visible changed: vehicle count,
+      // stale/live state, or per-vehicle position/heading/timestamp/delay.
+      // `updatedAt` is a freshness timestamp, not content, so it is excluded.
+      const changed = this.#snapshotChanged(this.snapshot, enriched, parsed.stale);
+
       this.snapshot = {
         locations: enriched,
         count: enriched.length,
@@ -163,6 +174,7 @@ class KlosokService {
         source: 'klosok-gtfs-rt',
       };
       this.revision += 1;
+      if (changed) this.snapshotRevision += 1;
       this.status = {
         ...this.status,
         state: 'ready',
@@ -219,6 +231,35 @@ class KlosokService {
   /** The vehicle as /vehicle/:id should see it: fresh positions only. */
   getVehicle(id) {
     return this.#freshLocations().find((entry) => entry.id === id) ?? null;
+  }
+
+  /**
+   * Compare the previous snapshot against the newly parsed fleet to decide
+   * whether the snapshotRevision should advance. Only /locations-visible
+   * fields participate: `updatedAt` is a per-poll freshness timestamp that
+   * is not on the wire, so excluding it avoids a spurious content change every
+   * poll.
+   */
+  #snapshotChanged(prev, next, stale) {
+    if (!prev.locations || prev.locations.length !== next.length) return true;
+    if (prev.stale !== stale) return true;
+    for (let i = 0; i < next.length; i++) {
+      const a = prev.locations[i];
+      const b = next[i];
+      if (
+        a.id !== b.id ||
+        a.line !== b.line ||
+        a.type !== b.type ||
+        a.lat !== b.lat ||
+        a.lon !== b.lon ||
+        a.heading !== b.heading ||
+        a.positionUpdatedAt !== b.positionUpdatedAt ||
+        a.delaySeconds !== b.delaySeconds
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

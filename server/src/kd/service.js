@@ -46,6 +46,11 @@ class KdService {
       oldestTimestamp: null,
     };
     this.snapshot = { locations: [], count: 0, lastUpdated: null, stale: false, source: 'kd-gtfs-rt' };
+    /**
+     * Content revision: bumps only when /locations-visible state in the KD
+     * snapshot changes. Drives the combined-fleet key in /locations.
+     */
+    this.snapshotRevision = 0;
     /** @type {Map<string, object>} last parsed trip updates, startDate|tripId -> update */
     this.tripUpdates = new Map();
     this.staticTimer = null;
@@ -148,6 +153,10 @@ class KdService {
         .filter(Number.isFinite)
         .sort((a, b) => a - b);
 
+      // Bump the content revision only when /locations-visible state changed,
+      // not on every poll that returned identical positions.
+      const changed = this.#snapshotChanged(this.snapshot, enriched, parsed.stale);
+
       this.snapshot = {
         locations: enriched,
         count: enriched.length,
@@ -155,6 +164,7 @@ class KdService {
         stale: parsed.stale,
         source: 'kd-gtfs-rt',
       };
+      this.snapshotRevision += changed ? 1 : 0;
       this.realtimeStatus = {
         ...this.realtimeStatus,
         state: 'ready',
@@ -204,6 +214,9 @@ class KdService {
         .filter(Number.isFinite)
         .sort((a, b) => a - b);
 
+      // Bump the content revision only when /locations-visible state changed.
+      const changed = this.#snapshotChanged(this.snapshot, enriched, false);
+
       this.snapshot = {
         locations: enriched,
         count: enriched.length,
@@ -211,6 +224,7 @@ class KdService {
         stale: false,
         source: 'kd-public-kiedyprzyjedzie',
       };
+      this.snapshotRevision += changed ? 1 : 0;
       this.realtimeStatus = {
         ...this.realtimeStatus,
         state: 'ready',
@@ -270,6 +284,33 @@ class KdService {
 
   getVehicle(id) {
     return this.snapshot.locations.find((entry) => entry.id === id) ?? null;
+  }
+
+  /**
+   * Compare the previous snapshot against the newly parsed fleet to decide
+   * whether snapshotRevision should advance. Only /locations-visible fields
+   * participate: `updatedAt` is a per-poll freshness timestamp, not content.
+   */
+  #snapshotChanged(prev, next, stale) {
+    if (!prev.locations || prev.locations.length !== next.length) return true;
+    if (prev.stale !== stale) return true;
+    for (let i = 0; i < next.length; i++) {
+      const a = prev.locations[i];
+      const b = next[i];
+      if (
+        a.id !== b.id ||
+        a.line !== b.line ||
+        a.type !== b.type ||
+        a.lat !== b.lat ||
+        a.lon !== b.lon ||
+        a.heading !== b.heading ||
+        a.positionUpdatedAt !== b.positionUpdatedAt ||
+        a.delaySeconds !== b.delaySeconds
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
