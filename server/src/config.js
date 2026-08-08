@@ -144,7 +144,7 @@ module.exports = {
     // every host's CA store carries yet — Node then rejects the leaf while
     // every other upstream works. When true, TLS verification is relaxed for
     // THIS ONE endpoint only (a dedicated undici Agent in src/klosok/fetch.js),
-    // never for MPK, Open Data, KD or anything else, and never globally.
+    // never for MPK or Open Data, and never globally.
     // Flip back to false once Kłosok serves a chain the hosts trust.
     tlsAllowInvalidCert: bool(process.env.KLOSOK_TLS_ALLOW_INVALID_CERT, DEFAULTS.klosok.tlsAllowInvalidCert),
   },

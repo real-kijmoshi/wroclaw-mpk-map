@@ -95,7 +95,7 @@ describe('Kłosok age-based expiry (fake clock)', () => {
       getVehicle: () => null,
     };
 
-    const app = await startApp({ gtfs: null, vehicles, kd: null, klosok, alerts: { status: {}, getAlerts: () => [] } });
+    const app = await startApp({ gtfs: null, vehicles, klosok, alerts: { status: {}, getAlerts: () => [] } });
     try {
       // t = 0: fresh vehicle, first response
       const r1 = await app.get('/locations?format=map');
@@ -146,7 +146,7 @@ describe('Kłosok age-based expiry (fake clock)', () => {
       getVehicle: () => null,
     };
 
-    const app = await startApp({ gtfs: null, vehicles, kd: null, klosok, alerts: { status: {}, getAlerts: () => [] } });
+    const app = await startApp({ gtfs: null, vehicles, klosok, alerts: { status: {}, getAlerts: () => [] } });
     try {
       // t = 0: both fresh
       const r1 = await app.get('/locations?format=map');

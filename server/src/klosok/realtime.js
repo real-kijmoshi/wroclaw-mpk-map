@@ -8,7 +8,7 @@ const config = require('../config');
  * GTFS-RT processing for PT KŁOSOK's live bus positions.
  *
  * Kłosok is a subcontractor running suburban bus lines (911, 921, 931, …) in
- * Wrocław and the surrounding gminy. Unlike KD it publishes no timetable of
+ * Wrocław and the surrounding gminy. It publishes no timetable of
  * its own — its one public protobuf feed carries only VehiclePosition and
  * TripUpdate entities, and the matching to routes/trips/shapes happens
  * against the Wrocław GTFS in `GtfsStore` (see `resolveEnrichment`). The

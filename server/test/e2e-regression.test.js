@@ -24,11 +24,10 @@ const installFakeClock = () => {
   };
 };
 
-describe('e2e regression: phase 1-3 integration', () => {
+describe('e2e regression: merged cache phase 1-3 integration', () => {
   let clock;
   let app;
   let vehicles;
-  let kd;
   let klosok;
 
   const mkVehicle = (id, overrides = {}) => ({
@@ -42,29 +41,6 @@ describe('e2e regression: phase 1-3 integration', () => {
     updatedAt: new Date(0).toISOString(),
     source: 'mpk-gtfs-rt',
     positionUpdatedAt: new Date(0).toISOString(),
-    ...overrides,
-  });
-
-  const mkKdVehicle = (id, overrides = {}) => ({
-    id: `kd:${id}`,
-    operator: 'KD',
-    type: 'train',
-    line: 'R2',
-    routeId: 'route:1',
-    tripId: 'trip:1',
-    vehicleLabel: 'IC 1234',
-    lat: 51.2,
-    lon: 17.1,
-    heading: 90,
-    speed: 60,
-    destination: 'Wrocław Główny',
-    delaySeconds: 0,
-    occupancyStatus: 'many_seats_available',
-    occupancyPercentage: 30,
-    positionUpdatedAt: new Date(0).toISOString(),
-    source: 'kd-gtfs-rt',
-    rawTripId: 'raw:1',
-    startDate: '2026-08-08',
     ...overrides,
   });
 
@@ -83,6 +59,7 @@ describe('e2e regression: phase 1-3 integration', () => {
     destination: 'Dworzec',
     delaySeconds: 0,
     currentStopSequence: 2,
+    startDate: '2026-08-08',
     positionUpdatedAt: new Date(0).toISOString(),
     source: 'klosok-gtfs-rt',
     brigade: 'B1',
@@ -94,11 +71,9 @@ describe('e2e regression: phase 1-3 integration', () => {
     now = 0;
     clock = installFakeClock();
 
-    const origKdEnabled = config.kd.enabled;
     const origKlosokEnabled = config.klosok.enabled;
     const origKlosokUrl = config.klosok.gtfsRtUrl;
     const origKlosokMaxAge = config.klosok.maxAgeMs;
-    config.kd.enabled = true;
     config.klosok.enabled = true;
     config.klosok.gtfsRtUrl = 'https://example.test/klosok.pb';
     config.klosok.maxAgeMs = 90000;
@@ -118,21 +93,6 @@ describe('e2e regression: phase 1-3 integration', () => {
       getVehicle: () => null,
     };
 
-    const kdVehicle = mkKdVehicle(1);
-    kd = {
-      snapshot: {
-        locations: [kdVehicle],
-        count: 1,
-        lastUpdated: new Date(0).toISOString(),
-        source: 'kd-gtfs-rt',
-        stale: false,
-      },
-      mapRevision: 0,
-      fullRevision: 0,
-      pollRevision: 0,
-      enabled: true,
-    };
-
     klosok = new KlosokService();
     klosok.snapshot = {
       locations: [mkKlosokVehicle(1)],
@@ -142,20 +102,23 @@ describe('e2e regression: phase 1-3 integration', () => {
       stale: false,
     };
 
-    app = createApp({ startedAt: new Date(0), vehicles, kd, klosok });
+    app = createApp({ startedAt: new Date(0), vehicles, klosok });
     server = app.listen(0, '127.0.0.1');
     await new Promise((resolve) => server.once('listening', resolve));
     const addr = server.address();
     base = `http://127.0.0.1:${addr.port}`;
 
     // Store originals for restoration
-    beforeEach._origConfig = { kdEnabled: origKdEnabled, klosokEnabled: origKlosokEnabled, klosokUrl: origKlosokUrl, klosokMaxAge: origKlosokMaxAge };
+    beforeEach._origConfig = {
+      klosokEnabled: origKlosokEnabled,
+      klosokUrl: origKlosokUrl,
+      klosokMaxAge: origKlosokMaxAge,
+    };
   });
 
   afterEach(() => {
     clock.uninstall();
     server.close();
-    config.kd.enabled = beforeEach._origConfig.kdEnabled;
     config.klosok.enabled = beforeEach._origConfig.klosokEnabled;
     config.klosok.gtfsRtUrl = beforeEach._origConfig.klosokUrl;
     config.klosok.maxAgeMs = beforeEach._origConfig.klosokMaxAge;
@@ -174,7 +137,7 @@ describe('e2e regression: phase 1-3 integration', () => {
     const r1 = await get('/locations?format=map');
     assert.equal(r1.status, 200);
     const mapEtag = etag(r1);
-    assert.equal(r1.body.count, 3, 'one vehicle per provider');
+    assert.equal(r1.body.count, 2, 'one vehicle per provider');
 
     const r2 = await get('/locations?format=map', { headers: { 'If-None-Match': mapEtag } });
     assert.equal(r2.status, 304);
@@ -191,7 +154,7 @@ describe('e2e regression: phase 1-3 integration', () => {
     const fullEtag = etag(f1);
     assert.equal(f1.status, 200);
 
-    // Simulate quiet MPK poll: fullRevision advances, mapRevision does not
+    // Simulate quiet MPK poll: fullRevision advances, mapRevision does not.
     // lastUpdated always ticks on a real quiet poll (even if positions are unchanged).
     const before = vehicles.snapshot.lastUpdated;
     vehicles.fullRevision += 1;
@@ -213,26 +176,43 @@ describe('e2e regression: phase 1-3 integration', () => {
     assert.equal(etag(r2), undefined, 'no ETag on 304');
   });
 
-  test('KD metadata-only update: map returns 200 with new ETag', async () => {
+  test('quiet Kłosok poll: map returns 304, full returns 200 with new ETag', async () => {
+    // Regression: a quiet Kłosok poll advances fullRevision (per-vehicle
+    // updatedAt changes) without touching mapRevision. The map cache must NOT
+    // be rebuilt (304 stays valid) while the full cache IS rebuilt from fresh
+    // provider snapshots — never from stale merged objects.
     const r1 = await get('/locations?format=map');
     const mapEtag = etag(r1);
     assert.equal(r1.status, 200);
 
-    // Simulate KD metadata change: destination changes, coordinates unchanged
-    kd.snapshot.locations[0].destination = 'Wrocław Psie Pole';
-    kd.mapRevision += 1;
-    kd.fullRevision += 1;
+    const f1 = await get('/locations');
+    const fullEtag = etag(f1);
+    assert.equal(f1.status, 200);
 
+    // Simulate quiet Kłosok poll: fullRevision advances, mapRevision does not.
+    const beforeUpdatedAt = klosok.snapshot.locations[0].updatedAt;
+    klosok.fullRevision += 1;
+    klosok.snapshot.locations[0].updatedAt = new Date(99999).toISOString();
+    assert.notEqual(klosok.snapshot.locations[0].updatedAt, beforeUpdatedAt);
+
+    // Map should return 304
     const r2 = await get('/locations?format=map', { headers: { 'If-None-Match': mapEtag } });
-    assert.equal(r2.status, 200, 'KD metadata change invalidates map response');
-    assert.notEqual(etag(r2), mapEtag, 'map ETag changed');
+    assert.equal(r2.status, 304, 'quiet Kłosok poll does not invalidate map response');
 
-    // The new body should have the new destination in the trip headsign
-    const kdVehicle = r2.body.locations.find((v) => v.id === 'kd:1');
-    assert.equal(kdVehicle.trip.headsign, 'Wrocław Psie Pole');
+    // Full should return 200 with new ETag and the updated per-vehicle updatedAt
+    clock.setNow(50000);
+    const f2 = await get('/locations', { headers: { 'If-None-Match': fullEtag } });
+    assert.equal(f2.status, 200, 'quiet Kłosok poll invalidates full response');
+    assert.notEqual(etag(f2), fullEtag, 'full ETag changed');
+    assert.equal(f2.body.lastUpdated, f1.body.lastUpdated, 'full snapshot lastUpdated unchanged (quiet poll)');
+
+    // The full body must reflect the updated updatedAt — proving the cache was
+    // rebuilt from the current snapshot, not a stale merged object.
+    const klosokVehicle = f2.body.locations.find((v) => v.id === 'klosok:1');
+    assert.equal(klosokVehicle.updatedAt, new Date(99999).toISOString(), 'full body carries fresh updatedAt');
   });
 
-  test('Kłosok metadata-only update: returns 200 with new ETag', async () => {
+  test('Kłosok metadata-only update: map returns 200 with new ETag', async () => {
     const r1 = await get('/locations?format=map');
     const mapEtag = etag(r1);
     assert.equal(r1.status, 200);
@@ -243,8 +223,8 @@ describe('e2e regression: phase 1-3 integration', () => {
     klosok.fullRevision += 1;
 
     const r2 = await get('/locations?format=map', { headers: { 'If-None-Match': mapEtag } });
-    assert.equal(r2.status, 200, 'Kłosok metadata change invalidates response');
-    assert.notEqual(etag(r2), mapEtag, 'ETag changed');
+    assert.equal(r2.status, 200, 'Kłosok metadata change invalidates map response');
+    assert.notEqual(etag(r2), mapEtag, 'map ETag changed');
   });
 
   test('Kłosok expiry: vehicle evicted without a poll', async () => {
@@ -255,18 +235,18 @@ describe('e2e regression: phase 1-3 integration', () => {
     const r1 = await get('/locations?format=map');
     const etagA = etag(r1);
     assert.equal(r1.status, 200);
-    assert.equal(r1.body.count, 3, 'one vehicle per provider');
+    assert.equal(r1.body.count, 2, 'one vehicle per provider');
 
     // Before expiry: still 304
     const r2 = await get('/locations?format=map', { headers: { 'If-None-Match': etagA } });
     assert.equal(r2.status, 304, 'cache valid before expiry');
 
-    // Past expiry: vehicle gone (count drops to 2)
+    // Past expiry: vehicle gone (count drops to 1)
     clock.setNow(90000);
     const r3 = await get('/locations?format=map', { headers: { 'If-None-Match': etagA } });
     assert.equal(r3.status, 200, 'cache invalidated at expiry');
     assert.notEqual(etag(r3), etagA, 'new ETag after eviction');
-    assert.equal(r3.body.count, 2, 'Kłosok vehicle evicted');
+    assert.equal(r3.body.count, 1, 'Kłosok vehicle evicted');
     assert.ok(r3.body.locations.every((v) => v.id !== 'klosok:1'), 'Kłosok vehicle absent');
 
     // Unchanged request: 304
@@ -287,22 +267,22 @@ describe('e2e regression: phase 1-3 integration', () => {
       stale: false,
     };
 
-    // Initial: 2 Kłosok + 1 MPK + 1 KD = 4
+    // Initial: 2 Kłosok + 1 MPK = 3
     const r1 = await get('/locations?format=map');
     const etagA = etag(r1);
     assert.equal(r1.status, 200);
-    assert.equal(r1.body.count, 4);
+    assert.equal(r1.body.count, 3);
 
-    // At 90000: A expires, B fresh → 3 vehicles
+    // At 90000: A expires, B fresh → 2 vehicles
     clock.setNow(90000);
     const r2 = await get('/locations?format=map', { headers: { 'If-None-Match': etagA } });
     assert.equal(r2.status, 200);
-    assert.equal(r2.body.count, 3, 'A evicted, B fresh');
+    assert.equal(r2.body.count, 2, 'A evicted, B fresh');
 
-    // At 135000: B expires → 2 vehicles
+    // At 135000: B expires → 1 vehicle
     clock.setNow(135000);
     const r3 = await get('/locations?format=map', { headers: { 'If-None-Match': etag(r2) } });
     assert.equal(r3.status, 200);
-    assert.equal(r3.body.count, 2, 'B evicted');
+    assert.equal(r3.body.count, 1, 'B evicted');
   });
 });
