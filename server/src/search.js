@@ -2,7 +2,7 @@
 
 /**
  * Case- and diacritic-insensitive stop search, shared by every timetable store
- * (MPK GTFS, KD GTFS).
+ * (MPK GTFS).
  *
  * The folding below is the one place stop-name normalization lives: names are
  * folded once when a feed is indexed and queries are folded through the same

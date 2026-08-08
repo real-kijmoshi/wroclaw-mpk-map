@@ -127,14 +127,11 @@ export type LineType =
   | 'busZone'
   | 'busExpress'
   | 'busSpecial'
-  | 'train'
   | 'unknown';
 
 export type Lines = Record<string, string[]> & {
   allTrams: string[];
   allBuses: string[];
-  /** Present only when KD trains are enabled on the server. */
-  allTrains?: string[];
 };
 
 export type StopRef = {
@@ -167,7 +164,7 @@ export type Vehicle = {
   heading: number | null;
   trip: VehicleTrip | null;
   updatedAt: string;
-  /** KD-only fields. The server adds them conditionally, so they are optional. */
+  /** Optional metadata the server may include for some providers (e.g. Kłosok). */
   operator?: string | null;
   routeId?: string | null;
   tripId?: string | null;
@@ -382,49 +379,21 @@ export function normaliseAlerts(payload: unknown): Alerts {
   };
 }
 
-/** Seconds after midnight, in Europe/Warsaw — the same clock the server uses. */
-function warsawSecondsNow(): number {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Europe/Warsaw',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).formatToParts(new Date());
-  const get = (type: 'hour' | 'minute' | 'second') =>
-    Number.parseInt(parts.find((part) => part.type === type)?.value ?? '0', 10);
-  return (get('hour') % 24) * 3600 + get('minute') * 60 + get('second');
-}
-
-/**
- * Departures come in two shapes: MPK's `{departure, inSeconds, serviceDay}`
- * and KD's `{scheduledDeparture, departureSeconds, operator}`. Both become
- * the one `Departure` the board knows how to render.
- */
+/** Only the MPK departure shape is served: `{departure, inSeconds, serviceDay}`. */
 export function normaliseDepartures(payload: unknown): Departures {
   if (!isRecord(payload) || !isRecord(payload.stop) || !Array.isArray(payload.departures)) {
     throw new ApiError('Unexpected departures payload', 0);
   }
-  const secondsNow = warsawSecondsNow();
   const departures = payload.departures.flatMap((item): Departure[] => {
     if (!isRecord(item) || typeof item.line !== 'string') return [];
-    const hasMpkTime = Number.isFinite(item.inSeconds);
-    const hasKdTime = Number.isFinite(item.departureSeconds);
-    if (!hasMpkTime && !hasKdTime) return [];
+    if (!Number.isFinite(item.inSeconds)) return [];
     return [
       {
         line: item.line,
         type: item.type as LineType,
         headsign: typeof item.headsign === 'string' ? item.headsign : null,
-        departure:
-          typeof item.departure === 'string'
-            ? item.departure
-            : typeof item.scheduledDeparture === 'string'
-              ? item.scheduledDeparture
-              : '',
-        inSeconds: hasMpkTime
-          ? (item.inSeconds as number)
-          : (item.departureSeconds as number) - secondsNow,
+        departure: typeof item.departure === 'string' ? item.departure : '',
+        inSeconds: item.inSeconds as number,
         tripId: typeof item.tripId === 'string' ? item.tripId : '',
         serviceDay: item.serviceDay === 'yesterday' ? 'yesterday' : 'today',
         operator: optionalString(item.operator),
@@ -522,43 +491,7 @@ function normaliseVehicle(value: unknown): Vehicle {
   };
 }
 
-/**
- * A KD stop from the trip detail into the app's `TripStop`. Trains have no
- * shape geometry, so `lat`/`lon` are 0 and there is no ETA projection — the
- * schedule column is honest about that instead of inventing running time.
- */
-function kdStopToTripStop(stop: Record<string, unknown>, passed: boolean): TripStop {
-  const name =
-    typeof stop.name === 'string'
-      ? stop.name
-      : typeof stop.stopId === 'string'
-        ? stop.stopId
-        : '?';
-  const platformCode = typeof stop.platformCode === 'string' ? stop.platformCode : null;
-  const scheduled =
-    (typeof stop.predictedDeparture === 'string' ? stop.predictedDeparture : null) ??
-    (typeof stop.predictedArrival === 'string' ? stop.predictedArrival : null) ??
-    (typeof stop.scheduledDeparture === 'string' ? stop.scheduledDeparture : null) ??
-    (typeof stop.scheduledArrival === 'string' ? stop.scheduledArrival : null);
-  return {
-    id: typeof stop.stopId === 'string' ? stop.stopId : '',
-    name: platformCode ? `${name} (peron ${platformCode})` : name,
-    lat: 0,
-    lon: 0,
-    sequence: Number.isFinite(stop.sequence) ? (stop.sequence as number) : 0,
-    scheduled,
-    etaSeconds: null,
-    agoSeconds: null,
-    distanceMeters: 0,
-    passed,
-  };
-}
-
-/**
- * `/vehicle/:id` in two shapes: MPK's `{vehicle, trip: VehicleTripDetail}`
- * and KD's `{vehicle, trip: {stopsAhead: KDStop[]}}`. Both end up as the one
- * `VehicleDetail` the vehicle screen renders.
- */
+/** `/vehicle/:id` — the MPK/Kłosok detail payload: `{vehicle, trip: VehicleTripDetail}`. */
 export function normaliseVehicleDetail(payload: unknown): VehicleDetail {
   if (!isRecord(payload) || !isRecord(payload.vehicle)) {
     throw new ApiError('Unexpected /vehicle payload', 0);
@@ -567,50 +500,12 @@ export function normaliseVehicleDetail(payload: unknown): VehicleDetail {
   const rawTrip = payload.trip;
   if (!isRecord(rawTrip)) return { vehicle, trip: null };
 
-  // MPK's detail already matches the app's shape.
-  if (Array.isArray(rawTrip.nextStops)) {
-    return { vehicle, trip: rawTrip as unknown as VehicleTripDetail };
+  if (!Array.isArray(rawTrip.nextStops)) {
+    throw new ApiError('Unexpected /vehicle trip payload', 0);
   }
 
-  // KD's detail.
-  const stopsAhead = Array.isArray(rawTrip.stopsAhead)
-    ? rawTrip.stopsAhead.filter(isRecord)
-    : [];
-  const previousStop = isRecord(rawTrip.previousStop)
-    ? kdStopToTripStop(rawTrip.previousStop, true)
-    : null;
-  const nextStops = stopsAhead.map((stop) => kdStopToTripStop(stop, false));
-  const delaySeconds = Number.isFinite(rawTrip.delaySeconds)
-    ? (rawTrip.delaySeconds as number)
-    : null;
-  return {
-    vehicle,
-    trip: {
-      line: typeof rawTrip.routeName === 'string' && rawTrip.routeName ? rawTrip.routeName : vehicle.line,
-      shapeId: null,
-      directionId: null,
-      headsign: typeof rawTrip.headsign === 'string' ? rawTrip.headsign : null,
-      direction: null,
-      towards: null,
-      origin: null,
-      onRoute: true,
-      progressMeters: null,
-      routeMeters: 0,
-      shapeIndex: null,
-      delaySeconds,
-      scheduleMatched: delaySeconds !== null,
-      atStop: null,
-      previousStops: previousStop ? [previousStop] : [],
-      previousStop,
-      nextStop: nextStops[0] ?? null,
-      nextStops,
-      stopsAhead: nextStops.length,
-      stopCount: nextStops.length + (previousStop ? 1 : 0),
-    },
-  };
+  return { vehicle, trip: rawTrip as unknown as VehicleTripDetail };
 }
-
-
 
 /* -------------------------------------------------------------------------- */
 /* Endpoints                                                                    */

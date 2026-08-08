@@ -13,7 +13,7 @@ const corsOptions = config.cors.origins.includes('*')
   : { origin: config.cors.origins, methods: ['GET', 'HEAD'] };
 
 /**
- * @param {{ gtfs: any, vehicles: any, alerts: any, kd?: any, klosok?: any, startedAt?: Date }} services
+ * @param {{ gtfs: any, vehicles: any, alerts: any, klosok?: any, startedAt?: Date }} services
  */
 const createApp = (services) => {
   const app = express();
