@@ -179,6 +179,18 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
   };
 
   /**
+   * /locations memoization. Every open app polls the endpoint every ten
+   * seconds, and without this each request re-runs the Kłosok dedup, re-maps
+   * the whole fleet into wire objects and re-stringifies a payload whose
+   * inputs changed not at all since the last poll. The merged fleet is keyed
+   * on the sources' revision counters; serialized bodies additionally key on
+   * the query that shapes them.
+   */
+  let mergedCache = { key: null, merged: null };
+  /** `line|type|format` -> { etag, body } */
+  const locationsBodyCache = new Map();
+
+  /**
    * Merge the Wrocław, PT KŁOSOK (when enabled) and Koleje Dolnośląskie
    * location lists. KD ids are kd:* namespaced so there is nothing to
    * deduplicate against the other two; Kłosok positions are deduplicated
@@ -186,9 +198,18 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
    * Data for the same physical bus), then KD is appended.
    */
   const allLocations = () => {
-    const wroclaw = vehicles.snapshot.locations;
-    const merged = klosok?.enabled ? klosok.mergeLocations(wroclaw) : wroclaw;
-    return kd?.snapshot.count ? [...merged, ...kd.snapshot.locations] : merged;
+    const key = `${vehicles.revision}|${klosok?.revision ?? 0}|${kd?.snapshot.lastUpdated ?? ''}`;
+    if (mergedCache.key !== key || mergedCache.merged === null) {
+      const wroclaw = vehicles.snapshot.locations;
+      const merged = klosok?.enabled ? klosok.mergeLocations(wroclaw) : wroclaw;
+      mergedCache = {
+        key,
+        merged: kd?.snapshot.count ? [...merged, ...kd.snapshot.locations] : merged,
+      };
+      // A new fleet invalidates every serialized body derived from it.
+      locationsBodyCache.clear();
+    }
+    return mergedCache.merged;
   };
 
   /** 503 until the timetable is loaded, so clients can retry instead of caching an empty answer. */
@@ -275,16 +296,36 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
 
   router.get('/locations', noStore, (req, res) => {
     const { line, type, format } = req.query;
-    const snapshot = vehicles.snapshot;
-    const wanted = line ? new Set(String(line).split(',').map((item) => item.trim())) : null;
-    const locations = allLocations().filter(
-      (vehicle) => (!wanted || wanted.has(vehicle.line)) && (!type || vehicle.type === type),
-    );
+    const variantKey = `${line ?? ''}|${type ?? ''}|${format ?? ''}`;
+    let entry = locationsBodyCache.get(variantKey);
 
-    if (format === 'map') return res.json(toMapSnapshot(snapshot, locations));
-    // No filter means both providers in full, in the snapshot's own shape —
-    // the merge must not be skipped by an unfiltered shortcut.
-    return res.json({ ...snapshot, locations, count: locations.length });
+    if (!entry) {
+      const snapshot = vehicles.snapshot;
+      const wanted = line ? new Set(String(line).split(',').map((item) => item.trim())) : null;
+      const locations = allLocations().filter(
+        (vehicle) => (!wanted || wanted.has(vehicle.line)) && (!type || vehicle.type === type),
+      );
+
+      const payload =
+        format === 'map'
+          ? toMapSnapshot(snapshot, locations)
+          : // No filter means both providers in full, in the snapshot's own
+            // shape — the merge must not be skipped by an unfiltered shortcut.
+            { ...snapshot, locations, count: locations.length };
+      const body = JSON.stringify(payload);
+      entry = { etag: `"${crypto.createHash('sha1').update(body).digest('hex')}"`, body };
+      locationsBodyCache.set(variantKey, entry);
+    }
+
+    // The ETag is derived from the serialized body, so an unchanged fleet
+    // answers 304 and the client keeps its copy instead of re-downloading it.
+    if (req.headers['if-none-match'] && req.headers['if-none-match'] === entry.etag) {
+      return res.status(304).end();
+    }
+
+    res.set('ETag', entry.etag);
+    res.set('Content-Type', 'application/json; charset=utf-8');
+    return res.send(entry.body);
   });
 
   /**

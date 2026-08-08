@@ -901,12 +901,18 @@
          * straight to the renderer, which then drew categories out of
          * `{error, state}`. Wait it out instead, the way the app does.
          */
+        /** Last ETag and payload per request path, so an unchanged fleet poll answers 304. */
+        const conditionalCache = new Map();
+
         async function apiGet(path, { retries = 4 } = {}) {
             let attempt = 0;
+            const cached = conditionalCache.get(path);
             for (;;) {
                 let response;
                 try {
-                    response = await fetch(API_BASE + path, { headers: { accept: 'application/json' } });
+                    const headers = { accept: 'application/json' };
+                    if (cached && cached.etag) headers['If-None-Match'] = cached.etag;
+                    response = await fetch(API_BASE + path, { headers });
                 } catch (error) {
                     if (attempt >= retries) throw error;
                     attempt += 1;
@@ -921,9 +927,24 @@
                     await new Promise((r) => setTimeout(r, Math.min(2000 * attempt, 8000)));
                     continue;
                 }
+                // Nothing moved since the last poll: keep the payload already on
+                // screen instead of re-downloading it. Only /locations sets an
+                // ETag, so this never changes the other endpoints.
+                if (response.status === 304) {
+                    if (cached) return cached.data;
+                    throw new Error(path + ' → 304 without a cached copy');
+                }
                 if (!response.ok) throw new Error(path + ' → ' + response.status);
                 booting = false;
-                return response.json();
+                const etag = response.headers.get('ETag');
+                const data = await response.json();
+                if (etag) {
+                    conditionalCache.set(path, { etag, data });
+                    if (conditionalCache.size > 16) {
+                        conditionalCache.delete(conditionalCache.keys().next().value);
+                    }
+                }
+                return data;
             }
         }
 

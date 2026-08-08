@@ -163,6 +163,25 @@ describe('VehicleTracker against a stand-in endpoint', () => {
     assert.equal(tracker.snapshot.locations[0].heading, 0, 'moved north');
   });
 
+  it('freezes lastUpdated while the fleet is unchanged and advances it when it moves', async () => {
+    // /locations derives its ETag from the serialized body; lastUpdated is the
+    // only field that changes every poll, so if it advanced with nothing moving
+    // the app would re-download the whole fleet every ten seconds.
+    let lat = 51.11;
+    const tracker = await trackerFor(() => [{ name: '4', type: 'tram', x: lat, y: 17.03, k: 3 }]);
+
+    await tracker.poll();
+    const first = tracker.snapshot.lastUpdated;
+    assert.ok(first, 'a successful poll stamps lastUpdated');
+
+    await tracker.poll();
+    assert.equal(tracker.snapshot.lastUpdated, first, 'an unchanged fleet keeps lastUpdated');
+
+    lat += 0.01; // the tram moves
+    await tracker.poll();
+    assert.notEqual(tracker.snapshot.lastUpdated, first, 'a moved vehicle advances lastUpdated');
+  });
+
   it('attaches the destination and next stop when a timetable is loaded', async () => {
     const gtfs = new GtfsStore();
     await gtfs.build(buildFixtureZip());

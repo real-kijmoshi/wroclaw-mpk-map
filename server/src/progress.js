@@ -1,7 +1,7 @@
 'use strict';
 
 const { distanceMeters } = require('./gtfs/geo');
-const { secondsToTime } = require('./gtfs/parse');
+const { inWarsaw, secondsToTime } = require('./gtfs/parse');
 
 /**
  * Where a live vehicle is on its route, where it is going, and when it reaches
@@ -46,9 +46,6 @@ const AT_STOP_METERS = 45;
  * "18 minut spóźnienia" that is really the next tram, on time.
  */
 const MAX_DELAY_SECONDS = 45 * 60;
-
-/** The same instant, read as a wall clock in Wrocław. */
-const inWarsaw = (date) => new Date(date.toLocaleString('en-US', { timeZone: 'Europe/Warsaw' }));
 
 const secondsOfDay = (date) => date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds();
 

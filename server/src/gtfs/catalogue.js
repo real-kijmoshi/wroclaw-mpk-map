@@ -227,16 +227,25 @@ const fileEndpointsFor = (catalogueUrl, id) => {
  * guessed from the file-transfer path the portal uses. Guessing is safe here:
  * the download loop checks the zip magic bytes and validates the contents, so a
  * wrong URL is rejected rather than served.
+ *
+ * The id→metadata probes used to run one after another: up to
+ * `GTFS_MAX_FILE_LOOKUPS` ids, each trying every candidate endpoint shape, on
+ * a portal whose undocumented shapes mostly time out — a cold boot spent ~40s
+ * sitting on those fetches. Probing them through a small work pool collapses
+ * the wait to a couple of round trips: the first shape that answers becomes
+ * the pattern reused for every later id, exactly as before, just without the
+ * serial queue in front of it.
+ *
+ * @param {number[]} ids
+ * @param {{ catalogueUrl: string, downloadBase: string, limit: number }} options
+ * @returns {Promise<{name: string, url: string, effectiveDate: number|null}[]>}
  */
 const resolveFileEntries = async (ids, { catalogueUrl, downloadBase, limit }) => {
   const entries = [];
   let workingPattern = null;
 
-  for (const id of ids.slice(0, limit)) {
-    const urls = workingPattern
-      ? [workingPattern(id)]
-      : fileEndpointsFor(catalogueUrl, id);
-
+  const probeId = async (id) => {
+    const urls = workingPattern ? [workingPattern(id)] : fileEndpointsFor(catalogueUrl, id);
     for (const [index, url] of urls.entries()) {
       try {
         const payload = await fetchJson(url);
@@ -244,23 +253,31 @@ const resolveFileEntries = async (ids, { catalogueUrl, downloadBase, limit }) =>
         const name = parsed?.name ?? pickKey(payload, NAME_KEYS);
         if (!name) continue;
 
-        entries.push({
-          name,
-          url: parsed?.url ?? `${downloadBase}/${id}/`,
-          effectiveDate: effectiveDateFromName(name),
-        });
-
         if (!workingPattern) {
           const template = fileEndpointsFor(catalogueUrl, '__ID__')[index];
           workingPattern = (fileId) => template.replace('__ID__', String(fileId));
           logger.debug(`file metadata resolved from ${url}`);
         }
-        break;
+        return { name, url: parsed?.url ?? `${downloadBase}/${id}/` };
       } catch {
         // Try the next shape; a dead pattern is not worth logging per file.
       }
     }
-  }
+    return null;
+  };
+
+  const idsToTry = ids.slice(0, limit);
+  const poolSize = Math.min(6, Math.max(1, idsToTry.length));
+  let cursor = 0;
+  const workers = Array.from({ length: poolSize }, async () => {
+    while (cursor < idsToTry.length) {
+      const id = idsToTry[cursor];
+      cursor += 1;
+      const entry = await probeId(id);
+      if (entry) entries.push({ ...entry, effectiveDate: effectiveDateFromName(entry.name) });
+    }
+  });
+  await Promise.all(workers);
 
   return entries;
 };

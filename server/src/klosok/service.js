@@ -59,6 +59,8 @@ class KlosokService {
     this.gtfs = gtfs;
     this.getWroclawLocations = getWroclawLocations;
     this.snapshot = { locations: [], count: 0, lastUpdated: null, stale: false, source: 'klosok-gtfs-rt' };
+    /** Monotonic counter bumped on every poll that replaced the snapshot; /locations keys its body cache on it. */
+    this.revision = 0;
     /** @type {Map<string, object>} last parsed trip updates, startDate|tripId -> update */
     this.tripUpdates = new Map();
     this.timer = null;
@@ -160,6 +162,7 @@ class KlosokService {
         stale: parsed.stale,
         source: 'klosok-gtfs-rt',
       };
+      this.revision += 1;
       this.status = {
         ...this.status,
         state: 'ready',

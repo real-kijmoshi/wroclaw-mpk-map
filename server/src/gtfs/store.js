@@ -15,7 +15,7 @@ const {
   projectToPolyline,
   simplify,
 } = require('./geo');
-const { parseTable, secondsToTime, streamTable, timeToSeconds } = require('./parse');
+const { inWarsaw, parseTable, secondsToTime, streamTableFast, timeToSeconds } = require('./parse');
 
 const SHAPE_SIMPLIFY_METERS = 4;
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
@@ -306,17 +306,28 @@ class GtfsStore {
 
     // shapes.txt is hundreds of thousands of rows; stream it so the parsed
     // array never exists all at once, and keep only the numbers per shape.
-    await streamTable(buffer, (row) => {
-      const lat = Number.parseFloat(row.shape_pt_lat);
-      const lon = Number.parseFloat(row.shape_pt_lon);
+    let colShapeId;
+    let colLat;
+    let colLon;
+    let colSequence;
+    await streamTableFast(buffer, (fields, columns) => {
+      if (colShapeId === undefined) {
+        colShapeId = columns.get('shape_id');
+        colLat = columns.get('shape_pt_lat');
+        colLon = columns.get('shape_pt_lon');
+        colSequence = columns.get('shape_pt_sequence');
+      }
+      const lat = Number.parseFloat(fields[colLat]);
+      const lon = Number.parseFloat(fields[colLon]);
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
-      let shape = raw.get(row.shape_id);
+      const shapeId = fields[colShapeId];
+      let shape = raw.get(shapeId);
       if (!shape) {
         shape = { seq: [], lat: [], lon: [] };
-        raw.set(row.shape_id, shape);
+        raw.set(shapeId, shape);
       }
-      shape.seq.push(Number.parseInt(row.shape_pt_sequence, 10) || shape.seq.length);
+      shape.seq.push(Number.parseInt(fields[colSequence], 10) || shape.seq.length);
       shape.lat.push(lat);
       shape.lon.push(lon);
     });
@@ -358,12 +369,25 @@ class GtfsStore {
     const tripEnd = new Int32Array(this.trips.length).fill(-1);
 
     if (buffer) {
-      await streamTable(buffer, (row) => {
-        const tripIndex = this.tripIndexById.get(row.trip_id);
+      let colTripId;
+      let colArrival;
+      let colDeparture;
+      let colStopId;
+      let colSequence;
+      await streamTableFast(buffer, (fields, columns) => {
+        if (colTripId === undefined) {
+          colTripId = columns.get('trip_id');
+          colArrival = columns.get('arrival_time');
+          colDeparture = columns.get('departure_time');
+          colStopId = columns.get('stop_id');
+          colSequence = columns.get('stop_sequence');
+        }
+
+        const tripIndex = this.tripIndexById.get(fields[colTripId]);
         if (tripIndex === undefined) return;
 
-        const arrival = timeToSeconds(row.arrival_time);
-        const departure = timeToSeconds(row.departure_time);
+        const arrival = timeToSeconds(fields[colArrival]);
+        const departure = timeToSeconds(fields[colDeparture]);
 
         const first = departure >= 0 ? departure : arrival;
         if (first >= 0 && (tripStart[tripIndex] < 0 || first < tripStart[tripIndex])) {
@@ -375,25 +399,25 @@ class GtfsStore {
         const stops = representativeStops.get(tripIndex);
         if (stops) {
           stops.push({
-            stopId: row.stop_id,
-            sequence: Number.parseInt(row.stop_sequence, 10) || stops.length,
+            stopId: fields[colStopId],
+            sequence: Number.parseInt(fields[colSequence], 10) || stops.length,
             arrival,
             departure,
           });
         }
 
         if (!config.gtfs.buildStopIndex) return;
-        if (!this.stopsById.has(row.stop_id)) return;
+        if (!this.stopsById.has(fields[colStopId])) return;
 
         const index = tripColumn.length;
         tripColumn.push(tripIndex);
         arrivalColumn.push(arrival);
         departureColumn.push(departure);
 
-        let bucket = rowsByStop.get(row.stop_id);
+        let bucket = rowsByStop.get(fields[colStopId]);
         if (!bucket) {
           bucket = [];
-          rowsByStop.set(row.stop_id, bucket);
+          rowsByStop.set(fields[colStopId], bucket);
         }
         bucket.push(index);
       });
@@ -662,7 +686,7 @@ class GtfsStore {
     const rows = this.departuresByStop.get(stopId);
     if (!rows || !rows.length) return [];
 
-    const localNow = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Warsaw' }));
+    const localNow = inWarsaw(now);
     const secondsNow =
       localNow.getHours() * 3600 + localNow.getMinutes() * 60 + localNow.getSeconds();
 

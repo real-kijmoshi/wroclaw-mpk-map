@@ -132,6 +132,22 @@ describe('HTTP API', () => {
     assert.equal(headers.get('cache-control'), 'no-store');
   });
 
+  it('answers 304 when the fleet has not changed', async () => {
+    // The app sends the ETag it holds back on every poll, so an unchanged
+    // fleet must answer 304 — otherwise the whole 10–25 KB body is re-sent
+    // every ten seconds for nothing.
+    const first = await get('/locations');
+    assert.equal(first.status, 200);
+    const etag = first.headers.get('etag');
+    assert.ok(etag, '/locations carries an ETag');
+
+    const second = await fetch(`${base}/locations`, {
+      headers: { 'If-None-Match': etag },
+    });
+    assert.equal(second.status, 304);
+    assert.equal(await second.text(), '');
+  });
+
   it('returns the legacy shape payload by default', async () => {
     const { status, body } = await get('/shapes/4');
     assert.equal(status, 200);

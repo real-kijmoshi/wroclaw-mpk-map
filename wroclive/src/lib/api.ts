@@ -46,14 +46,27 @@ export type GetOptions = {
   retryWhileLoading?: boolean;
 };
 
+/**
+ * Last ETag and payload per request path. /locations carries a strong ETag
+ * derived from the serialized fleet; sending it back lets the server answer
+ * 304 when nothing moved, so an unchanged poll is a few header bytes instead
+ * of the whole 10–25 KB payload.
+ */
+const conditionalCache = new Map<string, { etag: string; data: unknown }>();
+const CONDITIONAL_CACHE_MAX = 32;
+
 export async function apiGet<T>(path: string, options: GetOptions = {}): Promise<T> {
   const { signal, retryWhileLoading = true } = options;
   let attempt = 0;
 
+  const cached = conditionalCache.get(path);
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (cached?.etag) headers['If-None-Match'] = cached.etag;
+
   for (;;) {
     const response = await fetch(`${API_URL}${path}`, {
       signal,
-      headers: { Accept: 'application/json' },
+      headers,
     });
 
     // Still ingesting the timetable — not an error, just not yet.
@@ -69,6 +82,12 @@ export async function apiGet<T>(path: string, options: GetOptions = {}): Promise
       continue;
     }
 
+    // Nothing changed since the last poll — keep the payload we already hold.
+    if (response.status === 304) {
+      if (cached) return cached.data as T;
+      throw new ApiError('HTTP 304 with no cached copy', 304);
+    }
+
     if (!response.ok) {
       let detail = `HTTP ${response.status}`;
       try {
@@ -80,7 +99,16 @@ export async function apiGet<T>(path: string, options: GetOptions = {}): Promise
       throw new ApiError(detail, response.status);
     }
 
-    return (await response.json()) as T;
+    const etag = response.headers.get('ETag');
+    const data = (await response.json()) as T;
+    if (etag) {
+      conditionalCache.set(path, { etag, data });
+      if (conditionalCache.size > CONDITIONAL_CACHE_MAX) {
+        const oldest = conditionalCache.keys().next().value;
+        if (oldest !== undefined) conditionalCache.delete(oldest);
+      }
+    }
+    return data;
   }
 }
 

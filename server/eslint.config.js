@@ -19,6 +19,8 @@ module.exports = [
         clearTimeout: 'readonly',
         setInterval: 'readonly',
         clearInterval: 'readonly',
+        setImmediate: 'readonly',
+        clearImmediate: 'readonly',
         module: 'writable',
         require: 'readonly',
         __dirname: 'readonly',
