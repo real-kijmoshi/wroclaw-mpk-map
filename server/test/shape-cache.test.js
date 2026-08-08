@@ -147,3 +147,94 @@ describe('shape cache is bound to the GTFS generation', () => {
     await app.stop();
   });
 });
+
+describe('shape ETag and Cache-Control', () => {
+  /** Same as withApp but exposes headers on the response so we can assert ETag/304. */
+  const withAppHeaders = async (store) => {
+    shapeCache.clear();
+    const app = createApp({ gtfs: store, vehicles: fakeVehicles, alerts: fakeAlerts });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const get = async (path, opts = {}) => {
+      const response = await fetch(`${base}${path}`, opts);
+      const ct = response.headers.get('content-type') || '';
+      const body = ct.includes('json') ? await response.json() : await response.text();
+      return {
+        status: response.status,
+        headers: response.headers,
+        body,
+        cacheControl: response.headers.get('cache-control'),
+      };
+    };
+    return { get, stop: () => new Promise((resolve) => server.close(() => resolve())) };
+  };
+
+  it('serves Cache-Control: public, no-cache on shape endpoints', async () => {
+    const store = new GtfsStore();
+    const app = await withAppHeaders(store);
+    try {
+      await load(store, fixtureA);
+
+      const res = await app.get('/shapes/4?format=compact');
+      assert.equal(res.status, 200);
+      assert.equal(res.cacheControl, 'public, no-cache', 'shapes must revalidate, not blind-cache for an hour');
+    } finally {
+      await app.stop();
+    }
+  });
+
+  it('returns a fresh ETag and body after a generation change (BLOCKER 4)', async () => {
+    const store = new GtfsStore();
+    const app = await withAppHeaders(store);
+    try {
+      await load(store, fixtureA);
+
+      const first = await app.get('/shapes/4?format=compact');
+      assert.equal(first.status, 200);
+      const etagA = first.headers.get('etag');
+      assert.ok(etagA, 'shape response carries an ETag');
+      const pointsA = first.body.points;
+      assert.deepEqual(pointsA[0], [51.11, 17.032], 'fixtureA first point');
+
+      // Same request with same ETag → 304 (unchanged generation).
+      const same = await app.get('/shapes/4?format=compact', {
+        headers: { 'If-None-Match': etagA },
+      });
+      assert.equal(same.status, 304, 'same generation → 304');
+
+      // Swap to fixtureB: same shape ids, different geometry, new generation.
+      await load(store, fixtureB);
+      assert.equal(store.generation, 2, 'generation advanced on the swap');
+
+      const second = await app.get('/shapes/4?format=compact', {
+        headers: { 'If-None-Match': etagA },
+      });
+      assert.equal(second.status, 200, 'must not 304 after generation change');
+      const etagB = second.headers.get('etag');
+      assert.notEqual(etagB, etagA, 'ETag changed with the new generation');
+      assert.notDeepEqual(second.body.points, pointsA, 'geometry was refreshed');
+      assert.deepEqual(second.body.points[0], [52, 18], 'fixtureB first point');
+    } finally {
+      await app.stop();
+    }
+  });
+
+  it('still 304s when geometry is unchanged within the same generation', async () => {
+    const store = new GtfsStore();
+    const app = await withAppHeaders(store);
+    try {
+      await load(store, fixtureA);
+
+      const first = await app.get('/shapes/4?format=compact');
+      const etag = first.headers.get('etag');
+
+      const second = await app.get('/shapes/4?format=compact', {
+        headers: { 'If-None-Match': etag },
+      });
+      assert.equal(second.status, 304, 'same generation and geometry → 304');
+    } finally {
+      await app.stop();
+    }
+  });
+});

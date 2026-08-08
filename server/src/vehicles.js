@@ -158,8 +158,15 @@ class VehicleTracker {
     this.byId = new Map();
     /** Memoized snapshot: what the `snapshot` getter returns between polls. */
     this._snapshot = { locations: [], count: 0, lastUpdated: null, source: null, stale: false };
-    /** Monotonic counter bumped whenever the fleet changes; /locations uses it to reuse a serialized body. */
-    this.revision = 0;
+    /** Monotonic counter bumped on every accepted poll (success or failure). Used by the vehicle-detail cache and internal freshness checks. */
+    this.pollRevision = 0;
+    /**
+     * Content revision: bumps only when something visible in `/locations` changes.
+     * Drives the `/locations` body cache and ETag invalidation — a quiet poll that
+     * observed the same positions keeps the same revision so the response can be
+     * 304. `pollRevision` advances even when it does not.
+     */
+    this.snapshotRevision = 0;
     /** vehicle id -> { lat, lon, heading, at, trip } of the last projection, so stationary vehicles skip re-projection. */
     this.describeCache = new Map();
     this.timer = null;
@@ -258,8 +265,14 @@ class VehicleTracker {
     return this.byId.get(id) ?? null;
   }
 
-  /** Rebuild the memoized snapshot from the current fleet, once per poll. */
-  #rebuildSnapshot() {
+  /** Rebuild the memoized snapshot from the current fleet, once per poll.
+   *
+   * @param {{ source: string|null, stale: boolean }} meta — explicit snapshot
+   *   metadata, read from the *already-updated* `status`. Passing it in (rather
+   *   than reading `this.status` implicitly) makes the ordering a non-issue:
+   *   status is finalised by the caller before the snapshot reads it.
+   */
+  #rebuildSnapshot({ source, stale }) {
     const cutoff = Date.now() - config.vehicles.staleAfterMs;
     const vehicles = [];
     for (const vehicle of this.fleet.values()) {
@@ -288,16 +301,19 @@ class VehicleTracker {
       });
     }
 
-    // True when anything serialized changed since the last snapshot. `updatedAt`
-    // is a freshness timestamp, not content, so it is excluded — /locations
-    // derives its ETag from the serialized body, and a body that changed every
-    // poll even with nothing moving made the app re-download the whole fleet
-    // every ten seconds (updatedAt is not on the wire in map format anyway).
+    // True when anything visible in /locations changed since the last snapshot.
+    // `updatedAt` is a freshness timestamp, not content, so it is excluded —
+    // /locations derives its ETag from the serialized body, and a body that
+    // changed every poll even with nothing moving made the app re-download the
+    // whole fleet every ten seconds (updatedAt is not on the wire in map format anyway).
     let changed = this._snapshot.locations.length !== vehicles.length;
     for (let i = 0; changed === false && i < vehicles.length; i += 1) {
       const prev = this._snapshot.locations[i];
       const next = vehicles[i];
       changed =
+        prev.id !== next.id ||
+        prev.line !== next.line ||
+        prev.type !== next.type ||
         prev.lat !== next.lat ||
         prev.lon !== next.lon ||
         prev.heading !== next.heading ||
@@ -308,22 +324,29 @@ class VehicleTracker {
         JSON.stringify(prev.trip) !== JSON.stringify(next.trip);
     }
 
+    // Source and stale are snapshot metadata visible in /locations; a change
+    // in either is content-visible even when every vehicle is identical.
+    changed =
+      changed ||
+      this._snapshot.source !== source ||
+      this._snapshot.stale !== stale;
+
     // The O(1) id lookup /vehicle/:id uses. Built here from the same filtered
     // list the snapshot serves, so it never answers for a stale vehicle.
     this.byId = new Map(vehicles.map((entry) => [entry.id, entry]));
 
+    this.pollRevision += 1;
+    if (changed) this.snapshotRevision += 1;
+
     this._snapshot = {
       locations: vehicles,
       count: vehicles.length,
-      // Only advance when the fleet itself changed, so a quiet poll answers
-      // 304 instead of shipping an identical fleet. Runs at poll time because
-      // `status.lastSuccessAt` is still the previous poll's by the time this
-      // rebuilds (and is null on the very first poll).
+      // Only advance when something visible changed, so a quiet poll answers
+      // 304 instead of shipping an identical fleet.
       lastUpdated: changed ? new Date().toISOString() : this._snapshot.lastUpdated,
-      source: this.status.source,
-      stale: this.status.consecutiveFailures > 0,
+      source,
+      stale,
     };
-    this.revision += 1;
   }
 
   /** One request with one body encoding. Throws when the answer is unusable. */
@@ -534,12 +557,12 @@ class VehicleTracker {
       perf.descriptionsReused.record(reused);
       perf.descriptionsRecomputed.record(recomputed);
 
-      const snapshotStart = performance.now();
-      this.#rebuildSnapshot();
-      perf.snapshotBuildMs.record(performance.now() - snapshotStart);
-
       perf.totalPollMs.record(performance.now() - pollStart);
 
+      // Finalise status BEFORE rebuilding the snapshot. The snapshot reads
+      // `source` and `stale` from the arguments below (not from `this.status`),
+      // so there is no one-poll lag between "the poll succeeded" and the public
+      // snapshot reflecting it.
       this.status = {
         ...this.status,
         source: url,
@@ -552,16 +575,22 @@ class VehicleTracker {
         sources: this.sourceHealth.snapshot(),
       };
 
+      const snapshotStart = performance.now();
+      this.#rebuildSnapshot({ source: url, stale: false });
+      perf.snapshotBuildMs.record(performance.now() - snapshotStart);
+
       if (accepted === 0) logger.warn('Vehicle poll returned rows but none were usable');
     } catch (error) {
       perf.totalPollMs.record(performance.now() - pollStart);
+      const wasStale = this._snapshot.stale;
       this.status.consecutiveFailures += 1;
       this.status.lastError = error.message;
       // A failed poll keeps the last good fleet but is a change of state all
       // the same: the snapshot must say it is stale and the /locations body
       // cache must not keep serving a "fresh" answer.
       this._snapshot = { ...this._snapshot, stale: true };
-      this.revision += 1;
+      this.pollRevision += 1;
+      if (!wasStale) this.snapshotRevision += 1;
       this.status.sources = this.sourceHealth.snapshot();
       // Only shout about it once it is clearly not a blip.
       const log = this.status.consecutiveFailures === 1 ? logger.debug : logger.warn;
@@ -624,7 +653,14 @@ class VehicleTracker {
       perf.descriptionsRecomputed.record(recomputed);
 
       const snapshotStart = performance.now();
-      this.#rebuildSnapshot();
+      // Open Data is a supplementary poll: it does not change the MPK source or
+      // the MPK stale flag. Pass the current MPK status explicitly so the
+      // snapshot metadata is correct without reading mutable state inside the
+      // rebuild.
+      this.#rebuildSnapshot({
+        source: this.status.source,
+        stale: this.status.consecutiveFailures > 0,
+      });
       perf.snapshotBuildMs.record(performance.now() - snapshotStart);
 
       perf.totalPollMs.record(performance.now() - pollStart);

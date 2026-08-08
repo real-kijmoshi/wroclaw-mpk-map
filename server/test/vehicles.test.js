@@ -403,6 +403,126 @@ describe('VehicleTracker against a stand-in endpoint', () => {
     config.vehicles.sources = originalSources;
     config.vehicles.openDataUrl = originalOpenDataUrl;
   });
+
+  it('snapshotRevision stays put when the fleet is unchanged', async () => {
+    const rows = [{ name: '4', type: 'tram', x: 51.11, y: 17.032, k: 1 }];
+    const tracker = await trackerFor(() => rows);
+
+    await tracker.poll();
+    const rev = tracker.snapshotRevision;
+    assert.equal(tracker.pollRevision, 1, 'poll revision advances on every accepted poll');
+    assert.equal(rev, 1, 'content revision advances on first poll');
+
+    await tracker.poll(); // identical fleet
+    assert.equal(tracker.snapshotRevision, rev, 'quiet poll does not advance content revision');
+    assert.equal(tracker.pollRevision, 2, 'poll revision still advances');
+  });
+
+  it('snapshotRevision advances on each visible field change', async () => {
+    let rows = [{ name: '4', type: 'tram', x: 51.11, y: 17.032, k: 1 }];
+    const tracker = await trackerFor(() => rows);
+
+    await tracker.poll();
+    const rev0 = tracker.snapshotRevision;
+
+    // Movement
+    rows = [{ name: '4', type: 'tram', x: 51.12, y: 17.032, k: 1 }];
+    await tracker.poll();
+    assert.equal(tracker.snapshotRevision, rev0 + 1, 'movement advances revision');
+
+    // Unchanged fleet keeps revision
+    await tracker.poll();
+    assert.equal(tracker.snapshotRevision, rev0 + 1, 'quiet poll does not advance');
+
+    // Heading change (move far enough to trigger bearing calc)
+    rows = [{ name: '4', type: 'tram', x: 51.12, y: 17.04, k: 1 }];
+    await tracker.poll();
+    assert.equal(tracker.snapshotRevision, rev0 + 2, 'heading change advances revision');
+
+    // Vehicle added
+    rows = [
+      { name: '4', type: 'tram', x: 51.12, y: 17.04, k: 1 },
+      { name: '128', type: 'bus', x: 51.09, y: 17.03, k: 99 },
+    ];
+    await tracker.poll();
+    assert.equal(tracker.snapshotRevision, rev0 + 3, 'added vehicle advances revision');
+
+    // Vehicle removed: age out the departed vehicle so the drop logic fires.
+    const oldVehicle = tracker.mpkFleet.get('128-99');
+    assert.ok(oldVehicle, 'the second vehicle was accepted into the fleet');
+    oldVehicle.updatedAt = Date.now() - config.vehicles.staleAfterMs * 2 - 1;
+    rows = [{ name: '4', type: 'tram', x: 51.12, y: 17.04, k: 1 }];
+    await tracker.poll();
+    assert.equal(tracker.snapshotRevision, rev0 + 4, 'removed vehicle advances revision');
+  });
+
+  it('does not advance snapshotRevision when only updatedAt changes', async () => {
+    // updatedAt is a per-poll freshness timestamp, not content — it must not
+    // by itself cause an ETag / cache invalidation.
+    const rows = [{ name: '4', type: 'tram', x: 51.11, y: 17.032, k: 1 }];
+    const tracker = await trackerFor(() => rows);
+
+    await tracker.poll();
+    const rev0 = tracker.snapshotRevision;
+    const ts0 = tracker.snapshot.locations[0].updatedAt;
+
+    await tracker.poll();
+    assert.equal(tracker.snapshotRevision, rev0, 'unchanged fleet keeps revision');
+    assert.notEqual(tracker.snapshot.locations[0].updatedAt, ts0, 'updatedAt still ticks');
+  });
+
+  it('publishes source and stale on the first successful poll', async () => {
+    const tracker = await trackerFor(() => [{ name: '4', type: 'tram', x: 51.11, y: 17.032, k: 1 }]);
+
+    assert.equal(tracker.snapshot.source, null, 'before the first poll, source is null');
+    assert.equal(tracker.snapshot.stale, false);
+
+    await tracker.poll();
+    assert.equal(tracker.status.source, config.vehicles.sources[0]);
+    assert.equal(tracker.snapshot.source, config.vehicles.sources[0], 'snapshot reflects the successful source immediately');
+    assert.equal(tracker.snapshot.stale, false);
+  });
+
+  it('clears stale immediately on recovery from a failure', async () => {
+    let rows = [{ name: '4', type: 'tram', x: 51.11, y: 17.032, k: 1 }];
+    const tracker = await trackerFor(() => rows);
+    await tracker.poll();
+    assert.equal(tracker.snapshot.stale, false);
+
+    // Poll fails (empty list = every encoding fails)
+    rows = [];
+    await tracker.poll();
+    assert.equal(tracker.snapshot.stale, true);
+    assert.equal(tracker.status.consecutiveFailures, 1);
+
+    // Recovery on the very next poll
+    rows = [{ name: '4', type: 'tram', x: 51.11, y: 17.032, k: 1 }];
+    await tracker.poll();
+    assert.equal(tracker.status.consecutiveFailures, 0);
+    assert.equal(tracker.snapshot.stale, false, 'stale clears immediately, no extra poll needed');
+  });
+
+  it('falls back to a working source and reflects it in snapshot.source', async () => {
+    const originalOpenDataUrl = config.vehicles.openDataUrl;
+    config.vehicles.openDataUrl = null;
+
+    const failing = await startEndpoint(() => []);
+    const working = await startEndpoint(() => [{ name: '4', type: 'tram', x: 51.11, y: 17.032, k: 1 }]);
+    servers.push(failing, working);
+    config.vehicles.sources = [
+      `http://127.0.0.1:${failing.address().port}/bus_position`,
+      `http://127.0.0.1:${working.address().port}/bus_position`,
+    ];
+
+    const tracker = new VehicleTracker(() => lines);
+    await tracker.poll();
+    assert.equal(tracker.status.source, config.vehicles.sources[1], 'the working source answers');
+    assert.equal(tracker.snapshot.source, config.vehicles.sources[1], 'snapshot reflects the fallback in the same cycle');
+    assert.equal(tracker.snapshot.stale, false);
+
+    config.vehicles.openDataUrl = originalOpenDataUrl;
+    config.vehicles.sources = originalSources;
+  });
 });
 
 describe('VehicleTracker poll scheduling (fake timers)', () => {
