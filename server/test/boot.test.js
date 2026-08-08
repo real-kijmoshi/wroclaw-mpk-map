@@ -16,7 +16,6 @@ process.env.GTFS_URLS = 'http://127.0.0.1:1/never-answers.zip';
 process.env.GTFS_USE_CACHE = 'false';
 process.env.ALERT_PAGE_URLS = 'http://127.0.0.1:1/none';
 process.env.VEHICLE_POSITION_URLS = 'http://127.0.0.1:1/none';
-process.env.KD_ENABLED = 'false';
 process.env.KLOSOK_ENABLED = 'false';
 process.env.LOG_LEVEL = 'silent';
 // Keep the stats snapshot out of the repo's data dir.
@@ -64,9 +63,9 @@ describe('server boot', () => {
     assert.ok(Array.isArray((await response.json()).endpoints));
   });
 
-  it('reports KD as disabled on /health', async () => {
+  it('reports Kłosok as disabled on /health', async () => {
     const response = await fetch(`${base}/health`);
     const body = await response.json();
-    assert.equal(body.kd.enabled, false);
+    assert.equal(body.klosok.enabled, false);
   });
 });

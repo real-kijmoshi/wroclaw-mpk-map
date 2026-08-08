@@ -219,99 +219,84 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt 
   };
 
   /**
-    * /locations memoization. Every open app polls the endpoint every ten
-    * seconds, and without this each request re-runs the Kłosok dedup, re-maps
-    * the whole fleet into wire objects and re-stringifies a payload whose
-    * inputs changed not at all since the last poll.
-    *
-    * The merged fleet is cached in TWO independent caches — one for the map
-    * format, one for the full format — each keyed on a format-aware combined
-    * revision that only advances when /locations-visible state for that format
-    * changes. This split is what fixes the stale-merged-object bug: a quiet poll
-    * (fullRevision-only change) advances the full key but not the map key, so
-    * only the full cache is rebuilt — the map merged array is reused untouched,
-    * and the map body cache still answers 304. The full cache IS rebuilt, so the
-    * full body is re-serialised from fresh provider snapshots (per-vehicle
-    * updatedAt included) instead of stale objects.
-    *
-    * Serialized bodies are additionally keyed on the query that shapes them,
-    * and validated against the matching format cache's key before being served.
-    *
-    * Freshness is checked on every request, before any body-cache lookup —
-    * a cached serialized body must never be served past the moment the fleet it
-    * represents has changed. Kłosok's nextExpiryAt is folded into validUntil,
-    * so a bus that ages out between polls still vanishes from the response.
-    */
-   let mapMergedCache = { key: null, merged: null, validUntil: null };
-   let fullMergedCache = { key: null, merged: null, validUntil: null };
-   /** `line|type|format` -> { etag, body, mapKey, fullKey } */
-   const locationsBodyCache = new Map();
+   * /locations memoization. Every open app polls the endpoint every ten
+   * seconds, and without this each request re-runs the Kłosok dedup, re-maps
+   * the whole fleet into wire objects and re-stringifies a payload whose
+   * inputs changed not at all since the last poll.
+   *
+   * The merged fleet is cached in TWO independent caches — one for the map
+   * format, one for the full format — each keyed on a format-aware combined
+   * revision that only advances when /locations-visible state for that format
+   * changes. This split is what fixes the stale-merged-object bug: a quiet poll
+   * (fullRevision-only change) advances the full key but not the map key, so
+   * only the full cache is rebuilt — the map merged array is reused untouched,
+   * and the map body cache still answers 304. The full cache IS rebuilt, so the
+   * full body is re-serialised from fresh provider snapshots (per-vehicle
+   * updatedAt included) instead of stale objects.
+   *
+   * Serialized bodies are additionally keyed on the query that shapes them,
+   * and validated against the matching format cache's key before being served.
+   *
+   * Freshness is checked on every request, before any body-cache lookup —
+   * a cached serialized body must never be served past the moment the fleet it
+   * represents has changed. Kłosok's nextExpiryAt is folded into validUntil,
+   * so a bus that ages out between polls still vanishes from the response.
+   */
+  const mapMergedCache = { key: null, merged: null, validUntil: null };
+  const fullMergedCache = { key: null, merged: null, validUntil: null };
+  /** `line|type|format` -> { etag, body, mapKey, fullKey } */
+  const locationsBodyCache = new Map();
 
-   /** Combined key for the map format — advances only when map-visible state changes. */
-   const combinedMapKey = () =>
-     `${vehicles.mapRevision ?? 0}|${klosok?.mapRevision ?? 0}`;
+  /** Combined key for the map format — advances only when map-visible state changes. */
+  const combinedMapKey = () =>
+    `${vehicles.mapRevision ?? 0}|${klosok?.mapRevision ?? 0}`;
 
-   /** Combined key for the full format — advances when full-visible state changes (incl. lastUpdated). */
-   const combinedFullKey = () =>
-     `${vehicles.fullRevision ?? 0}|${klosok?.fullRevision ?? 0}`;
+  /** Combined key for the full format — advances when full-visible state changes (incl. lastUpdated). */
+  const combinedFullKey = () =>
+    `${vehicles.fullRevision ?? 0}|${klosok?.fullRevision ?? 0}`;
 
-   /**
-    * Merge the Wrocław and PT KŁOSOK (when enabled) location lists, returning the
-    * array for the requested format from a format-specific cache.
-    *
-    * `format` selects the cache and the revision key to compare against. A
-    * quiet poll advances fullKey only: the full cache is rebuilt from current
-    * provider snapshots (so per-vehicle updatedAt is fresh in the full body),
-    * while the map cache keeps its old array and the map body still answers 304.
-    *
-    * The fleet is rebuilt when the format's key changes or a Kłosok vehicle has
-    * aged out (validUntil). A rebuild invalidates only serialized bodies built
-    * for that same format, so the other format's body cache (and ETag) survive.
-    */
-   const getMergedLocations = (format) => {
-     const isMap = format === 'map';
-     const cache = isMap ? mapMergedCache : fullMergedCache;
-     const key = isMap ? combinedMapKey() : combinedFullKey();
-     const now = Date.now();
+  /**
+   * Merge the Wrocław and PT KŁOSOK (when enabled) location lists, returning the
+   * array for the requested format from a format-specific cache.
+   *
+   * `format` selects the cache and the revision key to compare against. A
+   * quiet poll advances fullKey only: the full cache is rebuilt from current
+   * provider snapshots (so per-vehicle updatedAt is fresh in the full body),
+   * while the map cache keeps its old array and the map body still answers 304.
+   *
+   * The fleet is rebuilt when the format's key changes or a Kłosok vehicle has
+   * aged out (validUntil). A rebuild invalidates only serialized bodies built
+   * for that same format, so the other format's body cache (and ETag) survive.
+   */
+  const getMergedLocations = (format) => {
+    const isMap = format === 'map';
+    const cache = isMap ? mapMergedCache : fullMergedCache;
+    const key = isMap ? combinedMapKey() : combinedFullKey();
+    const now = Date.now();
 
-     // A Kłosok vehicle can age out by wall-clock, not by poll revision. If the
-     // earliest remaining fix is past its maxAge, rebuild so it vanishes from
-     // /locations even though no poll has run.
-     const expired = cache.validUntil != null && now >= cache.validUntil;
+    // A Kłosok vehicle can age out by wall-clock, not by poll revision. If the
+    // earliest remaining fix is past its maxAge, rebuild so it vanishes from
+    // /locations even though no poll has run.
+    const expired = cache.validUntil != null && now >= cache.validUntil;
 
-     if (cache.merged === null || cache.key !== key || expired) {
-       const wroclaw = vehicles.snapshot.locations;
-       const merged = klosok?.enabled ? klosok.mergeLocations(wroclaw) : wroclaw;
-       cache.merged = merged;
-       cache.key = key;
-       cache.validUntil = klosok?.nextExpiryAt ?? null;
-       // Invalidate only bodies built from this format's merged fleet.
-       for (const [variantKey] of [...locationsBodyCache]) {
-         const entryIsMap = variantKey.split('|').pop() === 'map';
-         if (entryIsMap === isMap) locationsBodyCache.delete(variantKey);
-       }
-     }
+    if (cache.merged === null || cache.key !== key || expired) {
+      const wroclaw = vehicles.snapshot.locations;
+      const merged = klosok?.enabled ? klosok.mergeLocations(wroclaw) : wroclaw;
+      cache.merged = merged;
+      cache.key = key;
+      cache.validUntil = klosok?.nextExpiryAt ?? null;
+      // Invalidate only bodies built from this format's merged fleet.
+      for (const [variantKey] of [...locationsBodyCache]) {
+        const entryIsMap = variantKey.split('|').pop() === 'map';
+        if (entryIsMap === isMap) locationsBodyCache.delete(variantKey);
+      }
+    }
 
-     return cache.merged;
-   };
+    return cache.merged;
+  };
 
   /** 503 until the timetable is loaded, so clients can retry instead of caching an empty answer. */
   const requireGtfs = (req, res, next) => {
-    if (gtfs.isReady) return next();
-    res.set('Retry-After', '15');
-    return res.status(503).json({
-      error: 'Timetable data is still loading',
-      state: gtfs.status.state,
-      detail: gtfs.status.error,
-    });
-  };
-
-  /**
-   * /lines serves line numbers drawn from the Wrocław timetable. Either the
-   * stop index or the variants are enough for the endpoint to be useful — a
-   * GTFS build that has variants but not yet the stop index must still answer.
-   */
-  const requireAnyTimetable = (req, res, next) => {
     if (gtfs.isReady) return next();
     res.set('Retry-After', '15');
     return res.status(503).json({
@@ -346,11 +331,11 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt 
     });
   });
 
-  router.get('/lines', requireAnyTimetable, cacheFor(300), (req, res) => {
+  router.get('/lines', requireGtfs, cacheFor(300), (req, res) => {
     res.json({ ...gtfs.lines });
   });
 
-  router.get('/lines/:category', requireAnyTimetable, cacheFor(300), (req, res) => {
+  router.get('/lines/:category', requireGtfs, cacheFor(300), (req, res) => {
     const { category } = req.params;
     const lines = { ...gtfs.lines };
     if (!Object.hasOwn(lines, category)) {
@@ -416,14 +401,14 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt 
     return res.send(entry.body);
   });
 
-   /**
-    * One vehicle, with the whole stop list of the run it is on.
-    *
-    * /locations carries only the next stop for every vehicle — the full board
-    * for a few hundred of them would be several times the payload for something
-    * a rider looks at one vehicle at a time.
-    */
-   router.get('/vehicle/:id', requireGtfs, noStore, (req, res) => {
+  /**
+   * One vehicle, with the whole stop list of the run it is on.
+   *
+   * /locations carries only the next stop for every vehicle — the full board
+   * for a few hundred of them would be several times the payload for something
+   * a rider looks at one vehicle at a time.
+   */
+  router.get('/vehicle/:id', requireGtfs, noStore, (req, res) => {
     const vehicle = req.params.id.startsWith('klosok:')
       ? klosok?.getVehicle(req.params.id)
       : vehicles.getVehicle(req.params.id);
@@ -475,7 +460,7 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt 
     });
   });
 
-   router.get('/shapes/:line/variants', requireGtfs, revalidateShape, (req, res) => {
+  router.get('/shapes/:line/variants', requireGtfs, revalidateShape, (req, res) => {
     const { line } = req.params;
     const variants = gtfs.getVariants(line);
     if (!variants.length) return res.status(404).json({ error: 'Line not found', line });
@@ -527,7 +512,7 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt 
     return res.json({ stops: gtfs.findStopsNear(lat, lon, { radiusMeters: radius, limit }) });
   });
 
-  router.get('/stops', requireAnyTimetable, cacheFor(300), (req, res) => {
+  router.get('/stops', requireGtfs, cacheFor(300), (req, res) => {
     const query = String(req.query.q ?? '').trim();
     if (!query) return res.status(400).json({ error: 'Provide a search term with ?q=' });
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 20, 100);
@@ -553,7 +538,7 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt 
     return res.json({ line, stops: [...byId.values()] });
   });
 
-  router.get('/stop/:id/departures', requireAnyTimetable, noStore, (req, res) => {
+  router.get('/stop/:id/departures', requireGtfs, noStore, (req, res) => {
     const stop = gtfs.getStop(req.params.id);
     if (!stop) return res.status(404).json({ error: 'Stop not found', id: req.params.id });
 
@@ -565,7 +550,7 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt 
     });
   });
 
-  router.get('/stop/:id', requireAnyTimetable, cacheFor(3600), (req, res) => {
+  router.get('/stop/:id', requireGtfs, cacheFor(3600), (req, res) => {
     const stop = gtfs.getStop(req.params.id);
     if (!stop) return res.status(404).json({ error: 'Stop not found', id: req.params.id });
     return res.json(stop);
