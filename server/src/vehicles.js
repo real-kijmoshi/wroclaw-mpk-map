@@ -161,12 +161,24 @@ class VehicleTracker {
     /** Monotonic counter bumped on every accepted poll (success or failure). Used by the vehicle-detail cache and internal freshness checks. */
     this.pollRevision = 0;
     /**
-     * Content revision: bumps only when something visible in `/locations` changes.
-     * Drives the `/locations` body cache and ETag invalidation — a quiet poll that
-     * observed the same positions keeps the same revision so the response can be
-     * 304. `pollRevision` advances even when it does not.
+     * Map revision: bumps only when something visible in `/locations?format=map`
+     * changes — vehicle positions, headings, trip info, source/stale state.
+     * A quiet poll that observed identical positions keeps the same value, so
+     * the map-format body cache and ETag stay valid and the client gets 304.
+     * `updatedAt`/`lastUpdated` are freshness timestamps, not map content, and
+     * are deliberately excluded — the map format does not carry per-vehicle
+     * updatedAt, and its cached body freezes lastUpdated at the last content
+     * change rather than re-downloading every ten seconds.
      */
-    this.snapshotRevision = 0;
+    this.mapRevision = 0;
+    /**
+     * Full revision: bumps whenever anything visible in the full `/locations`
+     * response changes — the same fields as mapRevision, plus `lastUpdated`
+     * (which the full format serializes) and per-vehicle `updatedAt`. A quiet
+     * poll advances `fullRevision` even when `mapRevision` does not, because
+     * lastUpdated ticks on every successful poll.
+     */
+    this.fullRevision = 0;
     /** vehicle id -> { lat, lon, heading, at, trip } of the last projection, so stationary vehicles skip re-projection. */
     this.describeCache = new Map();
     this.timer = null;
@@ -302,15 +314,15 @@ class VehicleTracker {
     }
 
     // True when anything visible in /locations changed since the last snapshot.
-    // `updatedAt` is a freshness timestamp, not content, so it is excluded —
-    // /locations derives its ETag from the serialized body, and a body that
-    // changed every poll even with nothing moving made the app re-download the
-    // whole fleet every ten seconds (updatedAt is not on the wire in map format anyway).
-    let changed = this._snapshot.locations.length !== vehicles.length;
-    for (let i = 0; changed === false && i < vehicles.length; i += 1) {
+    // `updatedAt` (per-vehicle) and `lastUpdated` (snapshot-level) are freshness
+    // timestamps, not positional content, so they are excluded from this check —
+    // a quiet poll that observed the same positions must not advance mapRevision,
+    // which is what keeps `/locations?format=map` answering 304.
+    let contentChanged = this._snapshot.locations.length !== vehicles.length;
+    for (let i = 0; contentChanged === false && i < vehicles.length; i += 1) {
       const prev = this._snapshot.locations[i];
       const next = vehicles[i];
-      changed =
+      contentChanged =
         prev.id !== next.id ||
         prev.line !== next.line ||
         prev.type !== next.type ||
@@ -326,8 +338,8 @@ class VehicleTracker {
 
     // Source and stale are snapshot metadata visible in /locations; a change
     // in either is content-visible even when every vehicle is identical.
-    changed =
-      changed ||
+    contentChanged =
+      contentChanged ||
       this._snapshot.source !== source ||
       this._snapshot.stale !== stale;
 
@@ -336,14 +348,20 @@ class VehicleTracker {
     this.byId = new Map(vehicles.map((entry) => [entry.id, entry]));
 
     this.pollRevision += 1;
-    if (changed) this.snapshotRevision += 1;
+    // A quiet poll (identical positions) still advances lastUpdated, which the
+    // full format carries — so fullRevision always ticks on a successful
+    // rebuild. mapRevision only ticks on a positional/metadata content change.
+    this.fullRevision += 1;
+    if (contentChanged) this.mapRevision += 1;
 
     this._snapshot = {
       locations: vehicles,
       count: vehicles.length,
-      // Only advance when something visible changed, so a quiet poll answers
-      // 304 instead of shipping an identical fleet.
-      lastUpdated: changed ? new Date().toISOString() : this._snapshot.lastUpdated,
+      // Always advance on a successful poll: the full /locations format
+      // serializes lastUpdated, so a quiet poll must still produce a fresh
+      // full body and ETag. The map format's body cache is keyed on
+      // mapRevision (not fullRevision), so it still answers 304 here.
+      lastUpdated: new Date().toISOString(),
       source,
       stale,
     };
@@ -590,7 +608,10 @@ class VehicleTracker {
       // cache must not keep serving a "fresh" answer.
       this._snapshot = { ...this._snapshot, stale: true };
       this.pollRevision += 1;
-      if (!wasStale) this.snapshotRevision += 1;
+      if (!wasStale) {
+        this.mapRevision += 1;
+        this.fullRevision += 1;
+      }
       this.status.sources = this.sourceHealth.snapshot();
       // Only shout about it once it is clearly not a blip.
       const log = this.status.consecutiveFailures === 1 ? logger.debug : logger.warn;

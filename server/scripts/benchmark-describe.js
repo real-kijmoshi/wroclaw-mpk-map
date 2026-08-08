@@ -114,8 +114,9 @@ const advance = (vehicle, states) => {
     // variant; the fleet keeps the geometry but a fresh start has no history,
     // so its next describe is a full match. Model that by re-seeding the
     // vehicle and dropping its previous projection state.
-    const target = pointAt(vehicle.variant, 0.5);
-    vehicle.along = 0.5;
+    const mid = vehicle.lengthMeters * 0.5;
+    const target = pointAt(vehicle.variant, mid);
+    vehicle.along = mid;
     vehicle.lat = target.lat;
     vehicle.lon = target.lon;
     vehicle.heading = target.bearing;
@@ -187,6 +188,20 @@ const main = async () => {
 
   const fleet = buildFleet(store);
   console.log(`fleet: ${fleet.length} vehicles over ${STEP_METERS} m/poll`);
+  const snapshot = fleet.map((v) => ({
+    lat: v.lat,
+    lon: v.lon,
+    heading: v.heading,
+    along: v.along,
+  }));
+  const restoreFleet = () => {
+    for (let i = 0; i < fleet.length; i += 1) {
+      fleet[i].lat = snapshot[i].lat;
+      fleet[i].lon = snapshot[i].lon;
+      fleet[i].heading = snapshot[i].heading;
+      fleet[i].along = snapshot[i].along;
+    }
+  };
   const run = (useFastPath) => {
     const states = new Map();
     for (let i = 0; i < WARMUP_POLLS; i += 1) {
@@ -210,8 +225,15 @@ const main = async () => {
   // Baseline: every vehicle full-matches every poll.
   const baseline = run(false);
 
+  // Restore the fleet to its initial state so the fast-path run is measured on
+  // the same starting positions.
+  restoreFleet();
+
   // Fast path: seeded from each vehicle's previous projection.
   const fast = run(true);
+
+  // Restore again so the differential check starts from the same state.
+  restoreFleet();
 
   // Differential correctness: one fresh poll, every vehicle described both
   // ways, the answers compared. A mismatch only matters if it is not a tie —
@@ -257,7 +279,11 @@ const main = async () => {
   console.log(`  identical: ${identical}  tied (shared street, both on-route): ${tied}  disagree: ${disagree}`);
 };
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
+
+module.exports = { advance, pointAt };

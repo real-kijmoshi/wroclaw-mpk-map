@@ -87,8 +87,8 @@ const loadGtfs = async (attempt = 0) => {
   // be named until the timetable is here, but its poll must not be held back
   // by the download below, and its failures must not stop it either.
   if (attempt === 0) {
-    kd.start().catch((error) => logger.error(`KD start failed: ${error.message}`));
-    klosok.start().catch((error) => logger.error(`Kłosok start failed: ${error.message}`));
+    kd.start();
+    klosok.start();
   }
   try {
     await gtfs.refresh();

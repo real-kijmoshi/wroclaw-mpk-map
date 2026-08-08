@@ -7,6 +7,41 @@ const { KdStaticStore, OPERATOR } = require('./static');
 const { findTripUpdate, parseRealtime } = require('./realtime');
 const { fetchLiveVehicles: fetchPublicLiveVehicles } = require('./publicRealtime');
 
+// Fields read by routes.js toMapVehicle() for KD vehicles — the authoritative
+// set that drives mapRevision. Every field that can appear in
+// /locations?format=map must participate, so adding a field to toMapVehicle
+// means adding it here.
+const KD_MAP_FIELDS = [
+  'id', 'line', 'type', 'lat', 'lon', 'heading',
+  'positionUpdatedAt', 'source',
+  'operator', 'routeId', 'tripId', 'vehicleLabel',
+  'delaySeconds', 'occupancyStatus', 'occupancyPercentage',
+  'vehicleNumber', 'brigade', 'destination',
+];
+
+// Extra fields present only in the full /locations body (not read by
+// toMapVehicle), so a change to them advances fullRevision without touching
+// mapRevision.
+const KD_FULL_EXTRA_FIELDS = ['speed', 'startDate', 'rawTripId', 'currentStopSequence'];
+
+/** @returns {boolean} true when two KD vehicles serialise identically in map format. */
+function mapVehicleEquals(a, b) {
+  for (const f of KD_MAP_FIELDS) {
+    if ((a?.[f] ?? undefined) !== (b?.[f] ?? undefined)) return false;
+  }
+  if (JSON.stringify(a?.trip ?? null) !== JSON.stringify(b?.trip ?? null)) return false;
+  return true;
+}
+
+/** @returns {boolean} true when two KD vehicles serialise identically in full format. */
+function fullVehicleEquals(a, b) {
+  if (!mapVehicleEquals(a, b)) return false;
+  for (const f of KD_FULL_EXTRA_FIELDS) {
+    if (JSON.stringify(a?.[f]) !== JSON.stringify(b?.[f])) return false;
+  }
+  return true;
+}
+
 /**
  * Koleje Dolnośląskie as a standalone provider.
  *
@@ -46,16 +81,27 @@ class KdService {
       oldestTimestamp: null,
     };
     this.snapshot = { locations: [], count: 0, lastUpdated: null, stale: false, source: 'kd-gtfs-rt' };
+    /** Monotonic counter bumped on every realtime poll (success or failure). */
+    this.pollRevision = 0;
     /**
-     * Content revision: bumps only when /locations-visible state in the KD
-     * snapshot changes. Drives the combined-fleet key in /locations.
+     * Map revision: bumps only when /locations?format=map output changes —
+     * vehicle positions, headings, destinations, delays, occupancy…
      */
-    this.snapshotRevision = 0;
+    this.mapRevision = 0;
+    /**
+     * Full revision: like mapRevision but also advances when full-only fields
+     * (speed, currentStopSequence, startDate, rawTripId) change. Both start at
+     * 0 so an empty/uninitialised KD snapshot maps to the same key as one with
+     * no vehicles.
+     */
+    this.fullRevision = 0;
     /** @type {Map<string, object>} last parsed trip updates, startDate|tripId -> update */
     this.tripUpdates = new Map();
     this.staticTimer = null;
     this.realtimeTimer = null;
     this.started = false;
+    /** True after stop() so an in-flight poll never re-arms its timer. */
+    this._stopped = false;
   }
 
   get isReady() {
@@ -71,32 +117,30 @@ class KdService {
   }
 
   /** Load the timetable, then start the periodic refresh and RT poll. */
-  async start() {
+  start() {
     if (this.started) return;
     this.started = true;
+    this._stopped = false;
 
     if (!config.kd.enabled) {
       logger.info('KD disabled — set KD_ENABLED=true to enable');
       return;
     }
 
-    await this.refreshStatic();
+    // First poll immediately. A placeholder handle keeps staticTimer and
+    // realtimeTimer non-null from the first instant — stop() and callers that
+    // inspect the timers rely on it — and are replaced by the real arms the
+    // moment the first poll settles. The next arm is queued from the *end* of
+    // each #run*Loop, which is the only code that schedules a KD timer, so even
+    // the first tick can never overlap the poll that preceded it.
+    this.staticTimer = setTimeout(() => {}, 0);
+    this.staticTimer.unref?.();
+    void this.#runStaticLoop();
 
-    this.staticTimer = setInterval(() => {
-      this.refreshStatic().catch(() => {});
-    }, config.kd.refreshIntervalMs);
-
-    if (config.kd.realtimeUrl) {
-      await this.pollRealtime();
-      this.realtimeTimer = setInterval(() => {
-        this.pollRealtime().catch(() => {});
-      }, config.kd.realtimePollIntervalMs);
-    } else if (config.kd.publicRealtimeEnabled) {
-      logger.info('KD GTFS-RT not configured — falling back to kiedyPrzyjedzie.pl public live positions');
-      await this.pollRealtime();
-      this.realtimeTimer = setInterval(() => {
-        this.pollRealtime().catch(() => {});
-      }, config.kd.publicRealtimePollIntervalMs);
+    if (config.kd.realtimeUrl || config.kd.publicRealtimeEnabled) {
+      this.realtimeTimer = setTimeout(() => {}, 0);
+      this.realtimeTimer.unref?.();
+      void this.#runRealtimeLoop();
     } else {
       logger.info('KD GTFS-RT not configured — live trains disabled');
     }
@@ -104,11 +148,49 @@ class KdService {
 
   /** Stop both timers. Anything scheduled must be stoppable (CLAUDE.md). */
   stop() {
-    if (this.staticTimer) clearInterval(this.staticTimer);
-    if (this.realtimeTimer) clearInterval(this.realtimeTimer);
+    this._stopped = true;
+    if (this.staticTimer) clearTimeout(this.staticTimer);
+    if (this.realtimeTimer) clearTimeout(this.realtimeTimer);
     this.staticTimer = null;
     this.realtimeTimer = null;
     this.started = false;
+  }
+
+  #scheduleNextStaticPoll() {
+    if (this._stopped) return;
+    if (this.staticTimer) clearTimeout(this.staticTimer);
+    this.staticTimer = setTimeout(() => this.#runStaticLoop(), config.kd.refreshIntervalMs);
+    this.staticTimer.unref?.();
+  }
+
+  #scheduleNextRealtimePoll() {
+    if (this._stopped) return;
+    const intervalMs = config.kd.realtimeUrl
+      ? config.kd.realtimePollIntervalMs
+      : config.kd.publicRealtimePollIntervalMs;
+    if (this.realtimeTimer) clearTimeout(this.realtimeTimer);
+    this.realtimeTimer = setTimeout(() => this.#runRealtimeLoop(), intervalMs);
+    this.realtimeTimer.unref?.();
+  }
+
+  async #runStaticLoop() {
+    try {
+      await this.refreshStatic();
+    } catch (error) {
+      logger.error(`KD static refresh threw, rescheduling: ${error.message}`);
+    } finally {
+      this.#scheduleNextStaticPoll();
+    }
+  }
+
+  async #runRealtimeLoop() {
+    try {
+      await this.pollRealtime();
+    } catch (error) {
+      logger.error(`KD realtime poll threw, rescheduling: ${error.message}`);
+    } finally {
+      this.#scheduleNextRealtimePoll();
+    }
   }
 
   async refreshStatic() {
@@ -153,9 +235,8 @@ class KdService {
         .filter(Number.isFinite)
         .sort((a, b) => a - b);
 
-      // Bump the content revision only when /locations-visible state changed,
-      // not on every poll that returned identical positions.
-      const changed = this.#snapshotChanged(this.snapshot, enriched, parsed.stale);
+      // Bump the content revision only when /locations-visible state changed.
+      const changes = this.#computeRevisionChanges(this.snapshot, enriched);
 
       this.snapshot = {
         locations: enriched,
@@ -164,7 +245,9 @@ class KdService {
         stale: parsed.stale,
         source: 'kd-gtfs-rt',
       };
-      this.snapshotRevision += changed ? 1 : 0;
+      this.pollRevision += 1;
+      if (changes.map) this.mapRevision += 1;
+      if (changes.full) this.fullRevision += 1;
       this.realtimeStatus = {
         ...this.realtimeStatus,
         state: 'ready',
@@ -180,6 +263,7 @@ class KdService {
       logger.info(`KD GTFS-RT: ${enriched.length} vehicles, ${parsed.tripUpdates.size} trip updates`);
     } catch (error) {
       // Fail soft: keep the last good snapshot, and say why on /health.
+      this.pollRevision += 1;
       this.realtimeStatus.state = this.snapshot.count > 0 ? 'stale' : 'error';
       this.realtimeStatus.lastError = error.message;
       logger.error(`KD GTFS-RT poll failed: ${error.message}`);
@@ -215,7 +299,7 @@ class KdService {
         .sort((a, b) => a - b);
 
       // Bump the content revision only when /locations-visible state changed.
-      const changed = this.#snapshotChanged(this.snapshot, enriched, false);
+      const changes = this.#computeRevisionChanges(this.snapshot, enriched);
 
       this.snapshot = {
         locations: enriched,
@@ -224,7 +308,9 @@ class KdService {
         stale: false,
         source: 'kd-public-kiedyprzyjedzie',
       };
-      this.snapshotRevision += changed ? 1 : 0;
+      this.pollRevision += 1;
+      if (changes.map) this.mapRevision += 1;
+      if (changes.full) this.fullRevision += 1;
       this.realtimeStatus = {
         ...this.realtimeStatus,
         state: 'ready',
@@ -240,6 +326,7 @@ class KdService {
       logger.info(`KD public live positions: ${enriched.length} train(s) across ${stationIds.length} stations`);
     } catch (error) {
       // Fail soft, same as the official path: keep the last good snapshot.
+      this.pollRevision += 1;
       this.realtimeStatus.state = this.snapshot.count > 0 ? 'stale' : 'error';
       this.realtimeStatus.lastError = error.message;
       logger.error(`KD public live-position scan failed: ${error.message}`);
@@ -288,29 +375,27 @@ class KdService {
 
   /**
    * Compare the previous snapshot against the newly parsed fleet to decide
-   * whether snapshotRevision should advance. Only /locations-visible fields
-   * participate: `updatedAt` is a per-poll freshness timestamp, not content.
+   * which content revisions should advance. Only /locations-visible fields
+   * participate: lastUpdated and stale are NOT on the /locations wire for KD
+   * (they live in /health), so a quiet poll that returned identical positions
+   * advances neither mapRevision nor fullRevision.
+   *
+   * Returns { map: boolean, full: boolean }.
    */
-  #snapshotChanged(prev, next, stale) {
-    if (!prev.locations || prev.locations.length !== next.length) return true;
-    if (prev.stale !== stale) return true;
+  #computeRevisionChanges(prev, next) {
+    if (!prev.locations || prev.locations.length !== next.length) {
+      return { map: true, full: true };
+    }
+    let mapChanged = false;
+    let fullChanged = false;
     for (let i = 0; i < next.length; i++) {
       const a = prev.locations[i];
       const b = next[i];
-      if (
-        a.id !== b.id ||
-        a.line !== b.line ||
-        a.type !== b.type ||
-        a.lat !== b.lat ||
-        a.lon !== b.lon ||
-        a.heading !== b.heading ||
-        a.positionUpdatedAt !== b.positionUpdatedAt ||
-        a.delaySeconds !== b.delaySeconds
-      ) {
-        return true;
-      }
+      if (!mapVehicleEquals(a, b)) mapChanged = true;
+      if (!fullVehicleEquals(a, b)) fullChanged = true;
+      if (mapChanged && fullChanged) break;
     }
-    return false;
+    return { map: mapChanged, full: fullChanged };
   }
 
   /**
@@ -435,4 +520,4 @@ class KdService {
   }
 }
 
-module.exports = { KdService };
+module.exports = { KdService, mapVehicleEquals, fullVehicleEquals };
