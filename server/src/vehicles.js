@@ -4,7 +4,7 @@ const { performance } = require('node:perf_hooks');
 
 const config = require('./config');
 const logger = require('./logger');
-const { fetchWithTimeout, tryEachSource } = require('./http');
+const { fetchWithTimeout, tryEachSource, SourceHealth } = require('./http');
 const { lineToType } = require('./lines');
 const { Metric } = require('./metrics');
 const {
@@ -164,6 +164,10 @@ class VehicleTracker {
     this.describeCache = new Map();
     this.timer = null;
     this.openDataTimer = null;
+    /** True once stop() has run, so an in-flight poll never re-arms its loop. */
+    this._stopped = true;
+    /** Per-URL health of the position endpoints (see http.SourceHealth). */
+    this.sourceHealth = new SourceHealth(config.vehicles.sources);
     /** Body encoding that last worked; tried first on the next poll. */
     this.preferredEncoding = null;
     this.status = {
@@ -178,6 +182,8 @@ class VehicleTracker {
       // below `count` means the feed and the shapes disagree — a stale
       // snapshot, or lines running a diversion.
       described: 0,
+      /** Per-URL health snapshot, for /health. */
+      sources: [],
     };
     this.openDataStatus = {
       source: config.vehicles.openDataUrl,
@@ -442,7 +448,10 @@ class VehicleTracker {
   /** Fetch the primary (MPK) source once and merge it into the fleet. */
   async poll() {
     const lines = this.getLines();
-    if (!lines || (!lines.allBuses.length && !lines.allTrams.length)) return this.status;
+    if (!lines || (!lines.allBuses.length && !lines.allTrams.length)) {
+      this.#scheduleNextPoll();
+      return this.status;
+    }
 
     this.status.lastAttemptAt = new Date().toISOString();
     const pollStart = performance.now();
@@ -451,9 +460,15 @@ class VehicleTracker {
     try {
       const fetchStart = performance.now();
       const { url, value: rows } = await tryEachSource(
-        config.vehicles.sources,
+        this.sourceHealth.plan(),
         (candidate) => this.#request(candidate, lines),
-        { label: 'vehicle position' },
+        {
+          label: 'vehicle position',
+          onResult: ({ url: attemptedUrl, ok, error }) => {
+            if (ok) this.sourceHealth.recordSuccess(attemptedUrl);
+            else this.sourceHealth.recordFailure(attemptedUrl, error);
+          },
+        },
       );
       perf.fetchMs.record(performance.now() - fetchStart);
       perf.incomingVehicleCount.record(rows.length);
@@ -511,6 +526,7 @@ class VehicleTracker {
         consecutiveFailures: 0,
         count: accepted,
         described,
+        sources: this.sourceHealth.snapshot(),
       };
 
       if (accepted === 0) logger.warn('Vehicle poll returned rows but none were usable');
@@ -523,11 +539,13 @@ class VehicleTracker {
       // cache must not keep serving a "fresh" answer.
       this._snapshot = { ...this._snapshot, stale: true };
       this.revision += 1;
+      this.status.sources = this.sourceHealth.snapshot();
       // Only shout about it once it is clearly not a blip.
       const log = this.status.consecutiveFailures === 1 ? logger.debug : logger.warn;
       log(`Vehicle poll failed (${this.status.consecutiveFailures}x): ${error.message}`);
     }
 
+    this.#scheduleNextPoll();
     return this.status;
   }
 
@@ -588,6 +606,7 @@ class VehicleTracker {
       log(`Open Data poll failed (${this.openDataStatus.consecutiveFailures}x): ${error.message}`);
     }
 
+    this.#scheduleNextOpenDataPoll();
     return this.openDataStatus;
   }
 
@@ -602,31 +621,61 @@ class VehicleTracker {
     this.stats = stats;
   }
 
+  /**
+   * Re-arm the MPK poll for `intervalMs` from now. Deliberately not a
+   * setInterval: the next poll is scheduled from the *end* of the previous one,
+   * so a slow response can never pile a second poll on top of one still running
+   * (a setInterval would, and two concurrent polls would double every merge and
+   * race on the describe cache).
+   */
+  #scheduleNextPoll() {
+    if (this._stopped) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.poll(), config.vehicles.pollIntervalMs);
+    this.timer.unref?.();
+  }
+
+  /** Re-arm the Open Data poll, same non-overlapping discipline as #scheduleNextPoll. */
+  #scheduleNextOpenDataPoll() {
+    if (this._stopped) return;
+    if (this.openDataTimer) clearTimeout(this.openDataTimer);
+    this.openDataTimer = setTimeout(
+      () => this.pollOpenData(),
+      config.vehicles.openDataPollIntervalMs,
+    );
+    this.openDataTimer.unref?.();
+  }
+
   start() {
     if (this.timer) return;
-    this.poll();
-    this.timer = setInterval(() => this.poll(), config.vehicles.pollIntervalMs);
+    this._stopped = false;
+
+    // First poll immediately. A placeholder handle keeps `timer` non-null from
+    // the first instant — stop() and callers that inspect the timers rely on
+    // it — and is replaced by the real arm the moment the first poll settles.
+    // The arm is scheduled from the *end* of each poll (see #scheduleNextPoll),
+    // so even the first tick can never overlap the poll that preceded it.
+    this.timer = setTimeout(() => {}, 0);
     this.timer.unref?.();
+    this.poll().finally(() => this.#scheduleNextPoll());
 
     // The Open Data source runs on its own timer and its own failure state, so
     // either source can go down without taking the fleet with it.
     if (config.vehicles.openDataUrl) {
-      this.pollOpenData();
-      this.openDataTimer = setInterval(
-        () => this.pollOpenData(),
-        config.vehicles.openDataPollIntervalMs,
-      );
+      this.openDataTimer = setTimeout(() => {}, 0);
       this.openDataTimer.unref?.();
+      this.pollOpenData().finally(() => this.#scheduleNextOpenDataPoll());
     }
   }
 
   stop() {
+    this._stopped = true;
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
     if (this.openDataTimer) {
-      clearInterval(this.openDataTimer);
+      clearTimeout(this.openDataTimer);
       this.openDataTimer = null;
     }
   }

@@ -12,6 +12,7 @@ const {
   mergeFleet,
   normalizeOpenDataRecord,
   parseWarsawDate,
+  warsawOffsetMinutesAt,
 } = require('../src/open-data');
 const { VehicleTracker } = require('../src/vehicles');
 
@@ -70,6 +71,244 @@ const odVehicle = (id, lat, lon) => ({
 
 const MERGE_OPTIONS = { matchMaxMeters: 250, dedupeMeters: 350, ambiguityMeters: 75 };
 
+// ---------------------------------------------------------------------------
+// Reference implementations, frozen in time.
+//
+// These are verbatim copies of the production code as it was written before
+// the perf work (inline per-call formatter; candidate-array + sort merge
+// matching). The differential tests below assert the production code and
+// these references never diverge, so a rewrite that changes observable
+// behaviour fails the suite. Deliberately duplicated, not imported, so the
+// references stay frozen even if the production module is later refactored.
+// ---------------------------------------------------------------------------
+
+const warsawOffsetReference = (utcMs) => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Warsaw',
+    timeZoneName: 'longOffset',
+  }).formatToParts(new Date(utcMs));
+  const name = parts.find((part) => part.type === 'timeZoneName')?.value ?? '';
+  const match = /GMT([+-])(\d{2}):(\d{2})/.exec(name);
+  if (!match) return 0;
+  const sign = match[1] === '-' ? -1 : 1;
+  return sign * (Number(match[2]) * 60 + Number(match[3]));
+};
+
+const HAS_OFFSET_REFERENCE = /(?:[zZ])|(?:[+-]\d{2}:?\d{2})/;
+
+const parseWarsawDateReference = (value) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? new Date(value) : null;
+  if (typeof value !== 'string') return null;
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  if (HAS_OFFSET_REFERENCE.test(trimmed)) return parsed;
+
+  const naiveUtc = Date.UTC(
+    parsed.getFullYear(),
+    parsed.getMonth(),
+    parsed.getDate(),
+    parsed.getHours(),
+    parsed.getMinutes(),
+    parsed.getSeconds(),
+  );
+  return new Date(naiveUtc - warsawOffsetReference(naiveUtc) * 60_000);
+};
+
+const mergeFleetReference = (
+  mpkFleet,
+  openDataFleet,
+  { matchMaxMeters, dedupeMeters, ambiguityMeters },
+) => {
+  const fleet = new Map();
+  for (const [id, vehicle] of mpkFleet) {
+    fleet.set(id, { ...vehicle, source: 'mpk' });
+  }
+
+  const byLine = new Map();
+  for (const vehicle of mpkFleet.values()) {
+    if (!byLine.has(vehicle.line)) byLine.set(vehicle.line, []);
+    byLine.get(vehicle.line).push(vehicle);
+  }
+
+  const used = new Set();
+
+  for (const od of openDataFleet.values()) {
+    const candidates = (byLine.get(od.line) ?? [])
+      .filter((mpk) => mpk.type === od.type)
+      .map((mpk) => ({ mpk, meters: distanceMeters(mpk.lat, mpk.lon, od.lat, od.lon) }))
+      .sort((a, b) => a.meters - b.meters);
+
+    const nearest = candidates[0];
+    let matched = null;
+
+    if (nearest && nearest.meters <= matchMaxMeters && !used.has(nearest.mpk.id)) {
+      const second = candidates[1];
+      const ambiguous =
+        second &&
+        second.meters <= matchMaxMeters &&
+        second.meters - nearest.meters < ambiguityMeters;
+      if (!ambiguous) matched = nearest.mpk;
+    }
+
+    if (matched) {
+      used.add(matched.id);
+      const entry = fleet.get(matched.id);
+      entry.source = 'merged';
+      entry.vehicleNumber = od.vehicleNumber;
+      entry.brigade = od.brigade;
+      entry.positionUpdatedAt = od.positionUpdatedAt;
+      continue;
+    }
+
+    const nearMpk = (byLine.get(od.line) ?? []).some(
+      (mpk) => distanceMeters(mpk.lat, mpk.lon, od.lat, od.lon) <= dedupeMeters,
+    );
+    if (nearMpk) continue;
+
+    fleet.set(od.id, {
+      id: od.id,
+      line: od.line,
+      type: od.type,
+      lat: od.lat,
+      lon: od.lon,
+      heading: null,
+      vehicleNumber: od.vehicleNumber,
+      brigade: od.brigade,
+      positionUpdatedAt: od.positionUpdatedAt,
+      source: 'open-data',
+      updatedAt: od.updatedAt,
+    });
+  }
+
+  const stats = { mpk: 0, merged: 0, openData: 0, total: fleet.size, activeLines: 0 };
+  const lines = new Set();
+  for (const vehicle of fleet.values()) {
+    lines.add(vehicle.line);
+    if (vehicle.source === 'merged') stats.merged += 1;
+    else if (vehicle.source === 'open-data') stats.openData += 1;
+    else stats.mpk += 1;
+  }
+  stats.activeLines = lines.size;
+
+  return { fleet, stats };
+};
+
+/** Deterministic PRNG (mulberry32) so any failing seed can be re-run. */
+const mulberry32 = (seed) => {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+const DIFF_LINE_NAMES = ['1', '4', '6', '11', '21', 'A', 'N', 'K'];
+const DIFF_TYPES = ['tram', 'bus', 'busExpress', 'unknown'];
+
+const randBetween = (rng, lo, hi) => lo + rng() * (hi - lo);
+
+const randomFleetPair = (rng, options = MERGE_OPTIONS) => {
+  const lineCount = 1 + Math.floor(rng() * 5);
+  const lines = [];
+  for (let i = 0; i < lineCount; i += 1) {
+    lines.push(DIFF_LINE_NAMES[Math.floor(rng() * DIFF_LINE_NAMES.length)]);
+  }
+
+  const cluster = new Map();
+  for (const line of lines) {
+    cluster.set(line, { lat: randBetween(rng, 50.9, 51.3), lon: randBetween(rng, 16.8, 17.35) });
+  }
+
+  const mpkFleet = new Map();
+  for (const line of lines) {
+    const count = Math.floor(rng() * 9);
+    for (let j = 0; j < count; j += 1) {
+      const c = cluster.get(line);
+      const id = `${line}-${j}`;
+      mpkFleet.set(id, {
+        id,
+        line,
+        type: DIFF_TYPES[Math.floor(rng() * DIFF_TYPES.length)],
+        lat: c.lat + randBetween(rng, -0.004, 0.004),
+        lon: c.lon + randBetween(rng, -0.004, 0.004),
+        heading: null,
+        updatedAt: 0,
+      });
+    }
+  }
+
+  const offsets = [
+    0.5 * options.matchMaxMeters,
+    options.matchMaxMeters,
+    options.matchMaxMeters + 1,
+    options.dedupeMeters - 1,
+    options.dedupeMeters,
+    options.dedupeMeters + 1,
+    0.5 * options.ambiguityMeters,
+    1,
+    500,
+    800,
+  ];
+
+  const openDataFleet = new Map();
+  const odCount = Math.floor(rng() * 12);
+  for (let j = 0; j < odCount; j += 1) {
+    const line = lines[Math.floor(rng() * lines.length)];
+    const sameLine = [...mpkFleet.values()].filter((vehicle) => vehicle.line === line);
+    const r = rng();
+    let lat;
+    let lon;
+    if (sameLine.length && r < 0.4) {
+      const vehicle = sameLine[Math.floor(rng() * sameLine.length)];
+      lat = vehicle.lat;
+      lon = vehicle.lon;
+    } else if (sameLine.length && r < 0.7) {
+      const vehicle = sameLine[Math.floor(rng() * sameLine.length)];
+      const meters = offsets[Math.floor(rng() * offsets.length)];
+      lat = vehicle.lat + meters / 111_320;
+      lon = vehicle.lon;
+    } else {
+      const c = cluster.get(line);
+      lat = c.lat + randBetween(rng, -0.008, 0.008);
+      lon = c.lon + randBetween(rng, -0.008, 0.008);
+    }
+    const id = `open-data:${j}`;
+    openDataFleet.set(id, {
+      id,
+      line,
+      type: DIFF_TYPES[Math.floor(rng() * DIFF_TYPES.length)],
+      lat,
+      lon,
+      vehicleNumber: 1000 + Math.floor(rng() * 9000),
+      brigade: '1',
+      positionUpdatedAt: new Date(0).toISOString(),
+      updatedAt: 0,
+    });
+  }
+
+  return { mpkFleet, openDataFleet };
+};
+
+const assertSameFleet = (actual, expected, message) => {
+  assert.equal(actual.size, expected.size, `${message}: size`);
+  const actualKeys = [...actual.keys()].sort();
+  const expectedKeys = [...expected.keys()].sort();
+  assert.deepEqual(actualKeys, expectedKeys, `${message}: ids`);
+  for (const key of actualKeys) {
+    assert.deepEqual(actual.get(key), expected.get(key), `${message}: vehicle ${key}`);
+  }
+};
+
+const asUtcMs = (iso) => new Date(iso).getTime();
+
 describe('parseWarsawDate', () => {
   it('reads a bare wall clock as Europe/Warsaw summer time (UTC+2)', () => {
     const parsed = parseWarsawDate('2026-08-06 12:34:56');
@@ -101,6 +340,83 @@ describe('parseWarsawDate', () => {
     assert.equal(parseWarsawDate('not a date'), null);
     assert.equal(parseWarsawDate(null), null);
     assert.equal(parseWarsawDate(undefined), null);
+  });
+});
+
+describe('warsawOffsetMinutesAt — DST behaviour is preserved by the hoisted formatter', () => {
+  it('returns UTC+2 in summer and UTC+1 in winter', () => {
+    assert.equal(warsawOffsetMinutesAt(asUtcMs('2026-08-06T12:00:00Z')), 120);
+    assert.equal(warsawOffsetMinutesAt(asUtcMs('2026-01-15T12:00:00Z')), 60);
+  });
+
+  it('flips to UTC+2 exactly at the spring-forward instant (2026-03-29 01:00 UTC)', () => {
+    assert.equal(warsawOffsetMinutesAt(asUtcMs('2026-03-29T00:59:59Z')), 60);
+    assert.equal(warsawOffsetMinutesAt(asUtcMs('2026-03-29T01:00:00Z')), 120);
+    assert.equal(warsawOffsetMinutesAt(asUtcMs('2026-03-29T23:59:59Z')), 120);
+  });
+
+  it('flips back to UTC+1 exactly at the fall-back instant (2026-10-25 01:00 UTC)', () => {
+    assert.equal(warsawOffsetMinutesAt(asUtcMs('2026-10-25T00:59:59Z')), 120);
+    assert.equal(warsawOffsetMinutesAt(asUtcMs('2026-10-25T01:00:00Z')), 60);
+    assert.equal(warsawOffsetMinutesAt(asUtcMs('2026-10-25T02:30:00Z')), 60);
+  });
+
+  it('matches the old per-call inline formatter across every 2026 transition', () => {
+    const sweep = (startIso, endIso, stepMs) => {
+      for (let ts = asUtcMs(startIso); ts <= asUtcMs(endIso); ts += stepMs) {
+        assert.equal(
+          warsawOffsetMinutesAt(ts),
+          warsawOffsetReference(ts),
+          `offset at ${new Date(ts).toISOString()}`,
+        );
+      }
+    };
+    sweep('2026-03-27T00:00:00Z', '2026-03-31T23:45:00Z', 15 * 60_000);
+    sweep('2026-10-23T00:00:00Z', '2026-10-27T23:45:00Z', 15 * 60_000);
+    sweep('2026-01-01T00:00:00Z', '2026-12-31T18:00:00Z', 6 * 60 * 60_000);
+  });
+
+  it('matches the old per-call inline formatter across 2025 and 2027 transitions too', () => {
+    for (const start of ['2025-03-28T00:00:00Z', '2025-10-24T00:00:00Z', '2027-03-26T00:00:00Z', '2027-10-29T00:00:00Z']) {
+      const day = new Date(asUtcMs(start));
+      const endIso = `${day.getUTCFullYear()}-${String(day.getUTCMonth() + 1).padStart(2, '0')}-${String(day.getUTCDate() + 2).padStart(2, '0')}T23:45:00Z`;
+      for (let ts = asUtcMs(start); ts <= asUtcMs(endIso); ts += 15 * 60_000) {
+        assert.equal(
+          warsawOffsetMinutesAt(ts),
+          warsawOffsetReference(ts),
+          `offset at ${new Date(ts).toISOString()}`,
+        );
+      }
+    }
+  });
+});
+
+describe('parseWarsawDate — transition-adjacent wall clocks', () => {
+  it('maps a spring-forward morning wall clock through the pre-transition offset', () => {
+    assert.equal(parseWarsawDate('2026-03-29 01:00:00').toISOString(), '2026-03-28T23:00:00.000Z');
+  });
+
+  it('maps fall-back wall clocks that exist before and after the flip', () => {
+    assert.equal(parseWarsawDate('2026-10-25 01:30:00').toISOString(), '2026-10-25T00:30:00.000Z');
+    assert.equal(parseWarsawDate('2026-10-25 03:30:00').toISOString(), '2026-10-25T02:30:00.000Z');
+  });
+
+  it('preserves the existing semantics through the gap and repeated hour, whatever the process timezone', () => {
+    for (const wall of [
+      '2026-03-28 22:00:00', '2026-03-28 23:30:00', '2026-03-29 00:00:00',
+      '2026-03-29 01:00:00', '2026-03-29 01:30:00', '2026-03-29 02:00:00',
+      '2026-03-29 02:30:00', '2026-03-29 03:00:00', '2026-03-29 03:30:00',
+      '2026-03-29 04:00:00', '2026-10-24 22:00:00', '2026-10-25 00:00:00',
+      '2026-10-25 01:00:00', '2026-10-25 01:30:00', '2026-10-25 02:00:00',
+      '2026-10-25 02:30:00', '2026-10-25 03:00:00', '2026-10-25 03:30:00',
+      '2026-10-25 04:00:00',
+    ]) {
+      const expected = parseWarsawDateReference(wall);
+      const actual = parseWarsawDate(wall);
+      assert.ok(expected, `reference parsed ${wall}`);
+      assert.ok(actual, `production parsed ${wall}`);
+      assert.equal(actual.getTime(), expected.getTime(), `wall clock ${wall}`);
+    }
   });
 });
 
@@ -279,6 +595,47 @@ describe('mergeFleet', () => {
     const { fleet, stats } = mergeFleet(mpk, od, MERGE_OPTIONS);
     assert.equal(fleet.get('x-1').source, 'mpk');
     assert.equal(stats.merged, 0);
+  });
+});
+
+describe('mergeFleet — differential: single-pass implementation vs frozen reference', () => {
+  it('produces identical fleets and stats to the reference across many random seeds', () => {
+    for (let seed = 0; seed < 300; seed += 1) {
+      const rng = mulberry32(seed);
+      const { mpkFleet, openDataFleet } = randomFleetPair(rng);
+      const label = `seed ${seed} (${mpkFleet.size} mpk, ${openDataFleet.size} od)`;
+
+      const reference = mergeFleetReference(mpkFleet, openDataFleet, MERGE_OPTIONS);
+      const actual = mergeFleet(mpkFleet, openDataFleet, MERGE_OPTIONS);
+
+      assertSameFleet(actual.fleet, reference.fleet, label);
+      assert.deepEqual(actual.stats, reference.stats, `${label}: stats`);
+    }
+  });
+
+  it('stays in step for deliberately pathological boundary seeds', () => {
+    for (const seed of [1, 2, 3, 7, 11, 13, 17, 42, 99, 123, 271, 65535]) {
+      const rng = mulberry32(seed);
+      const { mpkFleet, openDataFleet } = randomFleetPair(rng, MERGE_OPTIONS);
+      const reference = mergeFleetReference(mpkFleet, openDataFleet, MERGE_OPTIONS);
+      const actual = mergeFleet(mpkFleet, openDataFleet, MERGE_OPTIONS);
+      assertSameFleet(actual.fleet, reference.fleet, `boundary seed ${seed}`);
+      assert.deepEqual(actual.stats, reference.stats, `boundary seed ${seed}: stats`);
+    }
+  });
+
+  it('agrees on empty fleets and single-vehicle fleets', () => {
+    const cases = [
+      [new Map(), new Map()],
+      [new Map([['4-100', mpkVehicle('4-100', 51.107, 17.038)]]), new Map()],
+      [new Map(), new Map([['open-data:8123', odVehicle('open-data:8123', 51.107, 17.038)]])],
+    ];
+    for (const [mpk, od] of cases) {
+      const reference = mergeFleetReference(mpk, od, MERGE_OPTIONS);
+      const actual = mergeFleet(mpk, od, MERGE_OPTIONS);
+      assertSameFleet(actual.fleet, reference.fleet);
+      assert.deepEqual(actual.stats, reference.stats);
+    }
   });
 });
 

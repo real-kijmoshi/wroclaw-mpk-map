@@ -46,16 +46,23 @@ const MAX_FUTURE_SKEW_MS = 10_000;
 
 const WARSAW_TZ = 'Europe/Warsaw';
 
+// One formatter for the whole process. Instantiating an Intl.DateTimeFormat
+// per call allocates on every Open Data record on every poll; the formatter
+// itself is stateless, so a single module-scope instance yields identical
+// output for the same instant. The DST differential tests in
+// test/open-data.test.js pin the hoisted instance against a per-call copy.
+const WARSAW_OFFSET_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: WARSAW_TZ,
+  timeZoneName: 'longOffset',
+});
+
 /**
  * UTC offset in minutes of the Europe/Warsaw timezone at a given instant.
  * Poland switches between +1 (winter) and +2 (summer), so the offset has to
  * be looked up rather than assumed.
  */
 const warsawOffsetMinutesAt = (utcMs) => {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: WARSAW_TZ,
-    timeZoneName: 'longOffset',
-  }).formatToParts(new Date(utcMs));
+  const parts = WARSAW_OFFSET_FORMATTER.formatToParts(new Date(utcMs));
   const name = parts.find((part) => part.type === 'timeZoneName')?.value ?? '';
   const match = /GMT([+-])(\d{2}):(\d{2})/.exec(name);
   if (!match) return 0;
@@ -214,16 +221,42 @@ const mergeFleet = (mpkFleet, openDataFleet, { matchMaxMeters, dedupeMeters, amb
   const used = new Set();
 
   for (const od of openDataFleet.values()) {
-    const candidates = (byLine.get(od.line) ?? [])
-      .filter((mpk) => mpk.type === od.type)
-      .map((mpk) => ({ mpk, meters: distanceMeters(mpk.lat, mpk.lon, od.lat, od.lon) }))
-      .sort((a, b) => a.meters - b.meters);
+    // One pass over the same-line MPK vehicles — no candidate array, no sort.
+    // Per record we only need:
+    //   nearest/second same-line, same-type candidates (and their distances),
+    //   whether ANY same-line vehicle (regardless of type) is within
+    //   dedupeMeters.
+    // Each of those is a constant, so a running best-of-two keeps the same
+    // semantics the array+sort version had, with no per-record allocations
+    // beyond the two result objects (and those only when a same-type
+    // candidate exists).
+    const lineVehicles = byLine.get(od.line);
+    let nearest = null;
+    let second = null;
+    let withinDedupe = false;
 
-    const nearest = candidates[0];
+    if (lineVehicles) {
+      for (const mpk of lineVehicles) {
+        const sameType = mpk.type === od.type;
+        // A different-type vehicle's distance is only needed for the dedupe
+        // check, and only until some same-line vehicle has already satisfied
+        // it — after that the trig can be skipped entirely.
+        if (!sameType && withinDedupe) continue;
+        const meters = distanceMeters(mpk.lat, mpk.lon, od.lat, od.lon);
+        if (meters <= dedupeMeters) withinDedupe = true;
+        if (!sameType) continue;
+        if (nearest === null || meters < nearest.meters) {
+          second = nearest;
+          nearest = { mpk, meters };
+        } else if (second === null || meters < second.meters) {
+          second = { mpk, meters };
+        }
+      }
+    }
+
     let matched = null;
 
     if (nearest && nearest.meters <= matchMaxMeters && !used.has(nearest.mpk.id)) {
-      const second = candidates[1];
       const ambiguous =
         second &&
         second.meters <= matchMaxMeters &&
@@ -242,11 +275,9 @@ const mergeFleet = (mpkFleet, openDataFleet, { matchMaxMeters, dedupeMeters, amb
     }
 
     // No merge: only surface the record when no MPK vehicle of the same line
-    // is near enough that it would just be that vehicle twice.
-    const nearMpk = (byLine.get(od.line) ?? []).some(
-      (mpk) => distanceMeters(mpk.lat, mpk.lon, od.lat, od.lon) <= dedupeMeters,
-    );
-    if (nearMpk) continue;
+    // is near enough that it would just be that vehicle twice. The dedupe
+    // check is deliberately type-agnostic, exactly like the reference.
+    if (withinDedupe) continue;
 
     fleet.set(od.id, {
       id: od.id,
@@ -283,4 +314,5 @@ module.exports = {
   mergeFleet,
   normalizeOpenDataRecord,
   parseWarsawDate,
+  warsawOffsetMinutesAt,
 };

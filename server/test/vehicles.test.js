@@ -252,4 +252,107 @@ describe('VehicleTracker against a stand-in endpoint', () => {
     await tracker.poll();
     assert.equal(tracker.performanceSnapshot().totalPollMs.count, 2, 'metrics accumulate');
   });
+
+  it('never runs a poll while the previous one is still running', async () => {
+    const originalInterval = config.vehicles.pollIntervalMs;
+    const originalOpenDataUrl = config.vehicles.openDataUrl;
+    config.vehicles.pollIntervalMs = 5;
+    config.vehicles.openDataUrl = null;
+
+    const tracker = new VehicleTracker(() => lines);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let completed = 0;
+    tracker.poll = async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      inFlight -= 1;
+      completed += 1;
+      return tracker.status;
+    };
+    tracker.pollOpenData = async () => tracker.openDataStatus;
+
+    tracker.start();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    tracker.stop();
+
+    config.vehicles.pollIntervalMs = originalInterval;
+    config.vehicles.openDataUrl = originalOpenDataUrl;
+
+    assert.equal(maxInFlight, 1, 'a slow poll never overlaps its successor');
+    assert.ok(completed >= 2, `expected the loop to poll more than once, got ${completed}`);
+  });
+
+  it('does not re-arm the loop when stop() lands during an in-flight poll', async () => {
+    const originalOpenDataUrl = config.vehicles.openDataUrl;
+    config.vehicles.openDataUrl = null;
+
+    let polls = 0;
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const tracker = new VehicleTracker(() => lines);
+    tracker.poll = async () => {
+      polls += 1;
+      await gate;
+      return tracker.status;
+    };
+    tracker.pollOpenData = async () => tracker.openDataStatus;
+
+    tracker.start();
+    assert.equal(polls, 1, 'the immediate first poll has started');
+
+    tracker.stop();
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    config.vehicles.openDataUrl = originalOpenDataUrl;
+    assert.equal(polls, 1, 'no poll starts after stop(), even one queued behind another');
+  });
+
+  it('surfaces per-source health across polls', async () => {
+    const originalSources = config.vehicles.sources;
+    const originalOpenDataUrl = config.vehicles.openDataUrl;
+    config.vehicles.openDataUrl = null;
+
+    const failing = await startEndpoint(() => []);
+    servers.push(failing);
+    const working = await startEndpoint(() => [
+      { name: '4', type: 'tram', x: 51.11, y: 17.03, k: 2 },
+    ]);
+    servers.push(working);
+    const failingUrl = `http://127.0.0.1:${failing.address().port}/bus_position`;
+    const workingUrl = `http://127.0.0.1:${working.address().port}/bus_position`;
+    config.vehicles.sources = [failingUrl, workingUrl];
+
+    const tracker = new VehicleTracker(() => lines);
+
+    await tracker.poll();
+    assert.equal(tracker.status.source, workingUrl, 'the working source answers');
+    assert.equal(tracker.status.sources.length, 2);
+
+    const [failingHealth, workingHealth] = tracker.status.sources;
+    assert.equal(failingHealth.url, failingUrl);
+    assert.equal(failingHealth.consecutiveFailures, 1);
+    assert.match(failingHealth.lastError, /no vehicles/);
+    assert.ok(failingHealth.lastAttemptAt);
+    assert.equal(failingHealth.backoff, false);
+    assert.equal(workingHealth.consecutiveFailures, 0);
+    assert.ok(workingHealth.lastSuccessAt);
+
+    // The last good source is tried first on the next poll, so the fleet is
+    // served without waiting on the known-dead one.
+    await tracker.poll();
+    assert.equal(tracker.status.source, workingUrl);
+    assert.equal(
+      tracker.status.sources[0].consecutiveFailures,
+      1,
+      'the failing source is not hammered on every poll',
+    );
+
+    config.vehicles.sources = originalSources;
+    config.vehicles.openDataUrl = originalOpenDataUrl;
+  });
 });
