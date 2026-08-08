@@ -15,6 +15,14 @@ const { bearingDegrees, distanceMeters } = require('./gtfs/geo');
 // Anything outside this box is a bad fix, not a vehicle in Wrocław.
 const BOUNDS = { minLat: 50.8, maxLat: 51.4, minLon: 16.6, maxLon: 17.5 };
 
+// How long a route projection is trusted for a vehicle that has not moved,
+// and how far it may drift between polls before it is projected again. A bus
+// sitting at a terminus has the same route geometry every poll; re-projecting
+// it every ten seconds buys nothing, so only a vehicle that actually moved (or
+// one that has idled past the cap) pays for the geometry pass.
+const DESCRIBE_MAX_AGE_MS = 30_000;
+const DESCRIBE_STATIONARY_METERS = 15;
+
 const inBounds = (lat, lon) =>
   Number.isFinite(lat) &&
   Number.isFinite(lon) &&
@@ -143,6 +151,12 @@ class VehicleTracker {
     this.openDataFleet = new Map();
     /** Combined view: what /locations actually serves, rebuilt after every poll. */
     this.fleet = new Map();
+    /** Memoized snapshot: what the `snapshot` getter returns between polls. */
+    this._snapshot = { locations: [], count: 0, lastUpdated: null, source: null, stale: false };
+    /** Monotonic counter bumped whenever the fleet changes; /locations uses it to reuse a serialized body. */
+    this.revision = 0;
+    /** vehicle id -> { lat, lon, heading, at, trip } of the last projection, so stationary vehicles skip re-projection. */
+    this.describeCache = new Map();
     this.timer = null;
     this.openDataTimer = null;
     /** Body encoding that last worked; tried first on the next poll. */
@@ -172,6 +186,11 @@ class VehicleTracker {
   }
 
   get snapshot() {
+    return this._snapshot;
+  }
+
+  /** Rebuild the memoized snapshot from the current fleet, once per poll. */
+  #rebuildSnapshot() {
     const cutoff = Date.now() - config.vehicles.staleAfterMs;
     const vehicles = [];
     for (const vehicle of this.fleet.values()) {
@@ -199,13 +218,39 @@ class VehicleTracker {
           : {}),
       });
     }
-    return {
+
+    // True when anything serialized changed since the last snapshot. `updatedAt`
+    // is a freshness timestamp, not content, so it is excluded — /locations
+    // derives its ETag from the serialized body, and a body that changed every
+    // poll even with nothing moving made the app re-download the whole fleet
+    // every ten seconds (updatedAt is not on the wire in map format anyway).
+    let changed = this._snapshot.locations.length !== vehicles.length;
+    for (let i = 0; changed === false && i < vehicles.length; i += 1) {
+      const prev = this._snapshot.locations[i];
+      const next = vehicles[i];
+      changed =
+        prev.lat !== next.lat ||
+        prev.lon !== next.lon ||
+        prev.heading !== next.heading ||
+        prev.source !== next.source ||
+        prev.vehicleNumber !== next.vehicleNumber ||
+        prev.brigade !== next.brigade ||
+        prev.positionUpdatedAt !== next.positionUpdatedAt ||
+        JSON.stringify(prev.trip) !== JSON.stringify(next.trip);
+    }
+
+    this._snapshot = {
       locations: vehicles,
       count: vehicles.length,
-      lastUpdated: this.status.lastSuccessAt,
+      // Only advance when the fleet itself changed, so a quiet poll answers
+      // 304 instead of shipping an identical fleet. Runs at poll time because
+      // `status.lastSuccessAt` is still the previous poll's by the time this
+      // rebuilds (and is null on the very first poll).
+      lastUpdated: changed ? new Date().toISOString() : this._snapshot.lastUpdated,
       source: this.status.source,
       stale: this.status.consecutiveFailures > 0,
     };
+    this.revision += 1;
   }
 
   /** One request with one body encoding. Throws when the answer is unusable. */
@@ -285,18 +330,50 @@ class VehicleTracker {
     if (!this.gtfs?.isReady) return 0;
 
     const now = new Date();
+    const nowMs = Date.now();
     let described = 0;
 
     for (const vehicle of this.fleet.values()) {
+      const previous = this.describeCache.get(vehicle.id);
+      const stationary =
+        previous != null &&
+        nowMs - previous.at < DESCRIBE_MAX_AGE_MS &&
+        vehicle.heading === previous.heading &&
+        distanceMeters(previous.lat, previous.lon, vehicle.lat, vehicle.lon) <=
+          DESCRIBE_STATIONARY_METERS;
+
+      if (stationary) {
+        // Same spot, same heading, not long since the last projection: the
+        // trip an idling bus is on does not change just because the clock
+        // moved a few seconds. Reuse the match instead of re-projecting it.
+        vehicle.trip = previous.trip ?? null;
+        if (vehicle.trip) described += 1;
+        continue;
+      }
+
       try {
         // One stop ahead is all /locations carries; /vehicle/:id recomputes the
         // full list when someone actually taps a vehicle.
         vehicle.trip = summarise(describeVehicle(this.gtfs, vehicle, { now, limit: 1 }));
         if (vehicle.trip) described += 1;
+        this.describeCache.set(vehicle.id, {
+          lat: vehicle.lat,
+          lon: vehicle.lon,
+          heading: vehicle.heading ?? null,
+          at: nowMs,
+          trip: vehicle.trip,
+        });
       } catch (error) {
         vehicle.trip = null;
+        this.describeCache.delete(vehicle.id);
         logger.debug(`Could not place ${vehicle.id} on a route: ${error.message}`);
       }
+    }
+
+    // The cache is only useful while the vehicle is still on the map; a
+    // vehicle that stopped reporting should be forgotten, not re-armed later.
+    for (const id of this.describeCache.keys()) {
+      if (!this.fleet.has(id)) this.describeCache.delete(id);
     }
 
     return described;
@@ -343,6 +420,7 @@ class VehicleTracker {
 
       this.#merge();
       const described = this.#describe();
+      this.#rebuildSnapshot();
 
       this.status = {
         ...this.status,
@@ -359,6 +437,11 @@ class VehicleTracker {
     } catch (error) {
       this.status.consecutiveFailures += 1;
       this.status.lastError = error.message;
+      // A failed poll keeps the last good fleet but is a change of state all
+      // the same: the snapshot must say it is stale and the /locations body
+      // cache must not keep serving a "fresh" answer.
+      this._snapshot = { ...this._snapshot, stale: true };
+      this.revision += 1;
       // Only shout about it once it is clearly not a blip.
       const log = this.status.consecutiveFailures === 1 ? logger.debug : logger.warn;
       log(`Vehicle poll failed (${this.status.consecutiveFailures}x): ${error.message}`);
@@ -401,6 +484,12 @@ class VehicleTracker {
       }
 
       this.#merge();
+      // Restore route projections after the merge too: the rebuild drops every
+      // trip (a fresh fleet has none), so without this an Open Data poll wiped
+      // the destination/next stop of every vehicle until the next MPK poll.
+      // The describe cache makes this near-free for vehicles that have not moved.
+      this.#describe();
+      this.#rebuildSnapshot();
 
       this.openDataStatus = {
         ...this.openDataStatus,

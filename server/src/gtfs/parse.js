@@ -12,6 +12,42 @@ const CSV_OPTIONS = {
   trim: true,
 };
 
+// Precompiled once, not per call: the per-instant lookup used to go through
+// `date.toLocaleString('en-US', { timeZone })`, which costs ~120µs because it
+// builds a whole formatter each time. formatToParts on one shared formatter is
+// ~7x cheaper and does not care what timezone this process runs in.
+const warsawWallClock = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Europe/Warsaw',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+});
+
+/**
+ * The same instant, read as a wall clock in Wrocław.
+ *
+ * Returns a Date whose getters (getFullYear, getHours, …) read the
+ * Europe/Warsaw time of `date`, so timetable code never depends on the
+ * timezone the process happens to run in.
+ */
+const inWarsaw = (date) => {
+  const parts = warsawWallClock.formatToParts(date);
+  const fields = {};
+  for (const part of parts) fields[part.type] = part.value;
+  return new Date(
+    Number(fields.year),
+    Number(fields.month) - 1,
+    Number(fields.day),
+    Number(fields.hour) % 24,
+    Number(fields.minute),
+    Number(fields.second),
+  );
+};
+
 /** Parse a whole GTFS table into an array of objects. Use for small files. */
 const parseTable = (buffer) => parseSync(buffer, CSV_OPTIONS);
 
@@ -25,6 +61,76 @@ const parseTable = (buffer) => parseSync(buffer, CSV_OPTIONS);
 const streamTable = async (buffer, onRow) => {
   const parser = Readable.from(buffer).pipe(parse(CSV_OPTIONS));
   for await (const row of parser) onRow(row);
+};
+
+/**
+ * Split one CSV line, honouring `"..."` quoting and the `""` escape.
+ *
+ * @param {string} line
+ * @param {(value: string) => void} onField
+ */
+const splitCsvLine = (line, onField) => {
+  let field = '';
+  let inQuotes = false;
+  let index = 0;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          field += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      onField(field, index);
+      index += 1;
+      field = '';
+    } else {
+      field += ch;
+    }
+  }
+  onField(field, index);
+};
+
+/**
+ * A faster row iterator for the tables where csv-parse's per-row object
+ * allocation shows up. Building a keyed object for each of stop_times.txt's
+ * ~1.1M rows is the bulk of a cold GTFS build; this splits each line into an
+ * array of fields and hands the caller a header->index map to index them by.
+ * Quotes and CRLF are handled so a feed that quotes a comma or ships Windows
+ * line endings is not mis-split.
+ *
+ * @param {Buffer} buffer
+ * @param {(fields: string[], columns: Map<string, number>) => void} onRow
+ */
+const streamTableFast = async (buffer, onRow) => {
+  let text = buffer.toString('utf8');
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  if (text.includes('\r')) text = text.replace(/\r/g, '');
+
+  const lines = text.split('\n');
+  const columns = new Map();
+  splitCsvLine(lines[0] ?? '', (value, index) => columns.set(value.trim(), index));
+
+  let processed = 0;
+  for (let i = 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line) continue;
+    const fields = [];
+    splitCsvLine(line, (value) => fields.push(value.trim()));
+    onRow(fields, columns);
+    processed += 1;
+    // Let the event loop breathe on the big tables so the vehicle polls queued
+    // during a cold-start build are not starved for the whole ingest.
+    if ((processed & 0xffff) === 0) await new Promise((resolve) => setImmediate(resolve));
+  }
 };
 
 /**
@@ -53,4 +159,4 @@ const secondsToTime = (seconds) => {
   return [h, m, s].map((part) => String(part).padStart(2, '0')).join(':');
 };
 
-module.exports = { parseTable, streamTable, timeToSeconds, secondsToTime };
+module.exports = { inWarsaw, parseTable, streamTable, streamTableFast, timeToSeconds, secondsToTime };
