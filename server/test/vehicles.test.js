@@ -224,4 +224,32 @@ describe('VehicleTracker against a stand-in endpoint', () => {
     await tracker.poll();
     assert.equal(tracker.getVehicle('4-5').lat, lat, 'the id map is rebuilt every poll');
   });
+
+  it('records rolling performance metrics for every poll', async () => {
+    const tracker = await trackerFor(() => [{ name: '4', type: 'tram', x: 51.11, y: 17.03, k: 8 }]);
+    await tracker.poll();
+
+    const snap = tracker.performanceSnapshot();
+    for (const name of [
+      'totalPollMs',
+      'fetchMs',
+      'normalizationMs',
+      'openDataMergeMs',
+      'descriptionMs',
+      'snapshotBuildMs',
+      'incomingVehicleCount',
+      'acceptedVehicleCount',
+      'descriptionsReused',
+      'descriptionsRecomputed',
+    ]) {
+      assert.ok(snap[name], `metric ${name} exists`);
+      assert.equal(snap[name].count, 1, `${name} recorded once`);
+      assert.ok(Number.isFinite(snap[name].latest), `${name}.latest is a number`);
+    }
+    assert.equal(snap.incomingVehicleCount.latest, 1);
+    assert.equal(snap.acceptedVehicleCount.latest, 1);
+
+    await tracker.poll();
+    assert.equal(tracker.performanceSnapshot().totalPollMs.count, 2, 'metrics accumulate');
+  });
 });

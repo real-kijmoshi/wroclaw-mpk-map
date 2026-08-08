@@ -8,6 +8,7 @@ const config = require('../config');
 const logger = require('../logger');
 const { findEntry } = require('../gtfs/archive');
 const { parseTable, secondsToTime, streamTable, timeToSeconds } = require('../gtfs/parse');
+const { matchRank, normalizeSearchText } = require('../search');
 
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
@@ -52,6 +53,11 @@ class KdStaticStore {
     this.tripsById = new Map();
     /** @type {Map<string, object>} stop_id -> stop */
     this.stopsById = new Map();
+    /**
+     * Search index over the stops, names folded once at load time.
+     * @type {Array<{ stop: object, normalized: string }>}
+     */
+    this.stopSearchIndex = [];
     /** @type {Map<string, object[]>} trip_id -> ordered stop times */
     this.stopTimesByTripId = new Map();
     /** @type {Map<string, number[]>} stop_id -> departures (seconds after midnight) */
@@ -247,6 +253,8 @@ class KdStaticStore {
       };
       this.stopsById.set(row.stop_id, stop);
 
+      this.stopSearchIndex.push({ stop, normalized: normalizeSearchText(stop.name) });
+
       if (rawParent && row.location_type === '0') {
         let platforms = this.platformsByStation.get(rawParent);
         if (!platforms) {
@@ -409,18 +417,19 @@ class KdStaticStore {
     return platforms ? [rawId, ...platforms] : [rawId];
   }
 
-  /** Case/diacritic-insensitive stop search, ranked by prefix match. */
+  /** Case/diacritic-insensitive stop search, ranked by match quality. */
   searchStops(query, limit = 20) {
-    const needle = query.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+    const needle = normalizeSearchText(query);
     if (!needle) return [];
 
+    // Full scan over every stop, like the MPK store: ranking decides the
+    // result, not insertion order (an early cutoff used to drop exact and
+    // prefix hits indexed late).
     const results = [];
-    for (const stop of this.stopsById.values()) {
-      const haystack = stop.name.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
-      const position = haystack.indexOf(needle);
-      if (position === -1) continue;
-      results.push({ stop, rank: position });
-      if (results.length > limit * 10) break;
+    for (const entry of this.stopSearchIndex) {
+      const rank = matchRank(entry.normalized, needle);
+      if (rank === -1) continue;
+      results.push({ stop: entry.stop, rank });
     }
 
     return results
@@ -428,7 +437,9 @@ class KdStaticStore {
         (a, b) =>
           a.rank - b.rank ||
           (a.stop.locationType === 1 ? -1 : 1) - (b.stop.locationType === 1 ? -1 : 1) ||
-          a.stop.name.localeCompare(b.stop.name, 'pl'),
+          a.stop.name.length - b.stop.name.length ||
+          a.stop.name.localeCompare(b.stop.name, 'pl') ||
+          a.stop.id.localeCompare(b.stop.id),
       )
       .slice(0, limit)
       .map((entry) => entry.stop);

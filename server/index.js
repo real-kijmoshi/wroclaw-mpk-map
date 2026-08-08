@@ -12,8 +12,11 @@ const { KdService } = require('./src/kd/service');
 const { KlosokService } = require('./src/klosok/service');
 const { StatsTracker } = require('./src/stats');
 const { VehicleTracker } = require('./src/vehicles');
-const { shapeCache } = require('./src/routes');
 
+// Shape and vehicle-detail caches are keyed on `gtfs.generation`, which only
+// advances on a successful atomic snapshot install. A refresh therefore
+// invalidates them by key change rather than by being cleared here — and a
+// failed refresh must not clear anything at all.
 logger.setLevel(config.logLevel);
 
 const gtfs = new GtfsStore();
@@ -89,7 +92,6 @@ const loadGtfs = async (attempt = 0) => {
   }
   try {
     await gtfs.refresh();
-    shapeCache.clear();
     vehicles.start();
     alerts.start();
   } catch {
@@ -123,10 +125,11 @@ const start = () => {
     config.gtfs.refreshCron,
     () => {
       logger.info('Scheduled GTFS refresh');
-      gtfs
-        .refresh()
-        .then(() => shapeCache.clear())
-        .catch(() => {});
+      // Caches are generation-keyed (see vehicle-detail-cache.js and the
+      // shape cache key in routes.js), so a successful refresh invalidates them
+      // automatically — no clear() needed, and a failed refresh must not clear
+      // the working caches at all.
+      gtfs.refresh().catch(() => {});
     },
     { timezone: 'Europe/Warsaw' },
   );

@@ -90,15 +90,79 @@ const lastIndexAtMost = (array, target) => {
   return best;
 };
 
+/**
+ * First index into a *sorted array of trip indices* whose trip starts at or
+ * after `target`. `trips` must be sorted by `tripStart[tripIndex]`, which is
+ * the invariant `#buildVariants` in store.js guarantees.
+ */
+const firstTripIndexAtLeast = (trips, tripStart, target) => {
+  let low = 0;
+  let high = trips.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (tripStart[trips[mid]] < target) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+};
+
+/**
+ * First index into a stops array whose `alongMeters` is strictly greater than
+ * `target`, or -1 when none is. Matches `stops.findIndex(...)` on a monotonic
+ * array; non-monotonic arrays (see `isMonotonic`) keep the linear scan.
+ */
+const firstStopBeyond = (stops, alongMeters) => {
+  if (!isMonotonic(stops)) return stops.findIndex((stop) => stop.alongMeters > alongMeters);
+
+  let low = 0;
+  let high = stops.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (stops[mid].alongMeters <= alongMeters) low = mid + 1;
+    else high = mid;
+  }
+  return low < stops.length ? low : -1;
+};
+
 const secondsOfDay = (date) => date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds();
 
 /**
- * How many seconds into its run a vehicle is, given how far along the shape it
- * has travelled. Interpolates between the two stops it sits between, from the
- * departure of the one behind to the arrival of the one ahead, so a scheduled
- * wait at a stop is not spread over the road either side of it.
+ * Whether a stops array is ordered by distance along the shape.
+ *
+ * The variant builder projects stops in sequence order with each search
+ * starting at the previous stop's segment, which makes `alongMeters` monotonic
+ * for the overwhelming majority of routes — but not always: a stop whose
+ * nearest polyline point falls behind the previous stop's (seen on double
+ * crossings, e.g. Wrocław's "most Milenijny" pair) breaks it. The binary
+ * searches below are exact only for a monotonic array, so the few non-monotonic
+ * variants fall back to the original linear scans. Memoised per array: the
+ * arrays are built once per GTFS refresh and stable for the store's lifetime.
  */
-const offsetAt = (stops, alongMeters) => {
+const monotonicCache = new WeakMap();
+const isMonotonic = (stops) => {
+  let result = monotonicCache.get(stops);
+  if (result === undefined) {
+    result = true;
+    for (let i = 1; i < stops.length; i += 1) {
+      if (stops[i].alongMeters < stops[i - 1].alongMeters) {
+        result = false;
+        break;
+      }
+    }
+    monotonicCache.set(stops, result);
+  }
+  return result;
+};
+
+/**
+ * The original linear interpolation over stop offsets.
+ *
+ * Kept as the exact fallback for the non-monotonic stop arrays `isMonotonic`
+ * rejects: there, "the first segment containing the point" has no single
+ * binary-searchable position, and the pre-optimization scan is the only answer
+ * that matches the old behavior byte for byte.
+ */
+const offsetAtScan = (stops, alongMeters) => {
   const last = stops[stops.length - 1];
   if (alongMeters <= stops[0].alongMeters) return stops[0].arrivalOffset;
   if (alongMeters >= last.alongMeters) return last.arrivalOffset;
@@ -117,6 +181,37 @@ const offsetAt = (stops, alongMeters) => {
 };
 
 /**
+ * How many seconds into its run a vehicle is, given how far along the shape it
+ * has travelled. Interpolates between the two stops it sits between, from the
+ * departure of the one behind to the arrival of the one ahead, so a scheduled
+ * wait at a stop is not spread over the road either side of it.
+ */
+const offsetAt = (stops, alongMeters) => {
+  const last = stops[stops.length - 1];
+  if (alongMeters <= stops[0].alongMeters) return stops[0].arrivalOffset;
+  if (alongMeters >= last.alongMeters) return last.arrivalOffset;
+
+  // `from` is the first stop whose segment contains `alongMeters` — exactly
+  // the segment the linear loop returned on a monotonic array (a position
+  // exactly on a stop boundary resolves with fraction 1 to the boundary stop's
+  // *arrival* offset, not its departure). Non-monotonic stops keep the scan.
+  if (!isMonotonic(stops)) return offsetAtScan(stops, alongMeters);
+
+  let low = 0;
+  let high = stops.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (stops[mid].alongMeters < alongMeters) low = mid + 1;
+    else high = mid;
+  }
+  const from = stops[low - 1];
+  const to = stops[low];
+  const span = to.alongMeters - from.alongMeters;
+  const fraction = span > 0 ? (alongMeters - from.alongMeters) / span : 0;
+  return from.departureOffset + fraction * (to.arrivalOffset - from.departureOffset);
+};
+
+/**
  * Which departure of this shape the vehicle is running, and by how much it is
  * off its timetable. Positive seconds mean late.
  *
@@ -125,6 +220,16 @@ const offsetAt = (stops, alongMeters) => {
  * Trips that began yesterday are considered too — a night service at 00:20 is
  * a 24:20 departure on the previous service day, and skipping that frame
  * leaves every night vehicle unmatched.
+ *
+ * The trips of a variant are sorted by `tripStart` (store.js `#buildVariants`),
+ * so the old scan over every trip in both frames — O(trips) per vehicle per
+ * frame — is replaced with a binary search. The delay window caps the answer
+ * to `±MAX_DELAY_SECONDS` around the target start, so only the small band of
+ * departures inside it is examined at all. The band is walked in the same
+ * ascending order the scan used, and the same strict `|delay| < |best|`
+ * comparison keeps the winner identical: a nearer departure with a service
+ * that is not running today is skipped, and a slightly farther one with an
+ * active service wins, exactly as before.
  */
 const matchTrip = (gtfs, variant, progressOffset, now) => {
   const local = inWarsaw(now);
@@ -136,17 +241,22 @@ const matchTrip = (gtfs, variant, progressOffset, now) => {
     { seconds: secondsOfDay(local) + DAY_SECONDS, date: yesterday, label: 'yesterday' },
   ];
 
+  const trips = variant.trips;
+  const tripStart = gtfs.tripStart;
+
   let best = null;
   for (const frame of frames) {
-    for (const tripIndex of variant.trips) {
-      const start = gtfs.tripStart[tripIndex];
-      if (start < 0) continue;
+    const targetStart = frame.seconds - progressOffset;
 
-      const delaySeconds = frame.seconds - (start + progressOffset);
-      if (Math.abs(delaySeconds) > MAX_DELAY_SECONDS) continue;
+    const from = firstTripIndexAtLeast(trips, tripStart, targetStart - MAX_DELAY_SECONDS);
+    for (let i = from; i < trips.length; i += 1) {
+      const start = tripStart[trips[i]];
+      if (start - targetStart > MAX_DELAY_SECONDS) break;
+
+      const delaySeconds = targetStart - start;
       if (best && Math.abs(delaySeconds) >= Math.abs(best.delaySeconds)) continue;
 
-      const trip = gtfs.trips[tripIndex];
+      const trip = gtfs.trips[trips[i]];
       if (!gtfs.isServiceActive(trip.serviceId, frame.date)) continue;
 
       best = { trip, start, delaySeconds: Math.round(delaySeconds), serviceDay: frame.label };
@@ -325,7 +435,7 @@ const describeVehicle = (
     if (run.trip.headsign) described.headsign = run.trip.headsign;
   }
 
-  const nextIndex = stops.findIndex((stop) => stop.alongMeters > projection.along);
+  const nextIndex = firstStopBeyond(stops, projection.along);
   const upcoming = nextIndex === -1 ? [] : stops.slice(nextIndex, nextIndex + Math.max(limit, 0));
   const passedFrom = nextIndex === -1 ? stops.length : nextIndex;
 
@@ -402,6 +512,10 @@ module.exports = {
   MAX_DELAY_SECONDS,
   MAX_OFF_ROUTE_METERS,
   describeVehicle,
+  firstStopBeyond,
+  isMonotonic,
+  matchTrip,
   offsetAt,
+  offsetAtScan,
   summarise,
 };

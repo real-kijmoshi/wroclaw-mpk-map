@@ -8,13 +8,31 @@ const AdmZip = require('adm-zip');
  *
  * Two variants of tram line 4 (one per direction) plus bus line 128.
  *
- * @param {{ omit?: string[], prefix?: string }} options
+ * @param {{ omit?: string[], prefix?: string, feedDates?: { start: string, end: string }, stops?: [string, string, string, string, string][], shapesText?: string }} options
  *   `omit` leaves tables out, for testing the completeness check against the
  *   short snapshots the city's archive contains. `prefix` nests every table in
  *   a directory, which is how some publishers ship the archive. `feedDates`
  *   writes feed_info.txt, which is how an archive states when it takes effect.
+ *   `stops` replaces the stops table entirely with `[stop_id, stop_code,
+ *   stop_name, stop_lat, stop_lon]` tuples, for search tests that need many
+ *   stops or specific names. `shapesText` replaces shapes.txt, for cache tests
+ *   that need a second timetable whose geometry differs from the default.
  */
-const buildFixtureZip = ({ omit = [], prefix = '', feedDates = null } = {}) => {
+const buildFixtureZip = ({
+  omit = [],
+  prefix = '',
+  feedDates = null,
+  stops = null,
+  shapesText = null,
+} = {}) => {
+  const stopsTable = stops ?? [
+    ['1', '101', 'Rynek', '51.11000', '17.03200'],
+    ['2', '102', 'Świdnicka', '51.10500', '17.03300'],
+    ['3', '103', 'Oporów', '51.08000', '16.98000'],
+    ['4', '104', 'Biskupin', '51.10000', '17.10000'],
+    ['5', '105', 'Krzyki', '51.07000', '17.03000'],
+  ];
+
   const files = {
     'routes.txt': [
       'route_id,route_short_name,route_long_name,route_type,route_color',
@@ -34,11 +52,7 @@ const buildFixtureZip = ({ omit = [], prefix = '', feedDates = null } = {}) => {
 
     'stops.txt': [
       'stop_id,stop_code,stop_name,stop_lat,stop_lon',
-      '1,101,Rynek,51.11000,17.03200',
-      '2,102,Świdnicka,51.10500,17.03300',
-      '3,103,Oporów,51.08000,16.98000',
-      '4,104,Biskupin,51.10000,17.10000',
-      '5,105,Krzyki,51.07000,17.03000',
+      ...stopsTable.map((row) => row.join(',')),
     ].join('\n'),
 
     'stop_times.txt': [
@@ -57,21 +71,26 @@ const buildFixtureZip = ({ omit = [], prefix = '', feedDates = null } = {}) => {
     ].join('\n'),
 
     // s4a runs east->west through the centre, s4b is the return leg further north.
-    'shapes.txt': [
-      'shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence',
-      's4a,51.11000,17.03200,1',
-      's4a,51.10500,17.03300,2',
-      's4a,51.09500,17.01000,3',
-      's4a,51.08000,16.98000,4',
-      's4b,51.08000,16.98000,1',
-      's4b,51.09000,17.05000,2',
-      's4b,51.10000,17.10000,3',
-      's128,51.11000,17.03200,1',
-      's128,51.09000,17.03100,2',
-      's128,51.07000,17.03000,3',
-      'sn1,51.11000,17.03200,1',
-      'sn1,51.07000,17.03000,2',
-    ].join('\n'),
+    // `shapesText` lets a caller swap in different geometry (same shape ids, so
+    // variant selection is stable) — used by the shape cache tests to prove a
+    // timetable refresh is not served the old shapes.
+    'shapes.txt': shapesText
+      ? shapesText
+      : [
+          'shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence',
+          's4a,51.11000,17.03200,1',
+          's4a,51.10500,17.03300,2',
+          's4a,51.09500,17.01000,3',
+          's4a,51.08000,16.98000,4',
+          's4b,51.08000,16.98000,1',
+          's4b,51.09000,17.05000,2',
+          's4b,51.10000,17.10000,3',
+          's128,51.11000,17.03200,1',
+          's128,51.09000,17.03100,2',
+          's128,51.07000,17.03000,3',
+          'sn1,51.11000,17.03200,1',
+          'sn1,51.07000,17.03000,2',
+        ].join('\n'),
 
     'calendar.txt': [
       'service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date',

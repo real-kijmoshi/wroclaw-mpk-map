@@ -229,6 +229,15 @@ module.exports = {
       process.env.VEHICLE_DETAIL_CACHE_ENTRIES,
       DEFAULTS.cache.vehicleDetailEntries,
     ),
+    // Hard time cap on a cached detail, even for a stationary vehicle. The
+    // timetable keeps progressing (delays, ETAs) while a position stays put, so
+    // a detail must not be served verbatim forever on a changed schedule.
+    // Generation + poll-revision keys carry the coarse invalidation; this is the
+    // backstop that bounds staleness when the tracker is not polling.
+    vehicleDetailTtlMs: num(
+      process.env.VEHICLE_DETAIL_CACHE_TTL_MS,
+      DEFAULTS.cache.vehicleDetailTtlMs,
+    ),
   },
 
   // Admin dashboard (/admin). Bearer-token protected; without ADMIN_TOKEN the

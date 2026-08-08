@@ -6,15 +6,22 @@ const path = require('node:path');
 
 const config = require('./config');
 const { LruCache } = require('./cache');
+const { VehicleDetailCache } = require('./vehicle-detail-cache');
 const { simplify } = require('./gtfs/geo');
 const { CATEGORIES } = require('./lines');
 const { describeVehicle } = require('./progress');
 
 const shapeCache = new LruCache(config.cache.shapeEntries);
-// One entry is one (vehicle, limit, history) detail payload. Bounded by config
-// and invalidated by position (a detail computed for one spot answers for a
-// vehicle that has not moved, and is wrong once it has).
-const vehicleDetailCache = new LruCache(config.cache.vehicleDetailEntries);
+// One entry is one (generation, revision, vehicle, limit, history) detail
+// payload. The generation and poll-revision components invalidate it on a
+// timetable refresh or a new vehicle poll; a short TTL bounds the
+// time-sensitive output (delay, ETAs) for a vehicle that sits still. Read-time
+// position matching keeps a vehicle that has moved from being served stale
+// geometry.
+const vehicleDetailCache = new VehicleDetailCache({
+  maxEntries: config.cache.vehicleDetailEntries,
+  ttlMs: config.cache.vehicleDetailTtlMs,
+});
 const WIRE_SHAPE_SIMPLIFY_METERS = 8;
 
 /** Cache-Control helper: timetable data is stable, vehicle data is not. */
@@ -365,31 +372,35 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
     // Open-data vehicles go through the detail cache; the Kłosok feed is a
     // separate tracker without the position fingerprint the cache needs.
     if (!req.params.id.startsWith('klosok:')) {
-      const key = `${req.params.id}|${limit}|${history}`;
-      const cached = vehicleDetailCache.get(key);
+      const revision = vehicles.revision ?? 0;
+      const cached = vehicleDetailCache.get(
+        gtfs.generation,
+        revision,
+        req.params.id,
+        limit,
+        history,
+        vehicle,
+      );
       // A detail computed for one lat/lon/heading stays true only while the
-      // vehicle is still there. The position is content; updatedAt is a
-      // freshness timestamp, so it is deliberately not part of the test.
-      if (
-        cached &&
-        cached.lat === vehicle.lat &&
-        cached.lon === vehicle.lon &&
-        cached.heading === vehicle.heading
-      ) {
-        return res.json({ vehicle, trip: cached.trip });
-      }
+      // vehicle is still there, the timetable generation is unchanged, and the
+      // polling revision is the same. updatedAt is a freshness timestamp, so it
+      // is deliberately not part of the key or the test.
+      if (cached) return res.json({ vehicle, trip: cached });
 
       // Seed the projection fast path with the tracker's last position; the
       // detail request then re-projects around the vehicle instead of scanning
       // every shape variant for it.
       const previousState = vehicles.describeCache.get(vehicle.id)?.state ?? null;
       const trip = describeVehicle(gtfs, vehicle, { limit, history, previousState });
-      vehicleDetailCache.set(key, {
-        lat: vehicle.lat,
-        lon: vehicle.lon,
-        heading: vehicle.heading ?? null,
+      vehicleDetailCache.set(
+        gtfs.generation,
+        revision,
+        req.params.id,
+        limit,
+        history,
+        vehicle,
         trip,
-      });
+      );
       return res.json({ vehicle, trip });
     }
 
@@ -447,7 +458,7 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
     // direction, and a per-degree key would never hit.
     const positionKey = lat !== null && lon !== null ? `${lat.toFixed(3)},${lon.toFixed(3)}` : 'default';
     const headingKey = heading === null ? 'any' : String(Math.round(heading / 45) % 8);
-    const cacheKey = `${line}|${positionKey}|${headingKey}|${compact ? 'compact' : 'legacy'}`;
+    const cacheKey = `${gtfs.generation}|${line}|${positionKey}|${headingKey}|${compact ? 'compact' : 'legacy'}`;
 
     const cached = shapeCache.get(cacheKey);
     if (cached) return res.json(cached);
@@ -555,6 +566,12 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
 
   router.get('/health', noStore, (req, res) => {
     const healthy = gtfs.isReady;
+    // Keep the payload compact: the rolling metrics are latest / EWMA / max
+    // with no history, and the GTFS block is only the last successful build.
+    const performanceBlock = {
+      vehicles: vehicles.performanceSnapshot ? vehicles.performanceSnapshot() : {},
+      gtfs: gtfs.performance ?? null,
+    };
     res.status(healthy ? 200 : 503).json({
       status: healthy ? 'ok' : 'starting',
       uptimeSeconds: Math.round((Date.now() - startedAt.getTime()) / 1000),
@@ -566,6 +583,7 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, kd = null, klosok = null,
         stats: vehicles.stats,
         openData: vehicles.openDataStatus,
       },
+      performance: performanceBlock,
       // KD and Kłosok are standalone providers: they are reported on, but
       // their health does not decide the overall status — Wrocław must stay
       // up when either is down.
@@ -610,6 +628,7 @@ module.exports = {
   WIRE_SHAPE_SIMPLIFY_METERS,
   createRouter,
   shapeCache,
+  vehicleDetailCache,
   toCompact,
   toLegacy,
   toMapSnapshot,

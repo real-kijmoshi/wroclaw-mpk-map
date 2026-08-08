@@ -128,6 +128,16 @@ describe('KD static GTFS store', () => {
     assert.ok(results.some((stop) => stop.name === 'Wrocław Główny'));
   });
 
+  it('prefers stations, then rank, then deterministic tie-breaks', async () => {
+    const store = await build();
+    // ł has no canonical decomposition, so it must be typed as-is.
+    const results = store.searchStops('wrocław', 10).map((stop) => stop.name);
+    // The station (locationType 1) comes first, then the platforms with the
+    // same name — and only three stops can ever match "wrocław".
+    assert.equal(results[0], 'Wrocław Główny');
+    assert.equal(results.length, 3);
+  });
+
   it('orders trip stops by sequence with scheduled times', async () => {
     const store = await build();
     const trip = store.getTripStops('t1');

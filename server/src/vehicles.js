@@ -1,9 +1,12 @@
 'use strict';
 
+const { performance } = require('node:perf_hooks');
+
 const config = require('./config');
 const logger = require('./logger');
 const { fetchWithTimeout, tryEachSource } = require('./http');
 const { lineToType } = require('./lines');
+const { Metric } = require('./metrics');
 const {
   fetchOpenDataVehicles,
   mergeFleet,
@@ -185,6 +188,29 @@ class VehicleTracker {
       count: 0,
     };
     this.stats = { mpk: 0, merged: 0, openData: 0, total: 0, activeLines: 0 };
+    /**
+     * Rolling per-poll timings and counts. Each field is a bounded Metric
+     * (latest / EWMA / max / count), so nothing here grows with uptime.
+     */
+    this.performance = {
+      totalPollMs: new Metric(),
+      fetchMs: new Metric(),
+      normalizationMs: new Metric(),
+      openDataMergeMs: new Metric(),
+      descriptionMs: new Metric(),
+      snapshotBuildMs: new Metric(),
+      incomingVehicleCount: new Metric(),
+      acceptedVehicleCount: new Metric(),
+      descriptionsReused: new Metric(),
+      descriptionsRecomputed: new Metric(),
+    };
+  }
+
+  /** Rolling metrics as a flat object, for /health. */
+  performanceSnapshot() {
+    return Object.fromEntries(
+      Object.entries(this.performance).map(([name, metric]) => [name, metric.snapshot()]),
+    );
   }
 
   get snapshot() {
@@ -341,14 +367,18 @@ class VehicleTracker {
    * one from its previous position: a stale destination on a moving vehicle is
    * worse than none, because nothing on screen says it is out of date.
    *
-   * @returns {number} how many vehicles were placed
+   * @returns {{ described: number, reused: number, recomputed: number }}
+   *   `described` counts placed vehicles, `reused` those served from the
+   *   describe cache, `recomputed` those projected again this pass.
    */
   #describe() {
-    if (!this.gtfs?.isReady) return 0;
+    if (!this.gtfs?.isReady) return { described: 0, reused: 0, recomputed: 0 };
 
     const now = new Date();
     const nowMs = Date.now();
     let described = 0;
+    let reused = 0;
+    let recomputed = 0;
 
     for (const vehicle of this.fleet.values()) {
       const previous = this.describeCache.get(vehicle.id);
@@ -365,9 +395,11 @@ class VehicleTracker {
         // moved a few seconds. Reuse the match instead of re-projecting it.
         vehicle.trip = previous.trip ?? null;
         if (vehicle.trip) described += 1;
+        reused += 1;
         continue;
       }
 
+      recomputed += 1;
       try {
         // One stop ahead is all /locations carries; /vehicle/:id recomputes the
         // full list when someone actually taps a vehicle. `previous?.state` is
@@ -404,7 +436,7 @@ class VehicleTracker {
       if (!this.fleet.has(id)) this.describeCache.delete(id);
     }
 
-    return described;
+    return { described, reused, recomputed };
   }
 
   /** Fetch the primary (MPK) source once and merge it into the fleet. */
@@ -413,15 +445,21 @@ class VehicleTracker {
     if (!lines || (!lines.allBuses.length && !lines.allTrams.length)) return this.status;
 
     this.status.lastAttemptAt = new Date().toISOString();
+    const pollStart = performance.now();
+    const perf = this.performance;
 
     try {
+      const fetchStart = performance.now();
       const { url, value: rows } = await tryEachSource(
         config.vehicles.sources,
         (candidate) => this.#request(candidate, lines),
         { label: 'vehicle position' },
       );
+      perf.fetchMs.record(performance.now() - fetchStart);
+      perf.incomingVehicleCount.record(rows.length);
 
       const now = Date.now();
+      const normalizeStart = performance.now();
       let accepted = 0;
 
       for (const row of rows) {
@@ -439,6 +477,8 @@ class VehicleTracker {
 
         this.mpkFleet.set(vehicle.id, { ...vehicle, heading, updatedAt: now });
       }
+      perf.normalizationMs.record(performance.now() - normalizeStart);
+      perf.acceptedVehicleCount.record(accepted);
 
       // Drop vehicles that stopped reporting a while ago.
       const cutoff = now - config.vehicles.staleAfterMs * 2;
@@ -446,9 +486,21 @@ class VehicleTracker {
         if (vehicle.updatedAt < cutoff) this.mpkFleet.delete(id);
       }
 
+      const mergeStart = performance.now();
       this.#merge();
-      const described = this.#describe();
+      perf.openDataMergeMs.record(performance.now() - mergeStart);
+
+      const describeStart = performance.now();
+      const { described, reused, recomputed } = this.#describe();
+      perf.descriptionMs.record(performance.now() - describeStart);
+      perf.descriptionsReused.record(reused);
+      perf.descriptionsRecomputed.record(recomputed);
+
+      const snapshotStart = performance.now();
       this.#rebuildSnapshot();
+      perf.snapshotBuildMs.record(performance.now() - snapshotStart);
+
+      perf.totalPollMs.record(performance.now() - pollStart);
 
       this.status = {
         ...this.status,
@@ -463,6 +515,7 @@ class VehicleTracker {
 
       if (accepted === 0) logger.warn('Vehicle poll returned rows but none were usable');
     } catch (error) {
+      perf.totalPollMs.record(performance.now() - pollStart);
       this.status.consecutiveFailures += 1;
       this.status.lastError = error.message;
       // A failed poll keeps the last good fleet but is a change of state all
