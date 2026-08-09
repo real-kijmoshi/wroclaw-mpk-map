@@ -156,6 +156,8 @@ class VehicleTracker {
     this.fleet = new Map();
     /** id -> entry in the current `snapshot.locations`, so /vehicle/:id is O(1). */
     this.byId = new Map();
+    /** stopId -> live vehicles whose current next stop is that stop, for live departures. */
+    this.nextStopIndex = new Map();
     /** Memoized snapshot: what the `snapshot` getter returns between polls. */
     this._snapshot = { locations: [], count: 0, lastUpdated: null, source: null, stale: false };
     /** Monotonic counter bumped on every accepted poll (success or failure). Used by the vehicle-detail cache and internal freshness checks. */
@@ -285,11 +287,12 @@ class VehicleTracker {
    *   status is finalised by the caller before the snapshot reads it.
    */
   #rebuildSnapshot({ source, stale }) {
-    const cutoff = Date.now() - config.vehicles.staleAfterMs;
-    const vehicles = [];
-    for (const vehicle of this.fleet.values()) {
-      if (vehicle.updatedAt < cutoff) continue;
-      vehicles.push({
+   const cutoff = Date.now() - config.vehicles.staleAfterMs;
+   const vehicles = [];
+   this.nextStopIndex = new Map();
+   for (const vehicle of this.fleet.values()) {
+     if (vehicle.updatedAt < cutoff) continue;
+     vehicles.push({
         id: vehicle.id,
         line: vehicle.line,
         type: vehicle.type,
@@ -309,8 +312,30 @@ class VehicleTracker {
         ...(vehicle.brigade !== undefined ? { brigade: vehicle.brigade } : {}),
         ...(vehicle.positionUpdatedAt !== undefined
           ? { positionUpdatedAt: vehicle.positionUpdatedAt }
-          : {}),
-      });
+         : {}),
+       });
+
+      // Index live vehicles by their current next stop, so /stop/:id/departures
+      // can match a scheduled row to a tracked vehicle in O(1) without re-scanning
+      // or re-projecting anything. Only vehicles the timetable could place on a
+      // run with a real next stop and ETA are indexed — anything else falls back
+      // to the schedule.
+      const trip = vehicle.trip;
+      if (trip && typeof trip.tripId === 'string' && trip.nextStop) {
+        const { id, etaSeconds } = trip.nextStop;
+        if (typeof id === 'string' && Number.isFinite(etaSeconds) && etaSeconds >= 0) {
+          const entry = {
+            vehicleId: vehicle.id,
+            tripId: trip.tripId,
+            etaSeconds,
+            line: vehicle.line,
+            updatedAt: vehicle.updatedAt,
+          };
+          const bucket = this.nextStopIndex.get(id);
+          if (bucket) bucket.push(entry);
+          else this.nextStopIndex.set(id, [entry]);
+        }
+      }
     }
 
     // True when anything visible in /locations changed since the last snapshot.

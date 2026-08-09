@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
 
+import { type ThemeName, DEFAULT_THEME } from '@/constants/themes';
+
 /**
  * Settings the rider chose. Small enough to live outside React, like the line
  * filter it sits next to.
@@ -17,18 +19,31 @@ const STORAGE_KEY = 'wroclive.preferences';
  */
 export type MapProvider = 'auto' | 'osm';
 
+/**
+ * MapKit base map style on iOS when the system map is selected.
+ * Only consulted when `mapProvider` is `'auto'`; OSM keeps the standard
+ * base and tiles over it regardless.
+ */
+export type AppleMapType = 'standard' | 'satellite' | 'hybrid';
+
 export type Preferences = {
   mapProvider: MapProvider;
+  /** Base map style for the system (MapKit) surface on iOS. */
+  appleMapType: AppleMapType;
   /** Draw stops near the rider when nothing else is selected. */
   showNearbyStops: boolean;
   /** Keep the selected vehicle centred and fit its route into view. */
   followSelectedVehicle: boolean;
+  /** Accent theme for links and selected-state markers (amber stays fixed). */
+  theme: ThemeName;
 };
 
 const DEFAULTS: Preferences = {
   mapProvider: 'auto',
+  appleMapType: 'standard',
   showNearbyStops: true,
   followSelectedVehicle: false,
+  theme: DEFAULT_THEME,
 };
 
 let preferences: Preferences = DEFAULTS;

@@ -6,18 +6,19 @@
  *
  * The folding below is the one place stop-name normalization lives: names are
  * folded once when a feed is indexed and queries are folded through the same
- * function per search, so the two sides can never disagree. Only characters
- * with a canonical decomposition are folded (`ł`, `ß`… have none and must be
- * typed as-is); the search is deliberately not a transliteration.
+ * function per search, so the two sides can never disagree. `ł` is explicitly
+ * folded too: it is the one Polish letter people routinely omit on a phone.
+ * This remains a Polish-search convenience, not general transliteration.
  */
 const normalizeSearchText = (value) =>
-  value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+  value
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[łŁ]/g, 'l')
+    .toLowerCase()
+    .trim();
 
-// Unicode-aware: Polish letters like ł, ą, ś have no canonical decomposition, so
-// they survive normalizeSearchText() and must still count as letters here.
-// Without the `\p{L}` property, `ł` would be treated as a separator and split
-// "aleja łowiecka" into ["aleja", "owiecka"], downgrading a word-prefix match
-// ("ło") to a generic substring match.
+// Unicode-aware so every letter still remains part of its word after folding.
 const WORD_BREAK = /[^\p{L}\p{N}]+/u;
 
 /**

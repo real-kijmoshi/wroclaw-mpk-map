@@ -34,20 +34,30 @@ const ALL_TAB = 'all';
 const GRID_GAP = Spacing.two;
 /** Smallest chip that still fits a three-digit line and clears a 44pt target. */
 const MIN_CHIP = 48;
+/** Largest chip: keeps badges from ballooning on tablets/desktops. */
+const MAX_CHIP = 80;
+/** Never more than five line badges in a single row. */
+const MAX_COLUMNS = 5;
 
 /**
- * Chip size that divides the row exactly.
+ * Chip size and grid width for the line badge grid.
  *
- * Fixed-width chips leave a ragged strip of dead space at the right edge on
- * every width except the one they were drawn for. Solving for the columns
- * first and then splitting what is left means the grid ends flush against both
- * margins on a phone and on a tablet.
+ * Columns are derived from the available width and `MIN_CHIP`, capped at
+ * `MAX_COLUMNS` so the grid never feels over-stuffed. On narrow phones this
+ * yields five or six comfortable ~50 mm badges; on wide screens the count is
+ * capped at six and badges grow to `MAX_CHIP` rather than stretching to fill
+ * the viewport. The returned `gridWidth` is applied to the grid View so the
+ * flexbox wrapper respects the column count (a capped `size` alone would let
+ * smaller chips wrap to more per row than `columns` intends).
  */
 function useGrid(horizontalPadding: number) {
   const { width } = useWindowDimensions();
   const available = Math.max(width - horizontalPadding * 2, MIN_CHIP);
-  const columns = Math.max(6, Math.floor((available + GRID_GAP) / (MIN_CHIP + GRID_GAP + 8)));
-  return { size: (available - GRID_GAP * (columns - 1)) / columns, columns };
+  const maxColsByMin = Math.floor((available + GRID_GAP) / (MIN_CHIP + GRID_GAP));
+  const columns = Math.max(1, Math.min(MAX_COLUMNS, maxColsByMin));
+  const size = Math.min(MAX_CHIP, (available - GRID_GAP * (columns - 1)) / columns);
+  const gridWidth = columns * size + GRID_GAP * (columns - 1);
+  return { size, columns, gridWidth };
 }
 
 /**
@@ -274,7 +284,7 @@ export default function LinesScreen() {
                       </Pressable>
                     </View>
 
-                    <View style={styles.grid}>
+                    <View style={[styles.grid, { width: grid.gridWidth }]}>
                       {group.lines.map((line) => {
                         const isSelected = selectedSet.has(line);
                         return (

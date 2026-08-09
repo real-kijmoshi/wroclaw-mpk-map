@@ -13,7 +13,8 @@ import { useTheme } from '@/hooks/use-theme';
 import { apiGet } from '@/lib/api';
 import { API_URL } from '@/lib/config';
 import { formatAge } from '@/lib/format';
-import { preferencesStore, usePreferences, type MapProvider } from '@/lib/preferences';
+import { preferencesStore, usePreferences, type AppleMapType, type MapProvider } from '@/lib/preferences';
+import { THEMES, type ThemeName } from '@/constants/themes';
 
 type Health = {
   status: string;
@@ -62,6 +63,28 @@ export default function SettingsScreen() {
           </Section>
         )}
 
+        {Platform.OS === 'ios' && preferences.mapProvider === 'auto' && (
+          <Section title="Typ mapy">
+            <Choice
+              label="Standardowa"
+              selected={preferences.appleMapType === 'standard'}
+              onPress={() => preferencesStore.set('appleMapType', 'standard' satisfies AppleMapType)}
+            />
+            <Divider />
+            <Choice
+              label="Hybrydowa"
+              selected={preferences.appleMapType === 'hybrid'}
+              onPress={() => preferencesStore.set('appleMapType', 'hybrid' satisfies AppleMapType)}
+            />
+            <Divider />
+            <Choice
+              label="Satelitarna"
+              selected={preferences.appleMapType === 'satellite'}
+              onPress={() => preferencesStore.set('appleMapType', 'satellite' satisfies AppleMapType)}
+            />
+          </Section>
+        )}
+
         <Section title="Na mapie">
           <Row
             label="Przystanki w pobliżu"
@@ -84,6 +107,19 @@ export default function SettingsScreen() {
               />
             }
           />
+        </Section>
+
+        <Section title="Motyw">
+          {(Object.keys(THEMES) as ThemeName[]).map((name, i, arr) => (
+            <View key={name}>
+              <Choice
+                label={THEMES[name].label}
+                selected={preferences.theme === name}
+                onPress={() => preferencesStore.set('theme', name)}
+              />
+              {i < arr.length - 1 && <Divider />}
+            </View>
+          ))}
         </Section>
 
         <Section title="Serwer">
@@ -224,7 +260,7 @@ function Choice({
         hint={hint}
         control={
           selected ? (
-            <Ionicons name="checkmark" size={20} color={theme.text} />
+            <Ionicons name="checkmark" size={20} color={theme.accent} />
           ) : (
             <View style={styles.spacer} />
           )

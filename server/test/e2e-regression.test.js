@@ -2,7 +2,6 @@
 
 const assert = require('assert');
 const { test, describe, beforeEach, afterEach } = require('node:test');
-const fetch = require('node-fetch');
 
 const { createApp } = require('../src/app');
 const { KlosokService } = require('../src/klosok/service');

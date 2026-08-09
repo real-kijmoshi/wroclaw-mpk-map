@@ -57,13 +57,23 @@ export const selectionStore = {
   },
 };
 
-/** Read the persisted filter once at startup. */
-export async function hydrateSelection() {
+/**
+ * Read the persisted filter once at startup.
+ *
+ * Returns whether a stored selection existed — the caller uses this to tell a
+ * first launch apart from a launch where the rider explicitly cleared the
+ * filter (both leave `selected` as `[]`, i.e. "show everything").
+ */
+export async function hydrateSelection(): Promise<boolean> {
+  let found = false;
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : null;
-    if (Array.isArray(parsed)) {
-      selected = parsed.filter((item): item is string => typeof item === 'string');
+    if (raw !== null) {
+      found = true;
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        selected = parsed.filter((item): item is string => typeof item === 'string');
+      }
     }
   } catch {
     // Corrupt storage just means no filter.
@@ -71,6 +81,7 @@ export async function hydrateSelection() {
     hydrated = true;
     emit();
   }
+  return found;
 }
 
 export function useSelectedLines(): string[] {

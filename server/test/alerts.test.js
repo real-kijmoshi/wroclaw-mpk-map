@@ -3,7 +3,17 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
-const { extractAffectedLines, parseFeed, parsePage, stripHtml, toXPostUrl } = require('../src/alerts');
+const config = require('../src/config');
+const {
+  AlertsService,
+  extractAffectedLines,
+  fingerprint,
+  normalizeText,
+  parseFeed,
+  parsePage,
+  stripHtml,
+  toXPostUrl,
+} = require('../src/alerts');
 
 const KNOWN = new Set(['4', '10', '17', '128', '240', 'A', 'N']);
 
@@ -368,5 +378,286 @@ describe('stripHtml', () => {
 
   it('removes a <script> block along with its content', () => {
     assert.equal(stripHtml('<script>alert(1)</script>Real text'), 'Real text');
+  });
+});
+
+const LONG_TEXT = 'Tramwaje linii 4 i 10 kursują objazdem przez ulicę Zieloną od poniedziałku';
+
+const mockProvider = (name, items, opts = {}) => ({
+  name,
+  async fetch() {
+    if (opts.fail) throw new Error(`${name} failed`);
+    if (opts.delay) await new Promise((resolve) => setTimeout(resolve, opts.delay));
+    return items;
+  },
+});
+
+const mkItem = (overrides = {}) => ({
+  id: null,
+  title: null,
+  content: '',
+  url: null,
+  timestamp: Date.now(),
+  source: 'test',
+  ...overrides,
+});
+
+describe('fingerprint / normalizeText', () => {
+  it('lowercases and collapses whitespace', () => {
+    assert.equal(
+      normalizeText('  Linia  4   Objazd  '),
+      'linia 4 objazd',
+    );
+  });
+
+  it('strips URLs', () => {
+    assert.equal(
+      normalizeText('Objazd https://example.com/a i https://example.com/b'),
+      'objazd i',
+    );
+  });
+
+  it('normalizes smart punctuation to ASCII', () => {
+    assert.equal(
+      normalizeText('"Cytat" – myślnik…'),
+      'cytat - myślnik',
+    );
+  });
+
+  it('trims mechanical source prefixes', () => {
+    assert.equal(
+      normalizeText('#AlertMPK Ruch przywrócony na ulicy Reymonta'),
+      'ruch przywrócony na ulicy reymonta',
+    );
+    assert.equal(
+      normalizeText('@AlertMPK Ruch przywrócony na ulicy Reymonta'),
+      'ruch przywrócony na ulicy reymonta',
+    );
+  });
+
+  it('returns null for text shorter than 30 characters', () => {
+    assert.equal(fingerprint(null, 'Linia 4 nie kursuje'), null, 'short text → no fingerprint');
+    assert.ok(fingerprint(null, LONG_TEXT), 'long text → non-null fingerprint');
+  });
+
+  it('same text from different sources produces the same fingerprint', () => {
+    const a = fingerprint(LONG_TEXT, null);
+    const b = fingerprint(null, LONG_TEXT);
+    assert.equal(a, b);
+  });
+});
+
+describe('AlertsService dedup', () => {
+  it('same ID from the same source => one alert', async () => {
+    const item = mkItem({
+      id: 'same-id',
+      title: LONG_TEXT,
+      content: 'Detail.',
+      url: 'https://a.com',
+      timestamp: 1000,
+      source: 'a',
+    });
+    const service = new AlertsService(() => KNOWN, [
+      mockProvider('a', [item]),
+      mockProvider('b', [{ ...item, source: 'b', timestamp: 2000 }]),
+    ]);
+    const result = await service.refresh();
+    assert.equal(result.length, 1, 'same ID deduped');
+  });
+
+  it('same normalized content, different source/ID => one alert', async () => {
+    const service = new AlertsService(() => KNOWN, [
+      mockProvider('a', [mkItem({ id: '1', title: LONG_TEXT, content: 'Detail.', url: 'https://a.com', timestamp: 1000, source: 'a' })]),
+      mockProvider('b', [mkItem({ id: '2', title: LONG_TEXT, content: 'Detail.', url: 'https://b.com', timestamp: 2000, source: 'b' })]),
+    ]);
+    const result = await service.refresh();
+    assert.equal(result.length, 1, 'cross-source fingerprint dedup');
+    assert.equal(result[0].timestamp, 2000, 'newest timestamp wins');
+    assert.equal(result[0].url, 'https://a.com', 'original URL preferred');
+  });
+
+  it('short identical generic text stays separate unless same ID', async () => {
+    const base = 'Nie kursuje';
+    const service = new AlertsService(() => KNOWN, [
+      mockProvider('a', [mkItem({ id: '1', title: base, content: '', timestamp: 1000, source: 'a' })]),
+      mockProvider('b', [mkItem({ id: '2', title: base, content: '', timestamp: 2000, source: 'b' })]),
+    ]);
+    const result = await service.refresh();
+    assert.equal(result.length, 2, 'short content not fingerprint-deduped');
+  });
+
+  it('different content about the same line stays separate', async () => {
+    const service = new AlertsService(() => KNOWN, [
+      mockProvider('a', [mkItem({ id: '1', title: LONG_TEXT, content: 'A detail.', timestamp: 1000, source: 'a' })]),
+      mockProvider('b', [mkItem({ id: '2', title: 'Inny objazd linii 4', content: LONG_TEXT, timestamp: 2000, source: 'b' })]),
+    ]);
+    const result = await service.refresh();
+    assert.equal(result.length, 2, 'different content not deduped');
+  });
+
+  it('URL differences only: deduped when content is the same', async () => {
+    const service = new AlertsService(() => KNOWN, [
+      mockProvider('a', [mkItem({ id: '1', title: LONG_TEXT, content: 'Detail.', url: 'https://a.com/1', timestamp: 1000, source: 'a' })]),
+      mockProvider('b', [mkItem({ id: '2', title: LONG_TEXT, content: 'Detail.', url: 'https://b.com/2', timestamp: 2000, source: 'b' })]),
+    ]);
+    const result = await service.refresh();
+    assert.equal(result.length, 1, 'URL-only difference deduped');
+    assert.equal(result[0].url, 'https://a.com/1', 'original URL kept');
+  });
+
+  it('merged alert unions affected lines from both sources', async () => {
+    // Two items whose non-URL content is identical (same fingerprint after URL
+    // stripping) but whose URLs embed different line numbers. The merged alert
+    // should carry the union of both sets.
+    const base = 'Tramwaje kursują objazdem przez ulicę Zieloną. ';
+    const service = new AlertsService(() => KNOWN, [
+      mockProvider('a', [
+        mkItem({ id: '1', title: null, content: base + 'https://linia-10.example.com', url: null, timestamp: 1000, source: 'a' }),
+      ]),
+      mockProvider('b', [
+        mkItem({ id: '2', title: null, content: base + 'https://linia-4.example.com', url: null, timestamp: 2000, source: 'b' }),
+      ]),
+    ]);
+    const result = await service.refresh();
+    assert.equal(result.length, 1, 'fingerprint deduped');
+    const lines = result[0].affected.sort((a, b) => Number(a) - Number(b));
+    assert.deepEqual(lines, ['4', '10'], 'union of affected lines');
+  });
+
+  it('newest timestamp wins on merge', async () => {
+    const service = new AlertsService(() => KNOWN, [
+      mockProvider('a', [mkItem({ id: '1', title: LONG_TEXT, content: 'Detail.', url: null, timestamp: 1000, source: 'a' })]),
+      mockProvider('b', [mkItem({ id: '2', title: LONG_TEXT, content: 'Detail.', url: null, timestamp: 5000, source: 'b' })]),
+    ]);
+    const result = await service.refresh();
+    assert.equal(result.length, 1, 'merged');
+    assert.equal(result[0].timestamp, 5000, 'newest timestamp');
+  });
+
+  it('all providers failure retains previous list', async () => {
+    let shouldFail = false;
+    const provider = {
+      name: 'flippy',
+      async fetch() {
+        if (shouldFail) throw new Error('down');
+        return [mkItem({ id: 'x', title: LONG_TEXT, content: 'Body.', timestamp: 1000, source: 'flippy' })];
+      },
+    };
+    const service = new AlertsService(() => KNOWN, [provider]);
+
+    const result1 = await service.refresh();
+    assert.equal(result1.length, 1, 'first refresh has the alert');
+
+    shouldFail = true;
+    const result2 = await service.refresh();
+    assert.equal(result2.length, 1, 'previous list retained on total failure');
+  });
+
+  it('one provider failure: successful results still used', async () => {
+    const service = new AlertsService(() => KNOWN, [
+      mockProvider('fail', [], { fail: true }),
+      mockProvider('ok', [
+        mkItem({ id: '1', title: LONG_TEXT, content: 'Body.', url: null, timestamp: 1000, source: 'ok' }),
+        mkItem({ id: '2', title: 'Different text entirely here.', content: 'Body 2.', url: null, timestamp: 2000, source: 'ok' }),
+      ]),
+    ]);
+    const result = await service.refresh();
+    assert.equal(result.length, 2, 'successful provider results used');
+  });
+});
+
+describe('AlertsService poll lifecycle', () => {
+  it('never overlaps refreshes when refresh exceeds the interval', async () => {
+    const origInterval = config.alerts.refreshIntervalMs;
+    config.alerts.refreshIntervalMs = 10;
+
+    let inFlight = 0;
+    let maxConcurrent = 0;
+    const service = new AlertsService(() => KNOWN, [
+      {
+        name: 'slow',
+        async fetch() {
+          inFlight++;
+          maxConcurrent = Math.max(maxConcurrent, inFlight);
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          inFlight--;
+          return [mkItem({ id: '1', title: LONG_TEXT, content: 'Body.', url: null, timestamp: 1000, source: 'slow' })];
+        },
+      },
+    ]);
+
+    service.start();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    service.stop();
+    config.alerts.refreshIntervalMs = origInterval;
+
+    assert.equal(maxConcurrent, 1, 'no overlapping refreshes');
+  });
+
+  it('start() twice starts only one loop', async () => {
+    let count = 0;
+    const service = new AlertsService(() => KNOWN, [
+      {
+        name: 'count',
+        async fetch() {
+          count++;
+          return [];
+        },
+      },
+    ]);
+    service.start();
+    service.start();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    service.stop();
+    assert.equal(count, 1, 'only one initial refresh');
+  });
+
+  it('stop() during in-flight prevents rearm', async () => {
+    const service = new AlertsService(() => KNOWN, [
+      {
+        name: 'slow',
+        async fetch() {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return [mkItem({ id: '1', title: LONG_TEXT, content: 'Body.', url: null, timestamp: 1000, source: 'slow' })];
+        },
+      },
+    ]);
+
+    service.start();
+    // Let the in-flight refresh start
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(service.timer !== null, 'timer exists during in-flight');
+
+    service.stop();
+    assert.equal(service._stopped, true);
+
+    // Wait for the in-flight refresh to settle
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(service.timer, null, 'no timer re-armed after stop');
+    assert.equal(service.started, false);
+  });
+
+  it('stop() before start is a no-op', () => {
+    const service = new AlertsService(() => KNOWN, []);
+    service.stop();
+    assert.equal(service.timer, null);
+    assert.equal(service.started, false);
+  });
+});
+
+// --- Line extraction regression tests (must keep passing after dedupe changes) ---
+
+describe('date/time line extraction regression (dedupe does not regress extraction)', () => {
+  it('22:00 does not become line 22', () => {
+    assert.deepEqual(extractAffectedLines('W dniu 2026-06-15 od godz. 22:00 do 05:30 linia 128 nie kursuje.', KNOWN), ['128']);
+  });
+
+  it('21.07.2026 does not become line 21', () => {
+    assert.deepEqual(extractAffectedLines('Od 21.07.2026 zmiana tras', KNOWN), []);
+  });
+
+  it('11–16 lipca does not become lines 11 and 16', () => {
+    const known = new Set([...KNOWN, '11', '16']);
+    assert.deepEqual(extractAffectedLines('Prace budowlane (11 - 16 lipca)', known), []);
   });
 });

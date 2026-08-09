@@ -22,6 +22,26 @@ const { inWarsaw, parseTable, secondsToTime, streamTableFast, timeToSeconds } = 
 const { GrowableFloat64Array, GrowableInt32Array } = require('./typed-arrays');
 
 const SHAPE_SIMPLIFY_METERS = 4;
+/** Duplicate pattern records at one platform are close; opposite directions are not. */
+const SAME_PLATFORM_RADIUS_METERS = 12;
+
+/**
+ * Wrocław's five-digit stop codes end in a platform suffix: `24505`, `24534`
+ * belong to the same `245` stop area. Some feeds omit codes, so callers still
+ * need the coordinate fallback below.
+ */
+const stopAreaCode = (stop) => {
+  const code = String(stop.code ?? '').trim();
+  return /^\d{5,}$/.test(code) ? code.slice(0, -2) : null;
+};
+
+const sameBoardingArea = (a, b) => {
+  if (a.name !== b.name) return false;
+  const aArea = stopAreaCode(a);
+  const bArea = stopAreaCode(b);
+  if (aArea && bArea) return aArea === bArea;
+  return distanceMeters(a.lat, a.lon, b.lat, b.lon) <= SAME_PLATFORM_RADIUS_METERS;
+};
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 /**
@@ -860,6 +880,21 @@ class GtfsStore {
     return this.stopsById.get(stopId) ?? null;
   }
 
+  /** One physical platform has one departure board. */
+  getDeparturesForStop(stopId, options = {}) {
+    return this.getDepartures(stopId, options);
+  }
+
+  getLinesForStop(stopId) {
+    const lines = new Set();
+    for (const [line, variants] of this.variantsByLine) {
+      if (variants.some((variant) => variant.stops.some((stop) => stop.id === stopId))) {
+        lines.add(line);
+      }
+    }
+    return [...lines].sort((a, b) => a.localeCompare(b, 'pl', { numeric: true }));
+  }
+
   /**
    * Stops within `radiusMeters` of a point, nearest first.
    *
@@ -897,7 +932,7 @@ class GtfsStore {
       results.push({ stop: entry.stop, rank });
     }
 
-    return results
+    const ordered = results
       .sort((a, b) => {
         const nameOf = (entry) => entry.stop.name;
         return (
@@ -907,8 +942,27 @@ class GtfsStore {
           a.stop.id.localeCompare(b.stop.id)
         );
       })
-      .slice(0, limit)
       .map((entry) => entry.stop);
+
+    // A GTFS producer can repeat a physical boarding point once per pattern.
+    // Search should offer that pole once, but must never merge the two sides of
+    // a street merely because they have the same passenger-facing name.
+    const platforms = [];
+    for (const stop of ordered) {
+      const platform = platforms.find(
+        (candidate) =>
+          sameBoardingArea(candidate, stop),
+      );
+      if (!platform) {
+        platforms.push({ ...stop, ids: [stop.id] });
+        continue;
+      }
+      platform.ids.push(stop.id);
+    }
+
+    return platforms
+      .slice(0, limit)
+      .map((stop) => (stop.ids.length > 1 ? stop : (({ ids, ...platform }) => platform)(stop)));
   }
 
   /** Is `serviceId` running on `date` (a Date in Europe/Warsaw)? */
@@ -933,7 +987,7 @@ class GtfsStore {
    * @param {string} stopId
    * @param {{ limit?: number, now?: Date, horizonSeconds?: number }} options
    */
-  getDepartures(stopId, { limit = 20, now = new Date(), horizonSeconds = 7200 } = {}) {
+  getDepartures(stopId, { limit = 20, now = new Date(), horizonSeconds = 86_400 } = {}) {
     const rows = this.departuresByStop.get(stopId);
     if (!rows || !rows.length) return [];
 
@@ -943,6 +997,8 @@ class GtfsStore {
 
     const yesterday = new Date(localNow);
     yesterday.setDate(yesterday.getDate() - 1);
+    const tomorrow = new Date(localNow);
+    tomorrow.setDate(tomorrow.getDate() + 1);
 
     // rows is sorted by departure time, so a binary search finds where to start.
     const lowerBound = (target) => {
@@ -982,6 +1038,9 @@ class GtfsStore {
     const departures = [
       ...collect(lowerBound(86_400 + secondsNow), yesterday, 86_400, 'yesterday'),
       ...collect(lowerBound(secondsNow), localNow, 0, 'today'),
+      // The board remains useful after the last evening service: tomorrow's
+      // first departures are measured forward from the current service day.
+      ...collect(lowerBound(0), tomorrow, -86_400, 'tomorrow'),
     ];
 
     return departures.sort((a, b) => a.inSeconds - b.inSeconds).slice(0, limit);

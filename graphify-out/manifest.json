@@ -1,0 +1,832 @@
+{
+  ".claude/launch.json": {
+    "mtime": 1786028340.486107,
+    "ast_hash": "310b6c4842c2c2e9732bab053b816f75",
+    "semantic_hash": "310b6c4842c2c2e9732bab053b816f75"
+  },
+  ".claude/settings.local.json": {
+    "mtime": 1785964060.4429243,
+    "ast_hash": "8a07a89e9b347935b5ec72d33586a7a9",
+    "semantic_hash": "8a07a89e9b347935b5ec72d33586a7a9"
+  },
+  ".commandcode/settings.json": {
+    "mtime": 1786203922.8702056,
+    "ast_hash": "4751dc2d08ff14c0817a9d33564ad615",
+    "semantic_hash": "4751dc2d08ff14c0817a9d33564ad615"
+  },
+  "landing/images/Wroclive.icon/icon.json": {
+    "mtime": 1786145178.354025,
+    "ast_hash": "676fdde7be467a363ded2d6e2580e455",
+    "semantic_hash": "676fdde7be467a363ded2d6e2580e455"
+  },
+  "server/eslint.config.js": {
+    "mtime": 1786185839.6203609,
+    "ast_hash": "333413cc4b28cadcefc651c096cdd582",
+    "semantic_hash": "333413cc4b28cadcefc651c096cdd582"
+  },
+  "server/index.js": {
+    "mtime": 1786227524.7179902,
+    "ast_hash": "46f58e404472e44c1c3af7959bcde3a8",
+    "semantic_hash": "46f58e404472e44c1c3af7959bcde3a8"
+  },
+  "server/package.json": {
+    "mtime": 1786228053.1248965,
+    "ast_hash": "239293f41ae9ac9bb00de366cc72e54f",
+    "semantic_hash": "239293f41ae9ac9bb00de366cc72e54f"
+  },
+  "server/scripts/benchmark-describe.js": {
+    "mtime": 1786221348.770763,
+    "ast_hash": "bfc09292ed97f91fb45c620f6f2a6d20",
+    "semantic_hash": "bfc09292ed97f91fb45c620f6f2a6d20"
+  },
+  "server/scripts/benchmark-gtfs.js": {
+    "mtime": 1786192789.2874625,
+    "ast_hash": "6d0ae74a9566942402ee8b1af31b1262",
+    "semantic_hash": "6d0ae74a9566942402ee8b1af31b1262"
+  },
+  "server/scripts/benchmark-open-data.js": {
+    "mtime": 1786211396.8711102,
+    "ast_hash": "34156b20e8538d18643ecf309545433c",
+    "semantic_hash": "34156b20e8538d18643ecf309545433c"
+  },
+  "server/scripts/benchmark-progress.js": {
+    "mtime": 1786209518.5473104,
+    "ast_hash": "f4c9bb9d7daae6b9ec7a55c45af9435e",
+    "semantic_hash": "f4c9bb9d7daae6b9ec7a55c45af9435e"
+  },
+  "server/scripts/benchmark-vehicle-detail.js": {
+    "mtime": 1786194236.0751338,
+    "ast_hash": "b5fda486569bfd6c6a0ef2a0b25cde76",
+    "semantic_hash": "b5fda486569bfd6c6a0ef2a0b25cde76"
+  },
+  "server/scripts/doctor.js": {
+    "mtime": 1786228047.5325134,
+    "ast_hash": "b710876e0dfb251b2044cfb047a44a20",
+    "semantic_hash": "b710876e0dfb251b2044cfb047a44a20"
+  },
+  "server/scripts/gtfs-dump.js": {
+    "mtime": 1786192900.4955106,
+    "ast_hash": "6328a3db84dcfd357907b8076327ace8",
+    "semantic_hash": "6328a3db84dcfd357907b8076327ace8"
+  },
+  "server/scripts/verify-nitter.js": {
+    "mtime": 1786016267.244369,
+    "ast_hash": "e66aaae30773ce921005bc8f1cb1fc2b",
+    "semantic_hash": "e66aaae30773ce921005bc8f1cb1fc2b"
+  },
+  "server/src/alerts.js": {
+    "mtime": 1786291667.7605062,
+    "ast_hash": "ea3b2414aced2ce98207f53616bf8a4f",
+    "semantic_hash": "ea3b2414aced2ce98207f53616bf8a4f"
+  },
+  "server/src/app.js": {
+    "mtime": 1786227529.8718958,
+    "ast_hash": "b25475b1d5bb76e3ab85fb8f1bb0229d",
+    "semantic_hash": "b25475b1d5bb76e3ab85fb8f1bb0229d"
+  },
+  "server/src/cache.js": {
+    "mtime": 1785953456.8684187,
+    "ast_hash": "85b3d62b3dffb200dacd1cb2af605793",
+    "semantic_hash": "85b3d62b3dffb200dacd1cb2af605793"
+  },
+  "server/src/config.defaults.json": {
+    "mtime": 1786291667.763595,
+    "ast_hash": "6449a4b4e9df30d126e5f1b8ef99cf6b",
+    "semantic_hash": "6449a4b4e9df30d126e5f1b8ef99cf6b"
+  },
+  "server/src/config.js": {
+    "mtime": 1786291667.7684019,
+    "ast_hash": "386f8c045bb6988d7351fbee5d35a1d8",
+    "semantic_hash": "386f8c045bb6988d7351fbee5d35a1d8"
+  },
+  "server/src/gtfs/archive.js": {
+    "mtime": 1785953456.869219,
+    "ast_hash": "5d4a440890ae21ad9fe4d308004690ea",
+    "semantic_hash": "5d4a440890ae21ad9fe4d308004690ea"
+  },
+  "server/src/gtfs/catalogue.js": {
+    "mtime": 1786149485.105861,
+    "ast_hash": "ff244618eb50f240d912272e47f196de",
+    "semantic_hash": "ff244618eb50f240d912272e47f196de"
+  },
+  "server/src/gtfs/download.js": {
+    "mtime": 1785953456.8699617,
+    "ast_hash": "332bf86181849ec6f7d5f4229a77d390",
+    "semantic_hash": "332bf86181849ec6f7d5f4229a77d390"
+  },
+  "server/src/gtfs/geo.js": {
+    "mtime": 1786193037.9043005,
+    "ast_hash": "a5f41da71cd61ed4ab3e299880f37f4c",
+    "semantic_hash": "a5f41da71cd61ed4ab3e299880f37f4c"
+  },
+  "server/src/gtfs/parse.js": {
+    "mtime": 1786192914.1500947,
+    "ast_hash": "3fb50a6a66b915edfc2371956db638b1",
+    "semantic_hash": "3fb50a6a66b915edfc2371956db638b1"
+  },
+  "server/src/gtfs/store.js": {
+    "mtime": 1786293273.6154206,
+    "ast_hash": "7a85290b8545d18ef4171426944eb265",
+    "semantic_hash": "7a85290b8545d18ef4171426944eb265"
+  },
+  "server/src/gtfs/typed-arrays.js": {
+    "mtime": 1786192588.5464182,
+    "ast_hash": "6ea445e55ea60e037c9e9e517827318f",
+    "semantic_hash": "6ea445e55ea60e037c9e9e517827318f"
+  },
+  "server/src/html.js": {
+    "mtime": 1786015034.7440262,
+    "ast_hash": "728be8e681ac982eeb15c1c263329d60",
+    "semantic_hash": "728be8e681ac982eeb15c1c263329d60"
+  },
+  "server/src/http.js": {
+    "mtime": 1786208594.1168938,
+    "ast_hash": "ec9ce8fe1a054bf6d8f53d02edff52d0",
+    "semantic_hash": "ec9ce8fe1a054bf6d8f53d02edff52d0"
+  },
+  "server/src/klosok/fetch.js": {
+    "mtime": 1786291667.7811005,
+    "ast_hash": "af3087742ff0c7795140ab2f9919ede1",
+    "semantic_hash": "af3087742ff0c7795140ab2f9919ede1"
+  },
+  "server/src/klosok/realtime.js": {
+    "mtime": 1786229630.4912798,
+    "ast_hash": "55051c94111cc7166a806cb9cafe44e6",
+    "semantic_hash": "55051c94111cc7166a806cb9cafe44e6"
+  },
+  "server/src/klosok/service.js": {
+    "mtime": 1786227732.0291154,
+    "ast_hash": "2cff82f48cb95275c4e916621e752be5",
+    "semantic_hash": "2cff82f48cb95275c4e916621e752be5"
+  },
+  "server/src/lines.js": {
+    "mtime": 1785953456.8716192,
+    "ast_hash": "4b4a977ac448c29244c6e920e6a7744d",
+    "semantic_hash": "4b4a977ac448c29244c6e920e6a7744d"
+  },
+  "server/src/logger.js": {
+    "mtime": 1785953456.871822,
+    "ast_hash": "cff5aaecc4b34437e00585929fbe9230",
+    "semantic_hash": "cff5aaecc4b34437e00585929fbe9230"
+  },
+  "server/src/metrics.js": {
+    "mtime": 1786197651.3389335,
+    "ast_hash": "889710a9957b93c799275116b1d062cb",
+    "semantic_hash": "889710a9957b93c799275116b1d062cb"
+  },
+  "server/src/open-data.js": {
+    "mtime": 1786207757.8409266,
+    "ast_hash": "9923186a818dbf973217ad4e38510ba5",
+    "semantic_hash": "9923186a818dbf973217ad4e38510ba5"
+  },
+  "server/src/progress.js": {
+    "mtime": 1786207583.8046792,
+    "ast_hash": "bf9bf16929c102a665d0bcf62541f92c",
+    "semantic_hash": "bf9bf16929c102a665d0bcf62541f92c"
+  },
+  "server/src/realtime-departures.js": {
+    "mtime": 1786270563.1903539,
+    "ast_hash": "e5fec5e820d910a7bb03e8652fff5daf",
+    "semantic_hash": "e5fec5e820d910a7bb03e8652fff5daf"
+  },
+  "server/src/routes.js": {
+    "mtime": 1786293273.8482833,
+    "ast_hash": "58f0503c470b305a47d78c4aabcb505e",
+    "semantic_hash": "58f0503c470b305a47d78c4aabcb505e"
+  },
+  "server/src/search.js": {
+    "mtime": 1786292560.6813655,
+    "ast_hash": "8d608a59ccb5910a11e1ced064e9ee47",
+    "semantic_hash": "8d608a59ccb5910a11e1ced064e9ee47"
+  },
+  "server/src/stats.js": {
+    "mtime": 1786106810.8690083,
+    "ast_hash": "e81c346e42a727e7e39037c79d4aa7c0",
+    "semantic_hash": "e81c346e42a727e7e39037c79d4aa7c0"
+  },
+  "server/src/vehicle-detail-cache.js": {
+    "mtime": 1786201548.3768234,
+    "ast_hash": "3d0b7ccd079b7ff22f0138d8c02e89b3",
+    "semantic_hash": "3d0b7ccd079b7ff22f0138d8c02e89b3"
+  },
+  "server/src/vehicles.js": {
+    "mtime": 1786291667.7889254,
+    "ast_hash": "8978ac4d223024d88b8092cd7142b312",
+    "semantic_hash": "8978ac4d223024d88b8092cd7142b312"
+  },
+  "server/test-debug.js": {
+    "mtime": 1786293799.093271,
+    "ast_hash": "e42e691399732a725c58343d7a677f75",
+    "semantic_hash": "e42e691399732a725c58343d7a677f75"
+  },
+  "server/test/admin.test.js": {
+    "mtime": 1786194141.507446,
+    "ast_hash": "7404d96272b7c8e726192f0ba50067f1",
+    "semantic_hash": "7404d96272b7c8e726192f0ba50067f1"
+  },
+  "server/test/alerts.test.js": {
+    "mtime": 1786291667.791234,
+    "ast_hash": "247b160960907053cdc38f1f5986a500",
+    "semantic_hash": "247b160960907053cdc38f1f5986a500"
+  },
+  "server/test/api.test.js": {
+    "mtime": 1786291667.7938647,
+    "ast_hash": "23c3050eee1f26a4b464bd72a055085c",
+    "semantic_hash": "23c3050eee1f26a4b464bd72a055085c"
+  },
+  "server/test/archive.test.js": {
+    "mtime": 1785953456.8740065,
+    "ast_hash": "4e30d1fe990bdaddf2770210efb07b1a",
+    "semantic_hash": "4e30d1fe990bdaddf2770210efb07b1a"
+  },
+  "server/test/benchmark-describe.test.js": {
+    "mtime": 1786221526.6124842,
+    "ast_hash": "3d3991834c5c1be55fcda0df18a0607e",
+    "semantic_hash": "3d3991834c5c1be55fcda0df18a0607e"
+  },
+  "server/test/boot.test.js": {
+    "mtime": 1786229630.4932282,
+    "ast_hash": "5dc788fc8ad4bf6418337f9eed6701c1",
+    "semantic_hash": "5dc788fc8ad4bf6418337f9eed6701c1"
+  },
+  "server/test/catalogue.test.js": {
+    "mtime": 1785953456.8745255,
+    "ast_hash": "60928353b560fcc96c0cdaa3b64559ff",
+    "semantic_hash": "60928353b560fcc96c0cdaa3b64559ff"
+  },
+  "server/test/departure-live.test.js": {
+    "mtime": 1786285665.3115122,
+    "ast_hash": "519d8350d316c053d45e295302922c9b",
+    "semantic_hash": "519d8350d316c053d45e295302922c9b"
+  },
+  "server/test/discovery.test.js": {
+    "mtime": 1785953456.8747518,
+    "ast_hash": "fd12d8b5e34f9b45bc8ebeb15ba72824",
+    "semantic_hash": "fd12d8b5e34f9b45bc8ebeb15ba72824"
+  },
+  "server/test/e2e-regression.test.js": {
+    "mtime": 1786291667.7955284,
+    "ast_hash": "01d82564bcaf729be12edd8aabcba833",
+    "semantic_hash": "01d82564bcaf729be12edd8aabcba833"
+  },
+  "server/test/e2e-scenario.test.js": {
+    "mtime": 1786218234.844696,
+    "ast_hash": "96cf5ccbdb02de5bef089b54dff11fc6",
+    "semantic_hash": "96cf5ccbdb02de5bef089b54dff11fc6"
+  },
+  "server/test/fixtures/gtfs.js": {
+    "mtime": 1786201690.9617383,
+    "ast_hash": "57f53669f9b1e9106e1c4e9e70a99153",
+    "semantic_hash": "57f53669f9b1e9106e1c4e9e70a99153"
+  },
+  "server/test/fixtures/klosok-gtfs.js": {
+    "mtime": 1786126423.4681778,
+    "ast_hash": "d496ab0965e08d0fdbfeed5b0bfa4376",
+    "semantic_hash": "d496ab0965e08d0fdbfeed5b0bfa4376"
+  },
+  "server/test/gtfs.test.js": {
+    "mtime": 1786293456.1872673,
+    "ast_hash": "93944b897af9577c4cdf6cf495af2669",
+    "semantic_hash": "93944b897af9577c4cdf6cf495af2669"
+  },
+  "server/test/http.test.js": {
+    "mtime": 1786016296.8942006,
+    "ast_hash": "4139cce7c0e3db1baad43623f3708cc6",
+    "semantic_hash": "4139cce7c0e3db1baad43623f3708cc6"
+  },
+  "server/test/klosok-expiry.test.js": {
+    "mtime": 1786229630.4956653,
+    "ast_hash": "bc74e107be11bfeac49df874276f1031",
+    "semantic_hash": "bc74e107be11bfeac49df874276f1031"
+  },
+  "server/test/klosok-polling.test.js": {
+    "mtime": 1786223731.0067654,
+    "ast_hash": "9cec7e8ab95fd5de73dea9a261bbb1d1",
+    "semantic_hash": "9cec7e8ab95fd5de73dea9a261bbb1d1"
+  },
+  "server/test/klosok-realtime.test.js": {
+    "mtime": 1786126994.5609717,
+    "ast_hash": "ee168cfd0f4f550801cfc26b58a8ba7f",
+    "semantic_hash": "ee168cfd0f4f550801cfc26b58a8ba7f"
+  },
+  "server/test/klosok-routes.test.js": {
+    "mtime": 1786130847.0281286,
+    "ast_hash": "6a9f951f68db5c494bdc4164e778ee86",
+    "semantic_hash": "6a9f951f68db5c494bdc4164e778ee86"
+  },
+  "server/test/klosok-tls.test.js": {
+    "mtime": 1786291667.8019168,
+    "ast_hash": "2e2ce4a83a3e5741a6cc97c1ee59f58b",
+    "semantic_hash": "2e2ce4a83a3e5741a6cc97c1ee59f58b"
+  },
+  "server/test/lines.test.js": {
+    "mtime": 1785953456.8756573,
+    "ast_hash": "7f5586028dda0c9de867d12ea1eac995",
+    "semantic_hash": "7f5586028dda0c9de867d12ea1eac995"
+  },
+  "server/test/locations-cache.test.js": {
+    "mtime": 1786219495.956898,
+    "ast_hash": "027bed37e0ce4e33f7751f078769ed2e",
+    "semantic_hash": "027bed37e0ce4e33f7751f078769ed2e"
+  },
+  "server/test/map.test.js": {
+    "mtime": 1786038161.6811106,
+    "ast_hash": "3e7840438837588f415c3f11ece9b755",
+    "semantic_hash": "3e7840438837588f415c3f11ece9b755"
+  },
+  "server/test/metrics.test.js": {
+    "mtime": 1786197882.6159801,
+    "ast_hash": "bc14cbf8d2fa014fad661f451de696c6",
+    "semantic_hash": "bc14cbf8d2fa014fad661f451de696c6"
+  },
+  "server/test/open-data.test.js": {
+    "mtime": 1786211308.4267578,
+    "ast_hash": "6d4e7868458d5ae9ab90757abf6eea66",
+    "semantic_hash": "6d4e7868458d5ae9ab90757abf6eea66"
+  },
+  "server/test/progress.test.js": {
+    "mtime": 1786209053.4491844,
+    "ast_hash": "404f2428d83bc8c29353cbd56d4aceab",
+    "semantic_hash": "404f2428d83bc8c29353cbd56d4aceab"
+  },
+  "server/test/refresh.test.js": {
+    "mtime": 1786213899.9055386,
+    "ast_hash": "31365a80d95a5b660a4df359bd8472e4",
+    "semantic_hash": "31365a80d95a5b660a4df359bd8472e4"
+  },
+  "server/test/revision-comparison.test.js": {
+    "mtime": 1786229630.4964817,
+    "ast_hash": "f3ed88a7de83a18c9d724b1871c9e393",
+    "semantic_hash": "f3ed88a7de83a18c9d724b1871c9e393"
+  },
+  "server/test/shape-cache.test.js": {
+    "mtime": 1786218786.3474395,
+    "ast_hash": "2b4686186c100379410a4fad51b31349",
+    "semantic_hash": "2b4686186c100379410a4fad51b31349"
+  },
+  "server/test/source-health.test.js": {
+    "mtime": 1786208733.7300541,
+    "ast_hash": "dee3d03620d1745d8d5292570364581a",
+    "semantic_hash": "dee3d03620d1745d8d5292570364581a"
+  },
+  "server/test/stats.test.js": {
+    "mtime": 1786107052.084733,
+    "ast_hash": "dfb83a08e11c0fc7472e570bf3f453d3",
+    "semantic_hash": "dfb83a08e11c0fc7472e570bf3f453d3"
+  },
+  "server/test/typed-arrays.test.js": {
+    "mtime": 1786192937.8955135,
+    "ast_hash": "27c32647358b841dfe2b781124bad270",
+    "semantic_hash": "27c32647358b841dfe2b781124bad270"
+  },
+  "server/test/vehicle-detail-cache.test.js": {
+    "mtime": 1786205409.4464498,
+    "ast_hash": "7d44d173423fcb81ac15dafe9ffd9c64",
+    "semantic_hash": "7d44d173423fcb81ac15dafe9ffd9c64"
+  },
+  "server/test/vehicles.test.js": {
+    "mtime": 1786223036.5156865,
+    "ast_hash": "f260a136d35c16bd80521bd561e3f4f0",
+    "semantic_hash": "f260a136d35c16bd80521bd561e3f4f0"
+  },
+  "wroclive/.claude/settings.json": {
+    "mtime": 1785963315.0873008,
+    "ast_hash": "dc580fca35a0e98ed20777ede5e545a1",
+    "semantic_hash": "dc580fca35a0e98ed20777ede5e545a1"
+  },
+  "wroclive/app.json": {
+    "mtime": 1786046651.920917,
+    "ast_hash": "bd6edbe2bb4a70247b2f3b7d25f474a3",
+    "semantic_hash": "bd6edbe2bb4a70247b2f3b7d25f474a3"
+  },
+  "wroclive/eas.json": {
+    "mtime": 1786046333.9822552,
+    "ast_hash": "329568d86b9dce9d79ae9b43dfe6949f",
+    "semantic_hash": "329568d86b9dce9d79ae9b43dfe6949f"
+  },
+  "wroclive/eslint.config.js": {
+    "mtime": 1785967497.462863,
+    "ast_hash": "b713dd66aa3ad59ed5098d7b9f8dc202",
+    "semantic_hash": "b713dd66aa3ad59ed5098d7b9f8dc202"
+  },
+  "wroclive/package.json": {
+    "mtime": 1786291667.827111,
+    "ast_hash": "7ace364b9c7cd9445cd91b542f17135f",
+    "semantic_hash": "7ace364b9c7cd9445cd91b542f17135f"
+  },
+  "wroclive/scripts/reset-project.js": {
+    "mtime": 1785963258.7339644,
+    "ast_hash": "ca9d75cf60f51e7a2d67fd08ddfb8275",
+    "semantic_hash": "ca9d75cf60f51e7a2d67fd08ddfb8275"
+  },
+  "wroclive/src/app/_layout.tsx": {
+    "mtime": 1786295021.8106768,
+    "ast_hash": "e20e51b4202d8b93085f1ddc2a2ba70b",
+    "semantic_hash": "e20e51b4202d8b93085f1ddc2a2ba70b"
+  },
+  "wroclive/src/app/alerts.tsx": {
+    "mtime": 1786291667.831399,
+    "ast_hash": "6e90faaafcd62a1de7218e70fdac8ae8",
+    "semantic_hash": "6e90faaafcd62a1de7218e70fdac8ae8"
+  },
+  "wroclive/src/app/index.tsx": {
+    "mtime": 1786295078.1431124,
+    "ast_hash": "68f6ba6892e0b0af788b979dc6948522",
+    "semantic_hash": "68f6ba6892e0b0af788b979dc6948522"
+  },
+  "wroclive/src/app/lines.tsx": {
+    "mtime": 1786295354.755844,
+    "ast_hash": "9cd4834802882d9ed39c07f0ae5832a2",
+    "semantic_hash": "9cd4834802882d9ed39c07f0ae5832a2"
+  },
+  "wroclive/src/app/search.tsx": {
+    "mtime": 1786294741.897376,
+    "ast_hash": "f7c87ac9baf3bc8593e98045b64db219",
+    "semantic_hash": "f7c87ac9baf3bc8593e98045b64db219"
+  },
+  "wroclive/src/app/settings.tsx": {
+    "mtime": 1786291996.0854247,
+    "ast_hash": "d719f5ba0e3b2bdf35c07509fabc4a22",
+    "semantic_hash": "d719f5ba0e3b2bdf35c07509fabc4a22"
+  },
+  "wroclive/src/components/animated-icon.tsx": {
+    "mtime": 1785963258.785035,
+    "ast_hash": "46cea5b4aaa994fa61f8a3d1574b2ff8",
+    "semantic_hash": "46cea5b4aaa994fa61f8a3d1574b2ff8"
+  },
+  "wroclive/src/components/animated-icon.web.tsx": {
+    "mtime": 1785963258.7855942,
+    "ast_hash": "2defa175163e104a6e2232436fa77e30",
+    "semantic_hash": "2defa175163e104a6e2232436fa77e30"
+  },
+  "wroclive/src/components/apple-map.ios.tsx": {
+    "mtime": 1786295063.4558606,
+    "ast_hash": "71ab2324ad1f737db23f11ac80a7e6b6",
+    "semantic_hash": "71ab2324ad1f737db23f11ac80a7e6b6"
+  },
+  "wroclive/src/components/apple-map.tsx": {
+    "mtime": 1785968585.186429,
+    "ast_hash": "2641cfef4f4d1093d5774f451fd32846",
+    "semantic_hash": "2641cfef4f4d1093d5774f451fd32846"
+  },
+  "wroclive/src/components/external-link.tsx": {
+    "mtime": 1785963258.7878299,
+    "ast_hash": "a71bdc8e0bd55812a1e97662ade442d1",
+    "semantic_hash": "a71bdc8e0bd55812a1e97662ade442d1"
+  },
+  "wroclive/src/components/glass.tsx": {
+    "mtime": 1785968197.8786461,
+    "ast_hash": "1622893bfce1f56de40b3b57501d6245",
+    "semantic_hash": "1622893bfce1f56de40b3b57501d6245"
+  },
+  "wroclive/src/components/hint-row.tsx": {
+    "mtime": 1785963258.7881474,
+    "ast_hash": "1ac80baf6b0a5c3d8c1ea371d5a0dbc5",
+    "semantic_hash": "1ac80baf6b0a5c3d8c1ea371d5a0dbc5"
+  },
+  "wroclive/src/components/line-badge.tsx": {
+    "mtime": 1785971593.136609,
+    "ast_hash": "8cb85ffb3053abbbe70e8adedce7cf5c",
+    "semantic_hash": "8cb85ffb3053abbbe70e8adedce7cf5c"
+  },
+  "wroclive/src/components/live-map.tsx": {
+    "mtime": 1786194379.9976127,
+    "ast_hash": "3599b9b8a89d2d245d592abe252d2afb",
+    "semantic_hash": "3599b9b8a89d2d245d592abe252d2afb"
+  },
+  "wroclive/src/components/live-map.types.ts": {
+    "mtime": 1786014696.4005725,
+    "ast_hash": "4efd64fd12ef70ed34b7045effcbea26",
+    "semantic_hash": "4efd64fd12ef70ed34b7045effcbea26"
+  },
+  "wroclive/src/components/live-map.web.tsx": {
+    "mtime": 1786014698.9404638,
+    "ast_hash": "913b83cdf5dabc199ae8b93a429c7775",
+    "semantic_hash": "913b83cdf5dabc199ae8b93a429c7775"
+  },
+  "wroclive/src/components/map-surface.types.ts": {
+    "mtime": 1786295062.3695765,
+    "ast_hash": "913c1b694c6c67307010be8cc3d0f4b3",
+    "semantic_hash": "913c1b694c6c67307010be8cc3d0f4b3"
+  },
+  "wroclive/src/components/map-view.ios.tsx": {
+    "mtime": 1786192914.1552181,
+    "ast_hash": "0d95271645106cc2873df6221440179a",
+    "semantic_hash": "0d95271645106cc2873df6221440179a"
+  },
+  "wroclive/src/components/map-view.tsx": {
+    "mtime": 1786192914.1558034,
+    "ast_hash": "3cd7098911b20b2a619e69f0f484ccfc",
+    "semantic_hash": "3cd7098911b20b2a619e69f0f484ccfc"
+  },
+  "wroclive/src/components/map-view.web.tsx": {
+    "mtime": 1785973679.066073,
+    "ast_hash": "f57f539339488a87976363462b779324",
+    "semantic_hash": "f57f539339488a87976363462b779324"
+  },
+  "wroclive/src/components/modal-screen.tsx": {
+    "mtime": 1786028659.348212,
+    "ast_hash": "7d134e574ee5b5e43af7ef37e6329a45",
+    "semantic_hash": "7d134e574ee5b5e43af7ef37e6329a45"
+  },
+  "wroclive/src/components/native-map.tsx": {
+    "mtime": 1786295062.7194078,
+    "ast_hash": "dbf72f282c7aba96aa5ba4e12088ef2b",
+    "semantic_hash": "dbf72f282c7aba96aa5ba4e12088ef2b"
+  },
+  "wroclive/src/components/osm-map.tsx": {
+    "mtime": 1786295063.1011746,
+    "ast_hash": "e99d90b1140026c88354feff13cd9c0a",
+    "semantic_hash": "e99d90b1140026c88354feff13cd9c0a"
+  },
+  "wroclive/src/components/sheet.tsx": {
+    "mtime": 1786295062.0229106,
+    "ast_hash": "a2841891107814d0ac59662ec2c9275a",
+    "semantic_hash": "a2841891107814d0ac59662ec2c9275a"
+  },
+  "wroclive/src/components/stop-details.tsx": {
+    "mtime": 1786293286.6157055,
+    "ast_hash": "c24ac7aaa5dfc73056c6fe7c7551c098",
+    "semantic_hash": "c24ac7aaa5dfc73056c6fe7c7551c098"
+  },
+  "wroclive/src/components/themed-text.tsx": {
+    "mtime": 1786291668.1188068,
+    "ast_hash": "73dca33582f04657e7f1ba8f2245dcda",
+    "semantic_hash": "73dca33582f04657e7f1ba8f2245dcda"
+  },
+  "wroclive/src/components/themed-view.tsx": {
+    "mtime": 1785963258.7896829,
+    "ast_hash": "f935dbbcf5a5067a417ea7b329727653",
+    "semantic_hash": "f935dbbcf5a5067a417ea7b329727653"
+  },
+  "wroclive/src/components/ui/collapsible.tsx": {
+    "mtime": 1785963258.7871723,
+    "ast_hash": "24105f00e6631a1cb1daeaef9d4aa808",
+    "semantic_hash": "24105f00e6631a1cb1daeaef9d4aa808"
+  },
+  "wroclive/src/components/vehicle-details.tsx": {
+    "mtime": 1786108188.0127468,
+    "ast_hash": "877226154faa3e8ccc92da23d94fc08b",
+    "semantic_hash": "877226154faa3e8ccc92da23d94fc08b"
+  },
+  "wroclive/src/components/web-badge.tsx": {
+    "mtime": 1785963258.7901506,
+    "ast_hash": "6d02b3c146c2ed6a3d3b7b8764e17602",
+    "semantic_hash": "6d02b3c146c2ed6a3d3b7b8764e17602"
+  },
+  "wroclive/src/constants/theme.ts": {
+    "mtime": 1786295061.647686,
+    "ast_hash": "4ca8b518bc036832725be5ef6ae35811",
+    "semantic_hash": "4ca8b518bc036832725be5ef6ae35811"
+  },
+  "wroclive/src/constants/themes.ts": {
+    "mtime": 1786291999.7058213,
+    "ast_hash": "83bef22ecca477dc36a5a5f269f9e0cc",
+    "semantic_hash": "83bef22ecca477dc36a5a5f269f9e0cc"
+  },
+  "wroclive/src/hooks/use-color-scheme.ts": {
+    "mtime": 1785963258.7826715,
+    "ast_hash": "6f3444fcb9c7013a839a7832be518831",
+    "semantic_hash": "6f3444fcb9c7013a839a7832be518831"
+  },
+  "wroclive/src/hooks/use-color-scheme.web.ts": {
+    "mtime": 1785967676.031923,
+    "ast_hash": "cecb9e86c6f151d230ade69b6b1a59b5",
+    "semantic_hash": "cecb9e86c6f151d230ade69b6b1a59b5"
+  },
+  "wroclive/src/hooks/use-poll.ts": {
+    "mtime": 1786014682.1789732,
+    "ast_hash": "728c1c5c546365daa9466991872be43c",
+    "semantic_hash": "728c1c5c546365daa9466991872be43c"
+  },
+  "wroclive/src/hooks/use-theme.ts": {
+    "mtime": 1786291668.1219118,
+    "ast_hash": "50aeb257ed5cb93040458df4f5636bdf",
+    "semantic_hash": "50aeb257ed5cb93040458df4f5636bdf"
+  },
+  "wroclive/src/lib/alert-order.ts": {
+    "mtime": 1786234787.306046,
+    "ast_hash": "dfe5bd7341c054f8c8b191297e5ed81f",
+    "semantic_hash": "dfe5bd7341c054f8c8b191297e5ed81f"
+  },
+  "wroclive/src/lib/api.ts": {
+    "mtime": 1786293286.299369,
+    "ast_hash": "0a2506fc2f31b4a1f8fbde2213c878a3",
+    "semantic_hash": "0a2506fc2f31b4a1f8fbde2213c878a3"
+  },
+  "wroclive/src/lib/config.ts": {
+    "mtime": 1786293862.4983084,
+    "ast_hash": "94d9c85ccf5f120c85ae72e114958d01",
+    "semantic_hash": "94d9c85ccf5f120c85ae72e114958d01"
+  },
+  "wroclive/src/lib/format.ts": {
+    "mtime": 1785969234.6596324,
+    "ast_hash": "3b2493cba121d70cbe8552f04cdfe730",
+    "semantic_hash": "3b2493cba121d70cbe8552f04cdfe730"
+  },
+  "wroclive/src/lib/lines.ts": {
+    "mtime": 1786226333.290255,
+    "ast_hash": "031af74f0007adfdbefe7889cb0bc4da",
+    "semantic_hash": "031af74f0007adfdbefe7889cb0bc4da"
+  },
+  "wroclive/src/lib/map-html.ts": {
+    "mtime": 1786291668.1284487,
+    "ast_hash": "a76c486be9464879eb84134aee201b45",
+    "semantic_hash": "a76c486be9464879eb84134aee201b45"
+  },
+  "wroclive/src/lib/map-intent.ts": {
+    "mtime": 1786291905.810785,
+    "ast_hash": "4c6474564a8002b656f320c60d5f2d6a",
+    "semantic_hash": "4c6474564a8002b656f320c60d5f2d6a"
+  },
+  "wroclive/src/lib/preferences.ts": {
+    "mtime": 1786291944.950707,
+    "ast_hash": "e8bd5e9b3e326ef8dc3a02d67e2ed398",
+    "semantic_hash": "e8bd5e9b3e326ef8dc3a02d67e2ed398"
+  },
+  "wroclive/src/lib/recent-stops.ts": {
+    "mtime": 1786292437.1134393,
+    "ast_hash": "4afcfa0fbbe34d9bde150d7fa9e1a993",
+    "semantic_hash": "4afcfa0fbbe34d9bde150d7fa9e1a993"
+  },
+  "wroclive/src/lib/route-progress.ts": {
+    "mtime": 1786286031.4325917,
+    "ast_hash": "485530b407f29f0a2b63818243962995",
+    "semantic_hash": "485530b407f29f0a2b63818243962995"
+  },
+  "wroclive/src/lib/selection.ts": {
+    "mtime": 1786294957.306147,
+    "ast_hash": "a62a2a2f3f3e46cb97dfbd5d52ac33a7",
+    "semantic_hash": "a62a2a2f3f3e46cb97dfbd5d52ac33a7"
+  },
+  "wroclive/src/lib/stops-api.ts": {
+    "mtime": 1786293922.9198205,
+    "ast_hash": "d99db7ed7c410bd1ff2b2064d94bcc52",
+    "semantic_hash": "d99db7ed7c410bd1ff2b2064d94bcc52"
+  },
+  "wroclive/tsconfig.json": {
+    "mtime": 1785963258.7476795,
+    "ast_hash": "6794be22dd9dd00003515895d3b4ff06",
+    "semantic_hash": "6794be22dd9dd00003515895d3b4ff06"
+  },
+  ".commandcode/taste/backend/taste.md": {
+    "mtime": 1786291667.7499537,
+    "ast_hash": "e895760679cc3024643d8b02ad887887",
+    "semantic_hash": "e895760679cc3024643d8b02ad887887"
+  },
+  ".commandcode/taste/taste.md": {
+    "mtime": 1786291667.7530384,
+    "ast_hash": "55d12164a388c1a9a20fddbc7a28ceeb",
+    "semantic_hash": "55d12164a388c1a9a20fddbc7a28ceeb"
+  },
+  ".commandcode/taste/taste/taste.md": {
+    "mtime": 1786295249.1321425,
+    "ast_hash": "0e78ea4c5e457a8a3283251abb487749",
+    "semantic_hash": "0e78ea4c5e457a8a3283251abb487749"
+  },
+  ".github/workflows/ci.yml": {
+    "mtime": 1786192914.1465507,
+    "ast_hash": "35677a8d4c54bc5093000d7e1fd0adb1",
+    "semantic_hash": "35677a8d4c54bc5093000d7e1fd0adb1"
+  },
+  ".github/workflows/upstream-watch.yml": {
+    "mtime": 1785953456.8281925,
+    "ast_hash": "e17aefdfcc5d28ce046d28892ca4efd5",
+    "semantic_hash": "e17aefdfcc5d28ce046d28892ca4efd5"
+  },
+  "AGENTS.md": {
+    "mtime": 1786192914.1473713,
+    "ast_hash": "8754147f805fee7a79f709d586d641ce",
+    "semantic_hash": "8754147f805fee7a79f709d586d641ce"
+  },
+  "CLAUDE.md": {
+    "mtime": 1786192914.1485107,
+    "ast_hash": "5c27369b226fcf2be8a6cfe52224e767",
+    "semantic_hash": "5c27369b226fcf2be8a6cfe52224e767"
+  },
+  "README.md": {
+    "mtime": 1786192914.1493893,
+    "ast_hash": "2df365ee36617cacc84615b0133a3064",
+    "semantic_hash": "2df365ee36617cacc84615b0133a3064"
+  },
+  "landing/index.html": {
+    "mtime": 1786045234.7682266,
+    "ast_hash": "97afdc1106f0df1d55a3dbfe5daa6891",
+    "semantic_hash": "97afdc1106f0df1d55a3dbfe5daa6891"
+  },
+  "landing/map.html": {
+    "mtime": 1786227952.3620377,
+    "ast_hash": "32ae0626ff98fcb5eca56a40b5a57738",
+    "semantic_hash": "32ae0626ff98fcb5eca56a40b5a57738"
+  },
+  "server/render.yaml": {
+    "mtime": 1785953456.8665602,
+    "ast_hash": "c94e053f86f9831069a423cfb571cabe",
+    "semantic_hash": "c94e053f86f9831069a423cfb571cabe"
+  },
+  "server/views/admin.html": {
+    "mtime": 1786106926.429634,
+    "ast_hash": "6b6f5f207e782bc1d7fbda314fc767e9",
+    "semantic_hash": "6b6f5f207e782bc1d7fbda314fc767e9"
+  },
+  "server/views/map.html": {
+    "mtime": 1786227877.3041248,
+    "ast_hash": "32ae0626ff98fcb5eca56a40b5a57738",
+    "semantic_hash": "32ae0626ff98fcb5eca56a40b5a57738"
+  },
+  "server/views/status.html": {
+    "mtime": 1786227941.9575677,
+    "ast_hash": "a46eeaa000d662bf8f33e15bed35de61",
+    "semantic_hash": "a46eeaa000d662bf8f33e15bed35de61"
+  },
+  "wroclive/AGENTS.md": {
+    "mtime": 1786192914.1536682,
+    "ast_hash": "8f238105d8756eec814600aa9eb469d6",
+    "semantic_hash": "8f238105d8756eec814600aa9eb469d6"
+  },
+  "wroclive/CLAUDE.md": {
+    "mtime": 1786187835.0351589,
+    "ast_hash": "5c27369b226fcf2be8a6cfe52224e767",
+    "semantic_hash": "5c27369b226fcf2be8a6cfe52224e767"
+  },
+  "wroclive/README.md": {
+    "mtime": 1786192914.1543865,
+    "ast_hash": "3acd342cba536a82b999d5530c2677cd",
+    "semantic_hash": "3acd342cba536a82b999d5530c2677cd"
+  },
+  "landing/images/Wroclive.icon/Assets/layer1_background.png": {
+    "mtime": 1786145178.354051,
+    "ast_hash": "800058b4bbd5274b7bf4606ce2f73b0f",
+    "semantic_hash": "800058b4bbd5274b7bf4606ce2f73b0f"
+  },
+  "landing/images/Wroclive.icon/Assets/layer2_pin.png": {
+    "mtime": 1786145178.354055,
+    "ast_hash": "e9d5f451d244aa376b33a65c83e24021",
+    "semantic_hash": "e9d5f451d244aa376b33a65c83e24021"
+  },
+  "landing/images/Wroclive.icon/Assets/layer3_tram.png": {
+    "mtime": 1786145178.354043,
+    "ast_hash": "829b4873fdd669dba31c826af4038041",
+    "semantic_hash": "829b4873fdd669dba31c826af4038041"
+  },
+  "landing/images/Wroclive.icon/Assets/layer4_wordmark.png": {
+    "mtime": 1786145178.354035,
+    "ast_hash": "6b0d83ad7fb6cd8d137258e753f9e884",
+    "semantic_hash": "6b0d83ad7fb6cd8d137258e753f9e884"
+  },
+  "landing/images/icon-dark.jpeg": {
+    "mtime": 1786039391.1935203,
+    "ast_hash": "437face3dc80e43cbfc776f058e41f1e",
+    "semantic_hash": "437face3dc80e43cbfc776f058e41f1e"
+  },
+  "landing/images/icon-light.jpeg": {
+    "mtime": 1786039398.5286465,
+    "ast_hash": "39af6f65e1caffa42206161706d541d3",
+    "semantic_hash": "39af6f65e1caffa42206161706d541d3"
+  },
+  "landing/images/screens1.png": {
+    "mtime": 1786036223.7055511,
+    "ast_hash": "3f6422b6c643948ef8d90556636ca48c",
+    "semantic_hash": "3f6422b6c643948ef8d90556636ca48c"
+  },
+  "landing/images/screens2.png": {
+    "mtime": 1786036237.8902395,
+    "ast_hash": "41751bc1d5baf3e08b36f897e5da5d29",
+    "semantic_hash": "41751bc1d5baf3e08b36f897e5da5d29"
+  },
+  "landing/images/screens3.png": {
+    "mtime": 1786036260.2823005,
+    "ast_hash": "ba75b4b4821bf0ae286c8cac551ffe06",
+    "semantic_hash": "ba75b4b4821bf0ae286c8cac551ffe06"
+  },
+  "wroclive/assets/images/android-icon-background.png": {
+    "mtime": 1786045682.7282689,
+    "ast_hash": "e6d84e9486a3d1f3f56124f2ef63c5d8",
+    "semantic_hash": "e6d84e9486a3d1f3f56124f2ef63c5d8"
+  },
+  "wroclive/assets/images/android-icon-foreground.png": {
+    "mtime": 1786045682.8885045,
+    "ast_hash": "ea62d7fefa61367cdc8b06eda8e4dc27",
+    "semantic_hash": "ea62d7fefa61367cdc8b06eda8e4dc27"
+  },
+  "wroclive/assets/images/android-icon-monochrome.png": {
+    "mtime": 1786045683.0567546,
+    "ast_hash": "508ab146a321de7a10f25b542ca97a45",
+    "semantic_hash": "508ab146a321de7a10f25b542ca97a45"
+  },
+  "wroclive/assets/images/favicon.png": {
+    "mtime": 1786045683.2977908,
+    "ast_hash": "21e5eca226f28f0a7159008cb70c7ca2",
+    "semantic_hash": "21e5eca226f28f0a7159008cb70c7ca2"
+  },
+  "wroclive/assets/images/icon.png": {
+    "mtime": 1786045681.7326896,
+    "ast_hash": "c1a72b0a383a7b3bf94485e3bdf3d628",
+    "semantic_hash": "c1a72b0a383a7b3bf94485e3bdf3d628"
+  },
+  "wroclive/assets/images/splash-icon.png": {
+    "mtime": 1786045683.2470005,
+    "ast_hash": "8a3c69bc790f25192f4f902ed96e2abc",
+    "semantic_hash": "8a3c69bc790f25192f4f902ed96e2abc"
+  }
+}

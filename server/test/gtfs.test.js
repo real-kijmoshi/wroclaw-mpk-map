@@ -116,6 +116,7 @@ describe('GtfsStore', () => {
       ['Świdnicka'],
       'search ignores Polish diacritics',
     );
+    assert.deepEqual(store.getLinesForStop('4'), ['4']);
   });
 
   it('finds nearby stops with real distances on both axes', () => {
@@ -140,9 +141,55 @@ describe('GtfsStore', () => {
     assert.ok(departures.every((departure) => departure.inSeconds >= 0));
 
     // Sunday morning: no WEEKDAY service runs, and the night bus is outside
-    // the default two-hour horizon.
+    // an explicitly requested two-hour horizon.
     const sunday = new Date('2026-06-14T05:00:00Z');
-    assert.deepEqual(store.getDepartures('1', { now: sunday, limit: 10 }), []);
+    assert.deepEqual(store.getDepartures('1', { now: sunday, limit: 10, horizonSeconds: 7200 }), []);
+  });
+
+  it('keeps departures on their own nearby same-name platform', () => {
+    const anchor = store.getStop('4');
+    const platformRows = store.departuresByStop.get('4');
+    store.departuresByStop.set('4', []);
+    store.stopsById.set('4-sibling', {
+      ...anchor,
+      id: '4-sibling',
+      code: '104B',
+      lat: anchor.lat + 0.0005,
+    });
+    store.departuresByStop.set('4-sibling', platformRows);
+
+    try {
+      const departures = store.getDeparturesForStop('4', {
+        now: new Date('2026-06-15T07:00:00Z'),
+        limit: 10,
+      });
+      assert.deepEqual(departures, []);
+    } finally {
+      store.departuresByStop.set('4', platformRows);
+      store.departuresByStop.delete('4-sibling');
+      store.stopsById.delete('4-sibling');
+    }
+  });
+
+  it('groups duplicate pattern records but keeps opposing platforms in search', async () => {
+    const platformStore = new GtfsStore();
+    await platformStore.build(buildFixtureZip({
+      stops: [
+        ['1', '101', 'Rynek', '51.11000', '17.03200'],
+        ['2', '102', 'Świdnicka', '51.10500', '17.03300'],
+        ['3', '103', 'Oporów', '51.08000', '16.98000'],
+        ['4', '104', 'Biskupin', '51.10000', '17.10000'],
+        ['5', '105', 'Krzyki', '51.07000', '17.03000'],
+        ['a', '24505', 'Spółdzielcza', '51.10000', '17.00000'],
+        ['b', '24534', 'Spółdzielcza', '51.10003', '17.00003'],
+        ['c', '24414', 'Spółdzielcza', '51.10022', '17.00022'],
+      ],
+    }));
+
+    const platforms = platformStore.searchStops('spoldzielcza', 10);
+    assert.equal(platforms.length, 2, 'two code areas, not three raw records');
+    assert.deepEqual(platforms[0].ids, ['a', 'b']);
+    assert.equal(platforms[1].id, 'c');
   });
 
   it('applies calendar_dates exceptions', () => {
@@ -160,6 +207,15 @@ describe('GtfsStore', () => {
     assert.equal(departures[0].line, '240');
     assert.equal(departures[0].serviceDay, 'yesterday');
     assert.equal(departures[0].departure, '01:30:00');
+  });
+
+  it('shows tomorrow’s first service after the evening timetable ends', () => {
+    const lateMonday = new Date('2026-06-15T21:30:00Z');
+    const departures = store.getDepartures('1', { now: lateMonday, limit: 10 });
+
+    assert.ok(departures.some((departure) => departure.serviceDay === 'tomorrow'));
+    assert.equal(departures[0].line, '4');
+    assert.equal(departures[0].serviceDay, 'tomorrow');
   });
 
   it('reports counts after a build', () => {
@@ -303,11 +359,12 @@ describe('stop search', () => {
     assert.equal(store.searchStops('S\u0301widnicka', 10).length, 2);
   });
 
-  it('folds only decomposable accents, not transliteration', async () => {
+  it('folds Polish ł but does not transliterate unrelated letters', async () => {
     const store = await buildWithStops(stops([['1', 'Straße'], ['2', 'Rynek']]));
-    // ł, ß and friends have no canonical decomposition, so they are kept as-is.
+    // ß is not a Polish diacritic and remains distinct from ss.
     assert.deepEqual(store.searchStops('strasse'), []);
     assert.equal(store.searchStops('straße').length, 1);
+    assert.equal(normalizeSearchText('Łowiecka'), 'lowiecka');
   });
 
   it('finds an exact match that sits late in insertion order (the old cutoff bug)', async () => {
@@ -384,12 +441,12 @@ describe('stop search', () => {
     );
   });
 
-  it('matchRank keeps ł as part of a word (unit-level regression)', () => {
+  it('matchRank keeps a folded ł as part of a word (unit-level regression)', () => {
     // Normalize both sides the same way searchStops does.
     const name = normalizeSearchText('Aleja Łowiecka');
-    assert.equal(name, 'aleja łowiecka', 'ł survives NFD + diacritic stripping');
+    assert.equal(name, 'aleja lowiecka', 'ł folds to an ordinary searchable l');
 
-    // Word-prefix, not substring: ł is a letter, so "łowiecka" is a word.
+    // Word-prefix, not substring: the folded l is still part of "lowiecka".
     assert.equal(matchRank(name, normalizeSearchText('ło')), 2);
     assert.equal(matchRank(name, normalizeSearchText('łow')), 2);
 
