@@ -19,9 +19,10 @@ import { Spacing } from '@/constants/theme';
 import { usePoll } from '@/hooks/use-poll';
 import { useTheme } from '@/hooks/use-theme';
 import { getAlerts } from '@/lib/api';
+import { orderAlertsForSelectedLines } from '@/lib/alert-order';
 import { REFRESH_MS } from '@/lib/config';
 import { formatAge } from '@/lib/format';
-import { selectionStore } from '@/lib/selection';
+import { selectionStore, useSelectedLines } from '@/lib/selection';
 
 /**
  * Service alerts, as scraped upstream.
@@ -34,6 +35,7 @@ export default function AlertsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const alerts = usePoll((signal) => getAlerts({ signal }), REFRESH_MS.alerts);
+  const selectedLines = useSelectedLines();
 
   const open = async (url: string | null) => {
     if (!url) return;
@@ -76,52 +78,63 @@ export default function AlertsScreen() {
               </ThemedText>
             </View>
           ) : (
-            alerts.data.alerts.map((alert) => (
-              <Pressable
-                key={alert.id}
-                onPress={() => open(alert.url)}
-                disabled={!alert.url}
-                accessibilityRole={alert.url ? 'link' : 'text'}
-                style={({ pressed }) => [pressed && alert.url ? styles.pressed : null]}>
-                <ThemedView type="backgroundElement" style={styles.card}>
-                  <View style={styles.cardHeader}>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {formatAge(alert.timestamp)}
-                    </ThemedText>
-                    {!!alert.url && (
-                      <Ionicons name="open-outline" size={15} color={theme.textSecondary} />
-                    )}
-                  </View>
-
-                  {!!alert.title && <ThemedText type="defaultSemiBold">{alert.title}</ThemedText>}
-
-                  {!!alert.content && alert.content !== alert.title && (
-                    <ThemedText type="small" numberOfLines={6}>
-                      {alert.content}
-                    </ThemedText>
-                  )}
-
-                  {alert.affected.length > 0 && (
-                    <View style={styles.affected}>
-                      {alert.affected.map((line) => (
-                        <Pressable
-                          key={line}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Pokaż na mapie linię ${line}`}
-                          onPress={() => {
-                            // Filter the map to that line and get out of the
-                            // way, which is the only reason to tap a badge here.
-                            selectionStore.set([line]);
-                            router.back();
-                          }}>
-                          <LineBadge line={line} type={alert.types?.[line]} size="small" />
-                        </Pressable>
-                      ))}
+            orderAlertsForSelectedLines(alerts.data.alerts, selectedLines).flatMap((section, i) => [
+              section.heading ? (
+                <ThemedText
+                  key={`heading-${i}`}
+                  type="small"
+                  themeColor="textSecondary"
+                  style={styles.sectionHeading}>
+                  {section.heading}
+                </ThemedText>
+              ) : null,
+              ...section.alerts.map((alert) => (
+                <Pressable
+                  key={alert.id}
+                  onPress={() => open(alert.url)}
+                  disabled={!alert.url}
+                  accessibilityRole={alert.url ? 'link' : 'text'}
+                  style={({ pressed }) => [pressed && alert.url ? styles.pressed : null]}>
+                  <ThemedView type="backgroundElement" style={styles.card}>
+                    <View style={styles.cardHeader}>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {formatAge(alert.timestamp)}
+                      </ThemedText>
+                      {!!alert.url && (
+                        <Ionicons name="open-outline" size={15} color={theme.textSecondary} />
+                      )}
                     </View>
-                  )}
-                </ThemedView>
-              </Pressable>
-            ))
+
+                    {!!alert.title && <ThemedText type="defaultSemiBold">{alert.title}</ThemedText>}
+
+                    {!!alert.content && alert.content !== alert.title && (
+                      <ThemedText type="small" numberOfLines={6}>
+                        {alert.content}
+                      </ThemedText>
+                    )}
+
+                    {alert.affected.length > 0 && (
+                      <View style={styles.affected}>
+                        {alert.affected.map((line) => (
+                          <Pressable
+                            key={line}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Pokaż na mapie linię ${line}`}
+                            onPress={() => {
+                              // Filter the map to that line and get out of the
+                              // way, which is the only reason to tap a badge here.
+                              selectionStore.set([line]);
+                              router.back();
+                            }}>
+                            <LineBadge line={line} type={alert.types?.[line]} size="small" />
+                          </Pressable>
+                        ))}
+                      </View>
+                    )}
+                  </ThemedView>
+                </Pressable>
+              )),
+            ])
           )}
         </ScrollView>
       )}
@@ -138,5 +151,6 @@ const styles = StyleSheet.create({
   card: { borderRadius: 18, padding: Spacing.three, gap: Spacing.two },
   cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   affected: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one, paddingTop: Spacing.one },
+  sectionHeading: { marginBottom: Spacing.one },
   pressed: { opacity: 0.7 },
 });

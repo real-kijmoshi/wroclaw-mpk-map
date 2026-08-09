@@ -16,16 +16,17 @@ import { Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePoll } from '@/hooks/use-poll';
 import { useTheme } from '@/hooks/use-theme';
-import { getDepartures, getLocations, getShape, getStopsNear, getVehicle, type Stop } from '@/lib/api';
+import { getDeparturesForStops, getLocations, getShape, getStopsNear, getVehicle, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
 import { REFRESH_MS } from '@/lib/config';
 import { plural } from '@/lib/format';
 import { colorFor } from '@/lib/lines';
+import { mapIntentStore, useMapIntent } from '@/lib/map-intent';
 import { usePreferences } from '@/lib/preferences';
 import { selectionStore, useSelectedLines } from '@/lib/selection';
 
 type Selection =
   | { kind: 'vehicle'; id: string }
-  | { kind: 'stop'; id: string; name: string }
+  | { kind: 'stop'; stop: Stop }
   | null;
 
 export default function MapScreen() {
@@ -41,7 +42,12 @@ export default function MapScreen() {
   const [selection, setSelection] = useState<Selection>(null);
   // Stored with the vehicle it belongs to, so switching selection drops the
   // old route by derivation instead of by a second render that clears it.
-  const [fetched, setFetched] = useState<{ vehicleId: string; route: MapRoute } | null>(null);
+  const [fetchedVehicle, setFetchedVehicle] = useState<{ vehicleId: string; route: MapRoute } | null>(null);
+  const [fetchedLine, setFetchedLine] = useState<{ line: string; route: MapRoute } | null>(null);
+  const [focusedLine, setFocusedLine] = useState<{ line: string; type: LineType } | null>(null);
+  // A searched vehicle must remain visible even when the currently persisted
+  // line filter deliberately excludes it.
+  const [pinnedVehicle, setPinnedVehicle] = useState<FleetVehicle | null>(null);
   const [userPosition, setUserPosition] = useState<{ lat: number; lon: number } | null>(null);
   const [nearbyStops, setNearbyStops] = useState<Stop[]>([]);
   const [locating, setLocating] = useState(false);
@@ -64,18 +70,24 @@ export default function MapScreen() {
     { key: linesKey },
   );
 
-  const vehicles = fleet.data?.locations ?? EMPTY_VEHICLES;
+  const filteredVehicles = fleet.data?.locations ?? EMPTY_VEHICLES;
+  const vehicles = useMemo(() => {
+    if (!pinnedVehicle || filteredVehicles.some((vehicle) => vehicle.id === pinnedVehicle.id)) {
+      return filteredVehicles;
+    }
+    return [pinnedVehicle, ...filteredVehicles];
+  }, [filteredVehicles, pinnedVehicle]);
 
   // Read inside effects that must not re-run on every poll.
-  const fleetRef = useRef(fleet.data);
+  const fleetRef = useRef<FleetVehicle[]>(EMPTY_VEHICLES);
   useEffect(() => {
-    fleetRef.current = fleet.data;
-  }, [fleet.data]);
+    fleetRef.current = vehicles;
+  }, [vehicles]);
 
   /* --- what is selected ---------------------------------------------------- */
 
   const vehicleId = selection?.kind === 'vehicle' ? selection.id : null;
-  const stopId = selection?.kind === 'stop' ? selection.id : null;
+  const stopId = selection?.kind === 'stop' ? selection.stop.id : null;
 
   const detail = usePoll(
     (signal) => getVehicle(vehicleId as string, { signal }),
@@ -84,7 +96,12 @@ export default function MapScreen() {
   );
 
   const departures = usePoll(
-    (signal) => getDepartures(stopId as string, { signal }),
+    (signal) => {
+      const selected = selection?.kind === 'stop'
+        ? selection.stop
+        : null;
+      return selected ? getDeparturesForStops(selected, { signal }) : Promise.reject(new Error('No stop selected'));
+    },
     REFRESH_MS.departures,
     { enabled: Boolean(stopId), key: stopId ?? '' },
   );
@@ -98,12 +115,14 @@ export default function MapScreen() {
    * both directions share the street, so position alone picks the opposite
    * direction about half the time.
    */
-  const route = fetched?.vehicleId === vehicleId ? fetched.route : null;
+  const vehicleRoute = fetchedVehicle?.vehicleId === vehicleId ? fetchedVehicle.route : null;
+  const lineRoute = fetchedLine && fetchedLine.line === focusedLine?.line ? fetchedLine.route : null;
+  const route = vehicleRoute ?? lineRoute;
 
   useEffect(() => {
     if (!vehicleId) return;
 
-    const vehicle = fleetRef.current?.locations.find((entry) => entry.id === vehicleId);
+    const vehicle = fleetRef.current.find((entry) => entry.id === vehicleId);
     if (!vehicle) return;
 
     // Abort, not a flag: a vehicle tapped in quick succession would otherwise
@@ -117,7 +136,7 @@ export default function MapScreen() {
     )
       .then((shape) => {
         if (controller.signal.aborted) return;
-        setFetched({
+        setFetchedVehicle({
           vehicleId,
           route: { points: shape.points, color: colorFor(vehicle.type), stops: shape.stops },
         });
@@ -131,13 +150,68 @@ export default function MapScreen() {
     return () => controller.abort();
   }, [vehicleId]);
 
-  const handleVehicle = useCallback((id: string) => setSelection({ kind: 'vehicle', id }), []);
-  const handleStop = useCallback(
-    (id: string, name: string) => setSelection({ kind: 'stop', id, name }),
-    [],
-  );
-  const handleBackground = useCallback(() => setSelection(null), []);
+  /** An explicit line search draws the route even before a rider picks a vehicle. */
+  useEffect(() => {
+    if (!focusedLine) return;
+
+    const controller = new AbortController();
+    getShape(focusedLine.line, {}, { signal: controller.signal })
+      .then((shape) => {
+        if (controller.signal.aborted) return;
+        setFetchedLine({
+          line: focusedLine.line,
+          route: { points: shape.points, color: colorFor(focusedLine.type), stops: shape.stops },
+        });
+      })
+      .catch(() => {
+        // The selected filter still applies if this feed snapshot has no shape.
+      });
+
+    return () => controller.abort();
+  }, [focusedLine]);
+
+  const handleVehicle = useCallback((id: string) => {
+    setFocusedLine(null);
+    setPinnedVehicle(null);
+    setSelection({ kind: 'vehicle', id });
+  }, []);
+  const handleStop = useCallback((stop: Stop) => {
+    setSelection({ kind: 'stop', stop });
+  }, []);
+  const handleBackground = useCallback(() => {
+    setSelection(null);
+    setFocusedLine(null);
+    setPinnedVehicle(null);
+  }, []);
   const closeSheet = useCallback(() => setSelection(null), []);
+
+  // A stop opened from search posts an `open-stop` intent. It is consumed
+  // here, once: the map recentres on the stop and the existing stop sheet
+  // (selection + departures poll) opens beneath it, then the intent is cleared
+  // so it is never acted on a second time.
+  const intent = useMapIntent();
+  useEffect(() => {
+    const consumed = mapIntentStore.consume();
+    if (consumed?.kind === 'open-stop') {
+      const { stop } = consumed;
+      mapRef.current?.centerOn(stop.lat, stop.lon, 16);
+      // Reacting to an external intent is a genuine side effect, not derived
+      // state, so the linter's synchronous-setState rule does not apply here.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setFocusedLine(null);
+      setPinnedVehicle(null);
+      setSelection({ kind: 'stop', stop });
+    } else if (consumed?.kind === 'open-line') {
+      setSelection(null);
+      setPinnedVehicle(null);
+      setFocusedLine({ line: consumed.line, type: consumed.type });
+    } else if (consumed?.kind === 'open-vehicle') {
+      mapRef.current?.centerOn(consumed.vehicle.lat, consumed.vehicle.lon, 16);
+      setFocusedLine(null);
+      setPinnedVehicle(consumed.vehicle);
+      setSelection({ kind: 'vehicle', id: consumed.vehicle.id });
+    }
+  }, [intent, handleStop, handleVehicle]);
 
   /* --- where the rider is --------------------------------------------------- */
 
@@ -166,6 +240,16 @@ export default function MapScreen() {
   // Turning the setting off hides them straight away, without another render
   // spent clearing the list it was holding.
   const visibleStops = showNearbyStops ? nearbyStops : EMPTY_STOPS;
+  const selectedStop = selection?.kind === 'stop' ? selection.stop : null;
+  // The selected search result is always a map marker, even with the nearby
+  // stops preference off. This also preserves the real coordinates received
+  // from search instead of replacing them with the map tap's id and name.
+  const mapStops = useMemo(() => {
+    if (!selectedStop || !Number.isFinite(selectedStop.lat) || !Number.isFinite(selectedStop.lon)) {
+      return visibleStops;
+    }
+    return [selectedStop, ...visibleStops.filter((stop) => stop.id !== selectedStop.id)];
+  }, [selectedStop, visibleStops]);
 
   /* --- status --------------------------------------------------------------- */
 
@@ -195,8 +279,9 @@ export default function MapScreen() {
         route={route}
         selectedVehicleId={vehicleId}
         follow={followSelectedVehicle}
+        fitRoute={Boolean(focusedLine)}
         userPosition={userPosition}
-        nearbyStops={visibleStops}
+        nearbyStops={mapStops}
         onSelectVehicle={handleVehicle}
         onSelectStop={handleStop}
         onBackground={handleBackground}
@@ -209,7 +294,7 @@ export default function MapScreen() {
         <View style={styles.topRow} pointerEvents="box-none">
           <Glass variant="regular" style={styles.statusPill}>
             <View style={[styles.dot, { backgroundColor: dotColor }]} />
-            <View>
+            <View style={styles.statusText}>
               <ThemedText type="smallBold" numberOfLines={1}>
                 {status.text}
               </ThemedText>
@@ -228,6 +313,16 @@ export default function MapScreen() {
               </Glass>
             </Pressable>
           )}
+
+          <Pressable
+            onPress={() => router.push('/search')}
+            accessibilityRole="button"
+            accessibilityLabel="Szukaj przystanku"
+            style={({ pressed }) => [styles.searchButton, pressed && styles.pressed]}>
+            <Glass variant="regular" interactive style={styles.searchButtonInner}>
+              <Ionicons name="search" size={20} color={theme.text} />
+            </Glass>
+          </Pressable>
         </View>
       </View>
 
@@ -294,7 +389,13 @@ function RoundButton({
       onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
-      accessibilityLabel={label}>
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: Boolean(disabled) }}
+      style={({ pressed }) => [
+        styles.roundButtonPressable,
+        pressed && !disabled && styles.pressed,
+        disabled && styles.disabled,
+      ]}>
       <View style={styles.roundButtonWrap}>
         <Glass variant="regular" interactive style={styles.roundButton}>
           <Ionicons name={icon} size={20} color={theme.text} />
@@ -349,6 +450,7 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   statusPill: {
+    flexShrink: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
@@ -357,6 +459,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     ...shadow,
   },
+  statusText: { flexShrink: 1, minWidth: 0 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   filterChip: {
     flexDirection: 'row',
@@ -367,6 +470,19 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     ...shadow,
   },
+  searchButton: {
+    marginLeft: 'auto',
+  },
+  searchButtonInner: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadow,
+  },
+  pressed: { opacity: 0.6 },
+  disabled: { opacity: 0.5 },
   sideControls: {
     position: 'absolute',
     right: Spacing.three,
@@ -376,6 +492,7 @@ const styles = StyleSheet.create({
     width: 46,
     height: 46,
   },
+  roundButtonPressable: { borderRadius: 23 },
   roundButton: {
     width: 46,
     height: 46,

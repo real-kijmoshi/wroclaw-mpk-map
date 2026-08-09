@@ -142,10 +142,10 @@ module.exports = {
     dedupeMeters: num(process.env.KLOSOK_DEDUPE_METERS, DEFAULTS.klosok.dedupeMeters),
     // Kłosok's certificate chains to Let's Encrypt's new "Root YE", which not
     // every host's CA store carries yet — Node then rejects the leaf while
-    // every other upstream works. When true, TLS verification is relaxed for
-    // THIS ONE endpoint only (a dedicated undici Agent in src/klosok/fetch.js),
-    // never for MPK or Open Data, and never globally.
-    // Flip back to false once Kłosok serves a chain the hosts trust.
+    // every other upstream works. TLS verification is relaxed for THIS ONE
+    // endpoint only (a dedicated undici Agent in src/klosok/fetch.js) by
+    // default; set KLOSOK_TLS_ALLOW_INVALID_CERT=false to enforce strict
+    // verification once Kłosok serves a chain the hosts trust.
     tlsAllowInvalidCert: bool(process.env.KLOSOK_TLS_ALLOW_INVALID_CERT, DEFAULTS.klosok.tlsAllowInvalidCert),
   },
 

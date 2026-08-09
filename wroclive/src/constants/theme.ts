@@ -81,12 +81,4 @@ export const Spacing = {
   six: 64,
 } as const;
 
-/**
- * How much room the tab bar takes at the bottom of a screen.
- *
- * The web build draws its own floating bar over the content, so anything that
- * sits at the bottom there — a scroll list's last row, the sheet — has to
- * leave room for it or it ends up underneath.
- */
-export const BottomTabInset = Platform.select({ ios: 50, android: 80, web: 72 }) ?? 0;
 export const MaxContentWidth = 800;

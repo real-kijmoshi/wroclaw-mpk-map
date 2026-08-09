@@ -5,7 +5,23 @@ import { StyleSheet } from 'react-native';
 
 import type { MapSurfaceHandle, MapSurfaceProps } from './map-surface.types';
 import { colorFor } from '@/lib/lines';
+import { BACKWARD_TOLERANCE_METERS, projectProgress, splitRoute, type RouteProgress, type RouteSplit } from '@/lib/route-progress';
 import { WROCLAW_CENTER } from '@/lib/map-html';
+
+/**
+ * MapKit polylines expose `color` and `width` but no opacity, so the dimmed
+ * travelled segment is the route colour with alpha baked into an rgba string,
+ * which RN's colour pipeline turns into a native colour.
+ */
+function fadeColor(hex: string, alpha: number): string {
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  const num = parseInt(h, 16);
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
 const INITIAL_CAMERA = {
   coordinates: { latitude: WROCLAW_CENTER.lat, longitude: WROCLAW_CENTER.lon },
@@ -52,6 +68,7 @@ export const AppleMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function A
     dark,
     vehicles,
     route,
+    selectedVehicleId,
     userPosition,
     nearbyStops,
     onSelectVehicle,
@@ -104,17 +121,65 @@ export const AppleMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function A
     return [...stops, ...fleet];
   }, [vehicles, route, nearbyStops, dark]);
 
+  const progressRef = useRef<{ vehicleId: string; progress: RouteProgress } | null>(null);
+
   const polylines = useMemo<NonNullable<AppleMapsTypes.MapProps['polylines']>>(() => {
     if (!route?.points.length) return [];
+
+    const selected = selectedVehicleId
+      ? (vehicles.find((v) => v.id === selectedVehicleId) ?? null)
+      : null;
+    let split: RouteSplit | null = null;
+    if (selectedVehicleId && selected && Number.isFinite(selected.lat) && Number.isFinite(selected.lon)) {
+      const prev = progressRef.current?.vehicleId === selectedVehicleId
+        ? progressRef.current.progress
+        : null;
+      const projected = projectProgress(
+        route.points,
+        selected.lat,
+        selected.lon,
+        prev ? { segmentIndex: prev.segmentIndex, alongMeters: prev.alongMeters } : undefined,
+      );
+      if (projected) {
+        if (!prev || projected.alongMeters >= prev.alongMeters - BACKWARD_TOLERANCE_METERS) {
+          progressRef.current = { vehicleId: selectedVehicleId, progress: projected };
+          split = splitRoute(route.points, projected);
+        } else {
+          split = splitRoute(route.points, prev);
+        }
+      } else {
+        progressRef.current = null;
+      }
+    } else {
+      progressRef.current = null;
+    }
+
+    if (!split) {
+      return [
+        {
+          id: 'route',
+          coordinates: route.points.map(function (p) { return { latitude: p[0], longitude: p[1] }; }),
+          color: route.color,
+          width: 6,
+        },
+      ];
+    }
+
     return [
       {
-        id: 'route',
-        coordinates: route.points.map(([latitude, longitude]) => ({ latitude, longitude })),
+        id: 'route-travelled',
+        coordinates: split.travelled.map(function (p) { return { latitude: p[0], longitude: p[1] }; }),
+        color: fadeColor(route.color, 0.3),
+        width: 6,
+      },
+      {
+        id: 'route-remaining',
+        coordinates: split.remaining.map(function (p) { return { latitude: p[0], longitude: p[1] }; }),
         color: route.color,
         width: 6,
       },
     ];
-  }, [route]);
+  }, [route, vehicles, selectedVehicleId]);
 
   const handleAnnotation = useCallback(
     (annotation: AppleMapsTypes.Annotation) => {
@@ -124,10 +189,18 @@ export const AppleMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function A
         return;
       }
       if (id.startsWith('s:')) {
-        onSelectStop(id.slice(2), annotation.title ?? '');
+        const stopId = id.slice(2);
+        onSelectStop(
+          (route?.stops ?? nearbyStops).find((stop) => stop.id === stopId) ?? {
+            id: stopId,
+            name: annotation.title ?? '',
+            lat: 0,
+            lon: 0,
+          },
+        );
       }
     },
-    [onSelectVehicle, onSelectStop],
+    [nearbyStops, onSelectVehicle, onSelectStop, route],
   );
 
   // After the hooks, never before them. Nothing should reach this component

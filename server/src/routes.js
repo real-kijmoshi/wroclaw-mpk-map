@@ -10,6 +10,7 @@ const { VehicleDetailCache } = require('./vehicle-detail-cache');
 const { simplify } = require('./gtfs/geo');
 const { CATEGORIES } = require('./lines');
 const { describeVehicle } = require('./progress');
+const { enrichDepartures } = require('./realtime-departures');
 
 const shapeCache = new LruCache(config.cache.shapeEntries);
 // One entry is one (generation, revision, vehicle, limit, history) detail
@@ -543,10 +544,11 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt 
     if (!stop) return res.status(404).json({ error: 'Stop not found', id: req.params.id });
 
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 20, 100);
-    const withinMinutes = Math.min(Number.parseInt(req.query.within, 10) || 120, 1440);
+    const withinMinutes = Math.min(Number.parseInt(req.query.within, 10) || 1440, 1440);
+    const departures = gtfs.getDeparturesForStop(stop.id, { limit, horizonSeconds: withinMinutes * 60 });
     return res.json({
-      stop,
-      departures: gtfs.getDepartures(stop.id, { limit, horizonSeconds: withinMinutes * 60 }),
+      stop: { ...stop, lines: gtfs.getLinesForStop(stop.id) },
+      departures: enrichDepartures(departures, stop.id, vehicles),
     });
   });
 

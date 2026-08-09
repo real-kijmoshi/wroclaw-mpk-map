@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
-import { Platform, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
@@ -11,7 +11,7 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Glass } from './glass';
-import { BottomTabInset, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 const SPRING = { damping: 22, stiffness: 220, mass: 0.7 } as const;
@@ -62,9 +62,6 @@ export function Sheet({ visible, onClose, children, peekHeight = 300 }: SheetPro
   const [measured, setMeasured] = useState(0);
   const height = measured > 0 ? measured : viewport.height;
 
-  // The native tab bars sit below the screen the sheet lives in; the web one
-  // floats over it, so only there does the sheet have to leave room.
-  const dockInset = Platform.OS === 'web' ? BottomTabInset : 0;
   // The same fraction the style below uses, so the drag maths and the drawn
   // box cannot disagree.
   const sheetHeight = height * SHEET_FRACTION;
@@ -136,7 +133,7 @@ export function Sheet({ visible, onClose, children, peekHeight = 300 }: SheetPro
         <View style={styles.fill}>
           <Glass
             variant="regular"
-            style={[styles.sheet, { paddingBottom: insets.bottom + dockInset }]}>
+            style={[styles.sheet, { paddingBottom: insets.bottom }]}>
             <GestureDetector gesture={pan}>
               <View style={styles.grabberArea}>
                 <View style={[styles.grabber, { backgroundColor: theme.textSecondary }]} />

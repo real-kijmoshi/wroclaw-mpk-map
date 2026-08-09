@@ -19,12 +19,15 @@ export type MapSurfaceProps = {
   vehicles: FleetVehicle[];
   route: MapRoute;
   selectedVehicleId: string | null;
-  /** @deprecated Selection no longer moves the viewport. */
+  /** Keep the selected vehicle centred while it moves. */
   follow?: boolean;
+  /** Fit a route only when it was explicitly opened as a line. */
+  fitRoute?: boolean;
   userPosition: { lat: number; lon: number } | null;
   nearbyStops: Stop[];
   onSelectVehicle: (id: string) => void;
-  onSelectStop: (id: string, name: string) => void;
+  /** The complete record keeps a platform's ids and coordinates intact. */
+  onSelectStop: (stop: Stop) => void;
   onBackground: () => void;
 };
 

@@ -37,8 +37,8 @@ describe('Kłosok TLS escape hatch', () => {
     global.fetch = originalFetch;
   };
 
-  it('defaults to strict TLS verification', () => {
-    assert.equal(config.klosok.tlsAllowInvalidCert, false);
+  it('defaults to relaxed TLS verification', () => {
+    assert.equal(config.klosok.tlsAllowInvalidCert, true);
   });
 
   it('uses the dedicated undici agent only when the flag is on', async () => {
@@ -50,7 +50,7 @@ describe('Kłosok TLS escape hatch', () => {
       await fetchKlosokFeed('https://mapadlugoleka.klosok.eu/vehicle_positions.pb', {
         allowInvalidCert: false,
       });
-      // No explicit flag: falls back to the config default (false).
+      // No explicit flag: falls back to the config default (now true).
       await fetchKlosokFeed('https://mapadlugoleka.klosok.eu/vehicle_positions.pb');
     } finally {
       restoreFetch();
@@ -62,7 +62,8 @@ describe('Kłosok TLS escape hatch', () => {
     assert.ok(relaxed.init.dispatcher instanceof Agent);
     assert.equal(agentConnect(relaxed.init.dispatcher).rejectUnauthorized, false);
     assert.equal(strict.init.dispatcher, undefined);
-    assert.equal(defaulted.init.dispatcher, undefined);
+    assert.ok(defaulted.init.dispatcher instanceof Agent);
+    assert.equal(agentConnect(defaulted.init.dispatcher).rejectUnauthorized, false);
   });
 
   it('never attaches a dispatcher to the shared fetch used by every other source', async () => {

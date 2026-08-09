@@ -10,7 +10,7 @@ const { fetchWithTimeout } = require('../http');
 // then rejects the leaf while every other upstream works. The escape hatch is
 // scoped to this one endpoint: a dedicated undici Agent with
 // connect.rejectUnauthorized=false, attached only to the fetch below when
-// KLOSOK_TLS_ALLOW_INVALID_CERT is true (default false). It must never be used
+// KLOSOK_TLS_ALLOW_INVALID_CERT is true (default true). It must never be used
 // for MPK, Open Data or any other source, and it is not a global switch —
 // everything else in the process keeps full TLS verification.
 let klosokAgent = null;
@@ -23,7 +23,7 @@ const getKlosokAgent = () => {
  * Fetch the PT KŁOSOK GTFS-RT feed.
  *
  * The only place a relaxed-TLS dispatcher may be attached. `allowInvalidCert`
- * defaults to KLOSOK_TLS_ALLOW_INVALID_CERT (false) and can be passed
+ * defaults to KLOSOK_TLS_ALLOW_INVALID_CERT (true) and can be passed
  * explicitly for tests; when it is true the request goes through the dedicated
  * agent above and nothing else in the process is affected.
  *

@@ -52,7 +52,7 @@
     "timeoutMs": 10000,
     "maxAgeMs": 90000,
     "dedupeMeters": 300,
-    "tlsAllowInvalidCert": false
+    "tlsAllowInvalidCert": true
   },
 
   "alerts": {

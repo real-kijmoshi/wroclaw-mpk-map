@@ -261,6 +261,17 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
   var selectedId = null;
   var followId = null;
 
+  /* --- route progress: travelled vs remaining ----------------------------- */
+
+  var OFF_ROUTE_METERS = 150;
+  var BACKWARD_TOLERANCE_METERS = 80;
+  var routePoints = null;         // [lat, lon][]
+  var routeColor = null;
+  var progressState = null;       // { segmentIndex, alongMeters, projLat, projLon } | null
+  var progressVehicleId = null;   // vehicle the stored progress belongs to
+  var progressLastVehicle = null; // { lat, lon } of the last projected fix
+  var routePolylines = { halo: null, line: null, travel: null };
+
   function iconHtml(vehicle, selected) {
     var color = vehicleColorFor(vehicle.type);
     var edge = vehicleBorderColorFor(vehicle.type);
@@ -391,6 +402,10 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
       vehicleLayer.removeLayer(entry.marker);
       markers.delete(id);
     });
+
+    // The selected vehicle may have moved, so re-project its progress along the
+    // route. Guarded so the idle map does no work on every poll.
+    if (selectedId) updateRouteSplit();
   }
 
   function selectVehicle(id) {
@@ -412,21 +427,184 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
       entry.marker.setIcon(vehicleIcon(entry.vehicle, isSelected));
       entry.key = keyFor(entry.vehicle, isSelected);
     });
+
+    // A different vehicle (or a cleared selection) starts the progress state
+    // over so the last split does not bleed onto a new route.
+    if (id !== previous) resetProgress(id);
+    updateRouteSplit();
   }
 
   /* --- route and stops ---------------------------------------------------- */
 
+  function projectProgressOnRoute(points, lat, lon, previous) {
+    var EARTH_R = 6371000;
+    var DEG2RAD = Math.PI / 180;
+    var n = points.length;
+    if (n < 2) return null;
+
+    var lat0 = points[0][0];
+    var lon0 = points[0][1];
+    var cosLat0 = Math.cos(lat0 * DEG2RAD);
+    var scaleX = cosLat0 * EARTH_R * DEG2RAD;
+    var scaleY = EARTH_R * DEG2RAD;
+
+    function toLocal(p) {
+      return { x: (p[1] - lon0) * scaleX, y: (p[0] - lat0) * scaleY };
+    }
+    function fromLocal(p) {
+      return [lat0 + p.y / scaleY, lon0 + p.x / scaleX];
+    }
+
+    var local = [];
+    var along = [];
+    for (var i = 0; i < n; i++) {
+      local[i] = toLocal(points[i]);
+      along[i] = i > 0 ? along[i - 1] + Math.hypot(local[i].x - local[i - 1].x, local[i].y - local[i - 1].y) : 0;
+    }
+
+    var vx = (lon - lon0) * scaleX;
+    var vy = (lat - lat0) * scaleY;
+
+    function projectSegment(i) {
+      var a = local[i];
+      var b = local[i + 1];
+      var abx = b.x - a.x;
+      var aby = b.y - a.y;
+      var len2 = abx * abx + aby * aby;
+      var t, px, py;
+      if (len2 === 0) {
+        t = 0; px = a.x; py = a.y;
+      } else {
+        var apx = vx - a.x;
+        var apy = vy - a.y;
+        t = (apx * abx + apy * aby) / len2;
+        if (t < 0) t = 0; else if (t > 1) t = 1;
+        px = a.x + abx * t;
+        py = a.y + aby * t;
+      }
+      var perp = Math.hypot(vx - px, vy - py);
+      var segLen = along[i + 1] - along[i];
+      return { i: i, t: t, px: px, py: py, perp: perp, along: along[i] + segLen * t };
+    }
+
+    // Prefer the segments around the last projection, which is what stops a
+    // jittery fix snapping to an earlier parallel stretch of the route.
+    var best = null;
+    if (previous) {
+      var seg = previous.segmentIndex < 0 ? 0 : previous.segmentIndex > n - 2 ? n - 2 : previous.segmentIndex;
+      var lo = Math.max(0, seg - 1);
+      var hi = Math.min(n - 2, seg + 1);
+      for (var k = lo; k <= hi; k++) {
+        var r = projectSegment(k);
+        if (!best || r.perp < best.perp) best = r;
+      }
+      if (!best || best.perp > OFF_ROUTE_METERS) best = null;
+    }
+    // Full scan as the fallback — finds a vehicle that moved past the window.
+    if (!best) {
+      best = projectSegment(0);
+      for (var j = 1; j <= n - 2; j++) {
+        var r2 = projectSegment(j);
+        if (r2.perp < best.perp) best = r2;
+      }
+    }
+    if (!best || best.perp > OFF_ROUTE_METERS) return null;
+
+    var projGeo = fromLocal({ x: best.px, y: best.py });
+    return {
+      segmentIndex: best.i,
+      fraction: best.t,
+      projLat: projGeo[0],
+      projLon: projGeo[1],
+      distanceMeters: best.perp,
+      alongMeters: best.along,
+    };
+  }
+
+  function applyLatLngs(poly, pts) {
+    if (!poly) return;
+    poly.setLatLngs((pts || []).map(function (p) { return [p[0], p[1]]; }));
+  }
+
+  function resetProgress(id) {
+    progressState = null;
+    progressVehicleId = id;
+    progressLastVehicle = null;
+  }
+
+  /**
+   * Redraw the route as either a split travelled/remaining pair (when a vehicle
+   * is selected and on the route) or as a full unsplit line. The persistent
+   * polylines are rewritten with setLatLngs rather than rebuilt, so the
+   * ten-second fleet poll never makes the line blink.
+   */
+  function updateRouteSplit() {
+    if (!routePoints || !routePolylines.line || routePoints.length < 2) return;
+
+    var entry = selectedId ? markers.get(selectedId) : null;
+    var full = !entry || !isFinite(entry.lat) || !isFinite(entry.lon);
+
+    // Nothing to do if the selected vehicle did not move since the last poll:
+    // rewriting identical geometry every ten seconds is exactly the flicker
+    // this page learned not to do with markers.
+    if (!full && progressLastVehicle &&
+        progressLastVehicle.lat === entry.lat && progressLastVehicle.lon === entry.lon) {
+      return;
+    }
+
+    if (full) {
+      routePolylines.travel.setLatLngs([]);
+      applyLatLngs(routePolylines.halo, routePoints);
+      applyLatLngs(routePolylines.line, routePoints);
+      return;
+    }
+
+    progressLastVehicle = { lat: entry.lat, lon: entry.lon };
+    var prev = progressVehicleId === selectedId ? progressState : null;
+    var prevInput = prev ? { segmentIndex: prev.segmentIndex, alongMeters: prev.alongMeters } : null;
+    var prog = projectProgressOnRoute(routePoints, entry.lat, entry.lon, prevInput);
+
+    if (!prog) {
+      // Off the route: draw it whole and wait to recover.
+      routePolylines.travel.setLatLngs([]);
+      applyLatLngs(routePolylines.halo, routePoints);
+      applyLatLngs(routePolylines.line, routePoints);
+      return;
+    }
+    if (prev && prog.alongMeters < prev.alongMeters - BACKWARD_TOLERANCE_METERS) {
+      // Implausible backwards jump from GPS jitter: hold the last split point
+      // so the travelled line never shrinks.
+      prog = prev;
+    }
+    progressState = prog;
+    progressVehicleId = selectedId;
+
+    var seg = prog.segmentIndex;
+    var proj = [prog.projLat, prog.projLon];
+    var travelled = routePoints.slice(0, seg + 1).concat([proj]);
+    var remaining = [proj].concat(routePoints.slice(seg + 1));
+    applyLatLngs(routePolylines.travel, travelled);
+    applyLatLngs(routePolylines.halo, remaining);
+    applyLatLngs(routePolylines.line, remaining);
+  }
+
   function setRoute(shape) {
     routeLayer.clearLayers();
     stopLayer.clearLayers();
+    routePoints = null;
+    resetProgress(selectedId);
+    routePolylines = { halo: null, line: null, travel: null };
     if (!shape || !shape.points || !shape.points.length) return;
 
     var color = colorFor(shape.type);
+    routeColor = color;
 
     // A halo under the line, in the opposite tone to the map rather than the
     // same one. A dark casing on a dark map hid the darker half of the palette
     // completely — line 249 in #3730A3 was a row of stop dots and no route.
-    L.polyline(shape.points, {
+    // The three polylines are created once and only their points are rewritten
+    // on each poll, so selecting a moving vehicle never rebuilds the layers.
+    routePolylines.halo = L.polyline([], {
       color: dark ? '#ffffff' : '#000000',
       weight: 9,
       opacity: dark ? 0.32 : 0.22,
@@ -434,10 +612,18 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
       lineCap: 'round',
     }).addTo(routeLayer);
 
-    L.polyline(shape.points, {
+    routePolylines.line = L.polyline([], {
       color: color,
       weight: 5.5,
       opacity: 1,
+      lineJoin: 'round',
+      lineCap: 'round',
+    }).addTo(routeLayer);
+
+    routePolylines.travel = L.polyline([], {
+      color: color,
+      weight: 5.5,
+      opacity: 0.3,
       lineJoin: 'round',
       lineCap: 'round',
     }).addTo(routeLayer);
@@ -470,6 +656,8 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
         });
       } catch (error) { /* a degenerate shape is not worth a crash */ }
     }
+
+    updateRouteSplit();
   }
 
   /** Nearby stops, shown when nothing else is selected. */

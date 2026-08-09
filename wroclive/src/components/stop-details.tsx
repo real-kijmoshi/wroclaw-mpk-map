@@ -48,12 +48,23 @@ export function StopDetails({ data, loading, error }: StopDetailsProps) {
       </View>
 
       {data.departures.length === 0 ? (
-        <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
-          Brak odjazdów w najbliższych dwóch godzinach.
-        </ThemedText>
+        <View style={styles.empty}>
+          <ThemedText type="small" themeColor="textSecondary">
+            Brak zaplanowanych odjazdów w najbliższej dobie.
+          </ThemedText>
+          {!!data.stop.lines?.length && (
+            <ThemedText type="small" themeColor="textSecondary">
+              Obsługiwane linie: {data.stop.lines.join(', ')}
+            </ThemedText>
+          )}
+        </View>
       ) : (
         data.departures.map((departure) => {
-          const eta = etaParts(departure.inSeconds);
+          const seconds =
+            departure.realtime && departure.predictedInSeconds != null
+              ? departure.predictedInSeconds
+              : departure.inSeconds;
+          const eta = etaParts(seconds);
           const scheduled = formatScheduled(departure.departure);
 
           return (
@@ -69,7 +80,14 @@ export function StopDetails({ data, loading, error }: StopDetailsProps) {
                 </ThemedText>
                 {scheduled && (
                   <ThemedText type="small" themeColor="textSecondary">
+                    {departure.serviceDay === 'tomorrow' ? 'Jutro · ' : null}
                     {scheduled}
+                    {departure.realtime ? ' · ' : null}
+                    {departure.realtime && (
+                      <ThemedText type="small" style={{ color: theme.success }}>
+                        na żywo
+                      </ThemedText>
+                    )}
                   </ThemedText>
                 )}
               </View>
@@ -97,7 +115,7 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.five },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.four },
   header: { gap: 2, paddingBottom: Spacing.two },
-  empty: { paddingVertical: Spacing.three },
+  empty: { paddingVertical: Spacing.three, gap: Spacing.one },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

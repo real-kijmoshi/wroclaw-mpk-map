@@ -5,14 +5,30 @@ import Maps, {
   Polyline,
   UrlTile,
   type MapMarkerProps,
+  type MapType,
   type Region,
 } from 'react-native-maps';
 
 import type { MapSurfaceHandle, MapSurfaceProps } from './map-surface.types';
 import type { FleetVehicle, Stop } from '@/lib/api';
 import { vehicleBorderColorFor, vehicleColorFor } from '@/lib/lines';
+import { BACKWARD_TOLERANCE_METERS, projectProgress, splitRoute, type RouteProgress, type RouteSplit } from '@/lib/route-progress';
 import { WROCLAW_CENTER } from '@/lib/map-html';
 import { usePreferences } from '@/lib/preferences';
+
+/**
+ * react-native-maps `Polyline` has no opacity prop, so the dimmed travelled
+ * segment is expressed as the route colour with alpha baked in.
+ */
+function fadeColor(hex: string, alpha: number): string {
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  const num = parseInt(h, 16);
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
 /**
  * The map, drawn by the platform.
@@ -179,7 +195,7 @@ type StopMarkerProps = {
   stop: Stop;
   tint: string;
   showLabel: boolean;
-  onPress: (id: string, name: string) => void;
+  onPress: (stop: Stop) => void;
 };
 
 const StopMarker = memo(function StopMarker({ stop, tint, showLabel, onPress }: StopMarkerProps) {
@@ -188,15 +204,20 @@ const StopMarker = memo(function StopMarker({ stop, tint, showLabel, onPress }: 
   return (
     <Marker
       coordinate={coordinate(stop.lat, stop.lon)}
-      anchor={ANCHOR_CENTRE}
+      // A label is part of the marker snapshot. Its canvas must be wide enough
+      // to measure the full name; otherwise Android clips it to the 14px dot.
+      anchor={showLabel ? STOP_LABEL_ANCHOR : ANCHOR_CENTRE}
+      centerOffset={
+        Platform.OS === 'ios' && showLabel ? APPLE_STOP_LABEL_OFFSET : undefined
+      }
       tracksViewChanges={tracking}
       onPress={(event) => {
         event.stopPropagation();
-        onPress(stop.id, stop.name);
+        onPress(stop);
       }}
       accessibilityLabel={`Przystanek ${stop.name}`}>
-      <View style={styles.stopWrapper}>
-        <View style={[styles.stopDot, { borderColor: tint }]} />
+      <View style={showLabel ? styles.stopLabelCanvas : styles.stopWrapper}>
+        <View style={[styles.stopDot, showLabel && styles.stopDotLabelled, { borderColor: tint }]} />
         {showLabel && (
           <View style={styles.stopLabel}>
             <Text style={styles.stopLabelText} numberOfLines={1}>
@@ -216,6 +237,7 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
     route,
     selectedVehicleId,
     follow = false,
+    fitRoute = false,
     userPosition,
     nearbyStops,
     onSelectVehicle,
@@ -225,7 +247,7 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
   ref,
 ) {
   const mapRef = useRef<Maps>(null);
-  const { mapProvider } = usePreferences();
+  const { mapProvider, appleMapType } = usePreferences();
   const [visibleRegion, setVisibleRegion] = useState(INITIAL_REGION);
 
   useImperativeHandle(
@@ -250,6 +272,54 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
   const selected = useMemo(
     () => validVehicles.find((vehicle) => vehicle.id === selectedVehicleId) ?? null,
     [validVehicles, selectedVehicleId],
+  );
+
+  /**
+   * Last accepted route projection, kept so a GPS jitter that lands far behind
+   * the previous fix cannot make the travelled line shrink backwards. Reset
+   * whenever the selection changes.
+   */
+  const progressRef = useRef<{ vehicleId: string; progress: RouteProgress } | null>(null);
+  useEffect(() => {
+    if (!selectedVehicleId) progressRef.current = null;
+  }, [selectedVehicleId]);
+
+  /*
+   * `react-hooks/refs` forbids reading/writing a ref during render, but the
+   * route split needs the *previous* accepted projection as a continuity hint so
+   * a jittery fix can't send the travelled line hopping backwards. A mutable
+   * ref is the canonical place to keep that one value, and the projection is
+   * idempotent, so reading-writing it here is safe under concurrent rendering.
+   */
+  /* eslint-disable react-hooks/refs */
+  const split = useMemo<RouteSplit | null>(() => {
+    if (!route || route.points.length < 2 || !selectedVehicleId || !selected) return null;
+    const prev =
+      progressRef.current?.vehicleId === selectedVehicleId ? progressRef.current.progress : null;
+    const projected = projectProgress(
+      route.points,
+      selected.lat,
+      selected.lon,
+      prev ? { segmentIndex: prev.segmentIndex, alongMeters: prev.alongMeters } : undefined,
+    );
+    if (!projected) return null;
+    if (prev && projected.alongMeters < prev.alongMeters - BACKWARD_TOLERANCE_METERS) {
+      // Implausible backward jump: hold the last good split instead of moving
+      // it backwards.
+      return splitRoute(route.points, prev);
+    }
+    progressRef.current = { vehicleId: selectedVehicleId, progress: projected };
+    return splitRoute(route.points, projected);
+  }, [route, selected, selectedVehicleId]);
+  /* eslint-enable react-hooks/refs */
+
+  const travelledCoordinates = useMemo(
+    () => split?.travelled.map(([latitude, longitude]) => ({ latitude, longitude })) ?? null,
+    [split],
+  );
+  const remainingCoordinates = useMemo(
+    () => split?.remaining.map(([latitude, longitude]) => ({ latitude, longitude })) ?? null,
+    [split],
   );
 
   const visibleVehicles = useMemo(() => {
@@ -279,14 +349,14 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
     );
   }, [follow, selected]);
 
-  const routeKey = route && follow ? `${route.color}|${route.points.length}|${route.stops.length}` : null;
+  const routeKey = route && fitRoute ? `${route.color}|${route.points.length}|${route.stops.length}` : null;
   useEffect(() => {
-    if (!follow || !route?.points.length) return;
+    if (!fitRoute || !route?.points.length) return;
     mapRef.current?.fitToCoordinates(
       route.points.map(([latitude, longitude]) => ({ latitude, longitude })),
       { edgePadding: { top: 120, right: 64, bottom: 380, left: 64 }, animated: true },
     );
-    // Selection only fits when the preference is enabled.
+    // An explicit line search fits; selecting a vehicle keeps that vehicle centred.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeKey]);
 
@@ -300,15 +370,20 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
   const stops: Stop[] = route ? route.stops : nearbyStops;
   const showStopLabels = visibleRegion.latitudeDelta < STOP_LABEL_MAX_DELTA;
 
-  const handleStop = useCallback(
-    (id: string, name: string) => onSelectStop(id, name),
-    [onSelectStop],
-  );
+  const handleStop = useCallback((stop: Stop) => onSelectStop(stop), [onSelectStop]);
   const handleRegionChange = useCallback((region: Region) => {
     setVisibleRegion(region);
   }, []);
 
   const osm = mapProvider === 'osm';
+  // On iOS the system map is MapKit: let the rider pick its base style. On
+  // Android the system map is Google's, which stays standard. OSM always rides
+  // on a standard base and tiles over it.
+  const mapType: MapType = Platform.select<MapType>({
+    ios: osm ? 'standard' : appleMapType,
+    android: osm ? 'none' : 'standard',
+    default: 'standard',
+  }) ?? 'standard';
 
   return (
     <Maps
@@ -330,7 +405,7 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
       userInterfaceStyle={dark ? 'dark' : 'light'}
       // Android draws the raster tiles over its own base map unless the base
       // map is switched off; iOS does it through the tile layer instead.
-      mapType={osm && Platform.OS === 'android' ? 'none' : 'standard'}>
+      mapType={mapType}>
       {osm && (
         <UrlTile
           urlTemplate={`https://a.basemaps.cartocdn.com/${dark ? 'dark_all' : 'light_all'}/{z}/{x}/{y}@2x.png`}
@@ -341,14 +416,39 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
       )}
 
       {routeCoordinates.length > 1 && route && (
-        <Polyline
-          coordinates={routeCoordinates}
-          strokeColor={route.color}
-          strokeWidth={5}
-          lineJoin="round"
-          lineCap="round"
-          zIndex={1}
-        />
+        <>
+          {split ? (
+            <>
+              {travelledCoordinates && travelledCoordinates.length > 1 && (
+                <Polyline
+                  coordinates={travelledCoordinates}
+                  strokeColor={fadeColor(route.color, 0.3)}
+                  strokeWidth={5}
+                  lineJoin="round"
+                  lineCap="round"
+                  zIndex={1}
+                />
+              )}
+              <Polyline
+                coordinates={remainingCoordinates ?? routeCoordinates}
+                strokeColor={route.color}
+                strokeWidth={5}
+                lineJoin="round"
+                lineCap="round"
+                zIndex={1}
+              />
+            </>
+          ) : (
+            <Polyline
+              coordinates={routeCoordinates}
+              strokeColor={route.color}
+              strokeWidth={5}
+              lineJoin="round"
+              lineCap="round"
+              zIndex={1}
+            />
+          )}
+        </>
       )}
 
       {stops.map((stop) => (
@@ -380,6 +480,19 @@ export const nativeMapAvailable = true;
 
 const ANCHOR_CENTRE: MapMarkerProps['anchor'] = { x: 0.5, y: 0.5 };
 const APPLE_CENTRE_OFFSET: NonNullable<MapMarkerProps['centerOffset']> = { x: 0, y: 0 };
+const STOP_LABEL_WIDTH = 180;
+const STOP_LABEL_HEIGHT = 48;
+const STOP_DOT_CENTRE_Y = 7;
+const STOP_LABEL_ANCHOR: MapMarkerProps['anchor'] = {
+  x: 0.5,
+  y: STOP_DOT_CENTRE_Y / STOP_LABEL_HEIGHT,
+};
+// MapKit positions a custom marker from its centre rather than its normalized
+// anchor. Move the larger label canvas down so its dot stays on the coordinate.
+const APPLE_STOP_LABEL_OFFSET: NonNullable<MapMarkerProps['centerOffset']> = {
+  x: 0,
+  y: STOP_LABEL_HEIGHT / 2 - STOP_DOT_CENTRE_Y,
+};
 
 const styles = StyleSheet.create({
   // Fixed and square, so the spike's orbit is the same at every angle and the
@@ -474,9 +587,15 @@ const styles = StyleSheet.create({
     elevation: 7,
   },
 
-  // Keep the measured marker bounds equal to the dot. A wide label wrapper
-  // changes the native marker anchor and makes stops appear displaced.
+  // The unlabelled marker stays compact. At close zoom a separate, explicitly
+  // anchored canvas reserves room for the complete name rather than clipping
+  // it to the dot's measured bounds.
   stopWrapper: { alignItems: 'center' },
+  stopLabelCanvas: {
+    width: STOP_LABEL_WIDTH,
+    height: STOP_LABEL_HEIGHT,
+    alignItems: 'center',
+  },
   stopDot: {
     width: 14,
     height: 14,
@@ -484,10 +603,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderWidth: 3,
   },
+  stopDotLabelled: { position: 'absolute', top: 0 },
   stopLabel: {
     position: 'absolute',
     top: 18,
-    maxWidth: 130,
+    width: STOP_LABEL_WIDTH,
+    alignItems: 'center',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,

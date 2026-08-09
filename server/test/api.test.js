@@ -287,6 +287,7 @@ describe('HTTP API', () => {
     const departures = await get('/stop/1/departures?limit=5');
     assert.equal(departures.status, 200);
     assert.ok(Array.isArray(departures.body.departures));
+    assert.deepEqual(departures.body.stop.lines, ['4', '128', '240']);
   });
 
   it('serves alerts and supports filtering', async () => {

@@ -72,6 +72,78 @@ const extractAffectedLines = (text, knownLines) => {
   return [...found];
 };
 
+/**
+ * Normalize alert text for cross-source fingerprinting.
+ *
+ * Same incident, different source/URL/ID must still match — so this lowercases,
+ * drops URLs, trims a leading mechanical hashtag/mention (e.g. `#AlertMPK`),
+ * maps smart punctuation to ASCII, and collapses whitespace.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+const normalizeText = (text) => {
+  let result = String(text ?? '').toLowerCase();
+  result = result.replace(/https?:\/\/\S+/g, ' ');
+  result = result.replace(/^[@#]\w+\s+/, '');
+  result = result
+    .replace(/[‘’]/g, "'")
+    .replace(/[""]/g, '"')
+    .replace(/[–—−]/g, '-')
+    .replace(/[…]/g, '...');
+  result = result.replace(/[^\p{L}\p{N}\s\-']/gu, ' ');
+  result = result.replace(/\s+/g, ' ').trim();
+  return result;
+};
+
+/**
+ * Build a dedup fingerprint from an alert's title and content.
+ *
+ * Only returns non-null when the normalized text is >= 30 characters — short
+ * alerts must stay separate unless their IDs are identical, because a two-word
+ * headline is likely to recur across unrelated incidents.
+ *
+ * @param {string|null} title
+ * @param {string} content
+ * @returns {string|null}
+ */
+const fingerprint = (title, content) => {
+  const text = normalizeText(`${title ?? ''} ${content ?? ''}`);
+  return text.length >= 30 ? text : null;
+};
+
+/**
+ * Merge two alert records describing the same incident.
+ *
+ * Mutates `existing` in place: newest timestamp wins, the more useful
+ * non-empty title and longer content are preferred, the first real URL is
+ * kept, and affected lines are unioned. The source/URL that arrived first is
+ * treated as the original; nothing is invented.
+ *
+ * @param {object} existing
+ * @param {object} incoming  must carry pre-extracted `affected` and `types`
+ */
+const mergeAlert = (existing, incoming) => {
+  if ((incoming.timestamp ?? 0) > (existing.timestamp ?? 0)) {
+    existing.timestamp = incoming.timestamp;
+  }
+  if (incoming.title && !existing.title) {
+    existing.title = incoming.title;
+  }
+  if (incoming.content && (!existing.content || incoming.content.length > existing.content.length)) {
+    existing.content = incoming.content;
+  }
+  if (incoming.url && !existing.url) {
+    existing.url = incoming.url;
+  }
+  for (const line of incoming.affected) {
+    if (!existing.affected.includes(line)) {
+      existing.affected.push(line);
+      existing.types[line] = lineToType(line);
+    }
+  }
+};
+
 /** Parse an RSS 2.0 or Atom document into alert records. */
 const parseFeed = (xml, sourceUrl) => {
   let document;
@@ -348,14 +420,14 @@ class NitterProvider {
  * `/health` says which it is.
  */
 class AlertsService {
-  constructor(getKnownLines) {
+  constructor(getKnownLines, providers = null) {
     this.getKnownLines = getKnownLines ?? (() => new Set());
     this.alerts = [];
     this.timer = null;
-    this.providers = config.alerts.pages.map((url) => new NoticeProvider(url));
-    if (config.alerts.nitter.enabled) {
-      this.providers.push(new NitterProvider(config.alerts.nitter));
-    }
+    this.started = false;
+    /** True after stop() so an in-flight refresh never re-arms its timer. */
+    this._stopped = false;
+    this.providers = providers ?? this.#defaultProviders();
 
     this.status = {
       providers: this.providers.map((provider) => ({
@@ -368,6 +440,14 @@ class AlertsService {
       lastError: null,
       count: 0,
     };
+  }
+
+  #defaultProviders() {
+    const result = config.alerts.pages.map((url) => new NoticeProvider(url));
+    if (config.alerts.nitter.enabled) {
+      result.push(new NitterProvider(config.alerts.nitter));
+    }
+    return result;
   }
 
   async refresh() {
@@ -409,31 +489,58 @@ class AlertsService {
     }
 
     const byId = new Map();
-    for (const item of collected) {
-      const id = item.id || `${item.source}:${item.timestamp}:${item.title ?? item.content}`;
-      if (byId.has(id)) continue;
+    const byFingerprint = new Map();
+    const deduped = [];
 
+    // Pre-compute fingerprint and affected lines for each collected item so the
+    // merge step below has everything it needs.
+    const enriched = collected.map((item) => {
+      const id = item.id || `${item.source}:${item.timestamp}:${item.title ?? item.content}`;
+      const fp = fingerprint(item.title, item.content);
       const affected = extractAffectedLines(`${item.title ?? ''} ${item.content ?? ''}`, knownLines);
       // Clients colour line badges by type; without this they would all have to
       // re-implement the categorisation rules and drift out of sync with them.
       const types = {};
       for (const line of affected) types[line] = lineToType(line);
+      return { ...item, id, fp, affected, types };
+    });
 
-      byId.set(id, {
-        id,
-        title: item.title || null,
-        content: item.content,
-        url: item.url,
-        timestamp: item.timestamp,
-        source: item.source,
-        affected,
-        types,
-      });
+    for (const item of enriched) {
+      // Primary dedup: same ID from the same source — exact duplicate.
+      const existingById = byId.get(item.id);
+      if (existingById) {
+        mergeAlert(existingById, item);
+        continue;
+      }
+
+      // Secondary dedup: same incident published by a different source with a
+      // different ID. Only long enough content qualifies; short alerts stay
+      // separate unless their IDs match.
+      if (item.fp && byFingerprint.has(item.fp)) {
+        const existing = byFingerprint.get(item.fp);
+        mergeAlert(existing, item);
+        byId.set(item.id, existing);
+        continue;
+      }
+
+      deduped.push(item);
+      byId.set(item.id, item);
+      if (item.fp) byFingerprint.set(item.fp, item);
     }
 
-    this.alerts = [...byId.values()]
+    this.alerts = deduped
       .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, config.alerts.maxItems);
+      .slice(0, config.alerts.maxItems)
+      .map(({ fp: _fp, ...alert }) => ({
+        id: alert.id,
+        title: alert.title || null,
+        content: alert.content,
+        url: alert.url,
+        timestamp: alert.timestamp,
+        source: alert.source,
+        affected: alert.affected,
+        types: alert.types,
+      }));
     this.status.count = this.alerts.length;
 
     return this.alerts;
@@ -451,16 +558,43 @@ class AlertsService {
   }
 
   start() {
-    if (this.timer) return;
-    this.refresh();
-    this.timer = setInterval(() => this.refresh(), config.alerts.refreshIntervalMs);
+    if (this.started) return;
+    this.started = true;
+    this._stopped = false;
+
+    // First refresh immediately. A placeholder handle keeps `timer` non-null from
+    // the first instant — stop() and callers that inspect the timer rely on it —
+    // and is replaced by the real arm the moment the first refresh settles. The
+    // next arm is queued from the *end* of #runRefreshLoop, which is the only
+    // code that schedules an alert timer.
+    this.timer = setTimeout(() => {}, 0);
+    this.timer.unref?.();
+    void this.#runRefreshLoop();
+  }
+
+  #scheduleNextRefresh() {
+    if (this._stopped) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.#runRefreshLoop(), config.alerts.refreshIntervalMs);
     this.timer.unref?.();
   }
 
+  /** One iteration: refresh, then arm the next from completion. Non-overlapping. */
+  async #runRefreshLoop() {
+    try {
+      await this.refresh();
+    } catch (error) {
+      logger.error(`Alert refresh threw, rescheduling: ${error.message}`);
+    } finally {
+      this.#scheduleNextRefresh();
+    }
+  }
+
   stop() {
-    if (!this.timer) return;
-    clearInterval(this.timer);
+    this._stopped = true;
+    if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.started = false;
   }
 }
 
@@ -470,7 +604,9 @@ module.exports = {
   NitterProvider,
   toXPostUrl,
   extractAffectedLines,
+  fingerprint,
   parseFeed,
   parsePage,
+  normalizeText,
   stripHtml,
 };

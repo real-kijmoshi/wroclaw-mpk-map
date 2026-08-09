@@ -21,6 +21,7 @@ export const OsmMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function Osm
     route,
     selectedVehicleId,
     follow = false,
+    fitRoute = false,
     userPosition,
     nearbyStops,
     onSelectVehicle,
@@ -51,8 +52,8 @@ export const OsmMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function Osm
 
   useEffect(() => {
     // Drawing a selected vehicle's route must not take over the viewport.
-    mapRef.current?.send({ type: 'route', shape: route ? { ...route, fit: follow } : null });
-  }, [route, follow]);
+    mapRef.current?.send({ type: 'route', shape: route ? { ...route, fit: fitRoute } : null });
+  }, [route, fitRoute]);
 
   useEffect(() => {
     // A route's own stops own the layer while there is one; the nearby stops
@@ -76,7 +77,17 @@ export const OsmMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function Osm
           onSelectVehicle(message.id);
           break;
         case 'stop':
-          onSelectStop(message.id, message.name);
+          // The bridge only sends the marker id. Recover the full record so a
+          // merged platform keeps its sibling ids and coordinates when its
+          // departure board opens.
+          onSelectStop(
+            (route?.stops ?? nearbyStops).find((stop) => stop.id === message.id) ?? {
+              id: message.id,
+              name: message.name,
+              lat: 0,
+              lon: 0,
+            },
+          );
           break;
         case 'background':
           onBackground();
@@ -85,7 +96,7 @@ export const OsmMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function Osm
           break;
       }
     },
-    [onSelectVehicle, onSelectStop, onBackground],
+    [nearbyStops, onSelectVehicle, onSelectStop, onBackground, route],
   );
 
   return <LiveMap ref={mapRef} dark={dark} onMessage={handleMessage} />;

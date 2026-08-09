@@ -252,8 +252,11 @@ export type Shape = {
 
 export type Stop = {
   id: string;
+  /** Platform ids are retained only for legacy map payload compatibility. */
+  ids?: string[];
   code?: string;
   name: string;
+  lines?: string[];
   lat: number;
   lon: number;
   distance?: number;
@@ -266,9 +269,12 @@ export type Departure = {
   departure: string;
   inSeconds: number;
   tripId: string;
-  serviceDay: 'today' | 'yesterday';
+  serviceDay: 'today' | 'yesterday' | 'tomorrow';
   operator?: string | null;
   platformCode?: string | null;
+  realtime?: boolean;
+  predictedInSeconds?: number | null;
+  vehicleId?: string | null;
 };
 
 export type Departures = {
@@ -395,14 +401,33 @@ export function normaliseDepartures(payload: unknown): Departures {
         departure: typeof item.departure === 'string' ? item.departure : '',
         inSeconds: item.inSeconds as number,
         tripId: typeof item.tripId === 'string' ? item.tripId : '',
-        serviceDay: item.serviceDay === 'yesterday' ? 'yesterday' : 'today',
+        serviceDay:
+          item.serviceDay === 'yesterday'
+            ? 'yesterday'
+            : item.serviceDay === 'tomorrow'
+              ? 'tomorrow'
+              : 'today',
         operator: optionalString(item.operator),
         platformCode: optionalString(item.platformCode),
+        realtime: item.realtime === true,
+        predictedInSeconds:
+          item.realtime === true && Number.isFinite(item.predictedInSeconds)
+            ? (item.predictedInSeconds as number)
+            : null,
+        vehicleId:
+          typeof item.vehicleId === 'string' && item.vehicleId
+            ? item.vehicleId
+            : null,
       },
     ];
   });
+  const stop = payload.stop as unknown as Stop;
+  const rawLines = (payload.stop as Record<string, unknown>).lines;
+  if (Array.isArray(rawLines)) {
+    stop.lines = rawLines.filter((line: unknown): line is string => typeof line === 'string');
+  }
   return {
-    stop: payload.stop as unknown as Stop,
+    stop,
     departures: departures.slice(0, 12),
   };
 }
@@ -522,6 +547,9 @@ export const getLocations = async (lines: string[] | null, options?: GetOptions)
   return normaliseLocations(await apiGet<unknown>(`/locations?${query}`, options));
 };
 
+/** A one-shot fleet snapshot used by the vehicle search. */
+export const getAllLocations = async (options?: GetOptions) => getLocations(null, options);
+
 export const getVehicle = async (id: string, options?: GetOptions) =>
   normaliseVehicleDetail(
     await apiGet<unknown>(`/vehicle/${encodeURIComponent(id)}`, options),
@@ -554,8 +582,26 @@ export const getShape = async (
 
 export const getDepartures = async (stopId: string, options?: GetOptions) =>
   normaliseDepartures(
-    await apiGet<unknown>(`/stop/${encodeURIComponent(stopId)}/departures?limit=12`, options),
+    await apiGet<unknown>(`/stop/${encodeURIComponent(stopId)}/departures?limit=12&within=1440`, options),
   );
+
+/** Merge only GTFS records that search identified as one physical platform. */
+export const getDeparturesForStops = async (stop: Stop, options?: GetOptions): Promise<Departures> => {
+  const ids = [...new Set([stop.id, ...(stop.ids ?? [])])];
+  const boards = await Promise.all(ids.map((id) => getDepartures(id, options)));
+  const seen = new Set<string>();
+  const departures = boards
+    .flatMap((board) => board.departures)
+    .filter((departure) => {
+      const key = `${departure.tripId}|${departure.line}|${departure.departure}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.inSeconds - b.inSeconds)
+    .slice(0, 12);
+  return { stop: boards[0]?.stop ?? stop, departures };
+};
 
 export const getStopsNear = async (
   lat: number,
