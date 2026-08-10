@@ -304,6 +304,57 @@ export type Alerts = {
   lastRefreshAt: string | null;
 };
 
+export type IncidentTimelineEntry = {
+  id: string;
+  timestamp: number;
+  kind: 'reported' | 'diversion' | 'replacement_bus' | 'update' | 'resolved' | 'unknown';
+  title: string;
+  detail: string | null;
+  sourceAlertIds: string[];
+};
+
+export type Incident = {
+  schemaVersion: number | null;
+  id: string;
+  status: 'active' | 'resolved' | 'unknown';
+  severity: 'minor' | 'moderate' | 'major' | 'unknown';
+  title: string;
+  locationName: string | null;
+  affected: string[];
+  types: Record<string, LineType>;
+  summary: string;
+  shortNotificationTitle: string | null;
+  shortNotificationBody: string | null;
+  mapHints: {
+    stopNames: string[];
+    streetNames: string[];
+    areaNames: string[];
+  };
+  timeline: IncidentTimelineEntry[];
+  sourceAlertIds: string[];
+  firstSeenAt: number;
+  lastUpdatedAt: number;
+  ai?: {
+    generated?: boolean;
+    provider?: string | null;
+    model?: string | null;
+    confidence?: 'low' | 'medium' | 'high' | null;
+    error?: string | null;
+  };
+};
+
+export type IncidentsResponse = {
+  incidents: Incident[];
+  lastRefreshAt: string | null;
+  ai?: {
+    enabled?: boolean;
+    provider?: string | null;
+    model?: string | null;
+    lastSuccessAt?: string | null;
+    lastError?: string | null;
+  };
+};
+
 /* -------------------------------------------------------------------------- */
 /* Validation — a payload only becomes state once it looks like what we expect. */
 /* -------------------------------------------------------------------------- */
@@ -388,6 +439,119 @@ export function normaliseAlerts(payload: unknown): Alerts {
   return {
     alerts,
     lastRefreshAt: typeof payload.lastRefreshAt === 'string' ? payload.lastRefreshAt : null,
+  };
+}
+
+const INCIDENT_STATUSES = new Set<Incident['status']>(['active', 'resolved', 'unknown']);
+const INCIDENT_SEVERITIES = new Set<Incident['severity']>([
+  'minor',
+  'moderate',
+  'major',
+  'unknown',
+]);
+const TIMELINE_KINDS = new Set<IncidentTimelineEntry['kind']>([
+  'reported',
+  'diversion',
+  'replacement_bus',
+  'update',
+  'resolved',
+  'unknown',
+]);
+
+const stringsOnly = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+
+const normaliseTimelineEntry = (value: unknown): IncidentTimelineEntry | null => {
+  if (!isRecord(value) || typeof value.id !== 'string' || !value.id) return null;
+  if (!Number.isFinite(value.timestamp) || typeof value.title !== 'string') return null;
+  if (!TIMELINE_KINDS.has(value.kind as IncidentTimelineEntry['kind'])) return null;
+  return {
+    id: value.id,
+    timestamp: value.timestamp as number,
+    kind: value.kind as IncidentTimelineEntry['kind'],
+    title: value.title,
+    detail: typeof value.detail === 'string' ? value.detail : null,
+    sourceAlertIds: stringsOnly(value.sourceAlertIds),
+  };
+};
+
+/** Grouped incident timelines; malformed candidates are omitted independently. */
+export function normaliseIncidents(payload: unknown): IncidentsResponse {
+  if (!isRecord(payload) || !Array.isArray(payload.incidents)) {
+    throw new ApiError('Unexpected /incidents payload', 0);
+  }
+
+  const incidents = payload.incidents.flatMap((value): Incident[] => {
+    if (!isRecord(value) || typeof value.id !== 'string' || !value.id) return [];
+    if (typeof value.title !== 'string' || typeof value.summary !== 'string') return [];
+    if (!INCIDENT_STATUSES.has(value.status as Incident['status'])) return [];
+    if (!INCIDENT_SEVERITIES.has(value.severity as Incident['severity'])) return [];
+    if (!Number.isFinite(value.firstSeenAt) || !Number.isFinite(value.lastUpdatedAt)) return [];
+
+    const mapHints = isRecord(value.mapHints) ? value.mapHints : {};
+    const ai: Incident['ai'] = isRecord(value.ai)
+      ? {
+          generated: typeof value.ai.generated === 'boolean' ? value.ai.generated : undefined,
+          provider: optionalString(value.ai.provider),
+          model: optionalString(value.ai.model),
+          confidence:
+            value.ai.confidence === 'low' ||
+            value.ai.confidence === 'medium' ||
+            value.ai.confidence === 'high'
+              ? value.ai.confidence
+              : null,
+          error: optionalString(value.ai.error),
+        }
+      : undefined;
+
+    return [{
+      schemaVersion: Number.isFinite(value.schemaVersion) ? (value.schemaVersion as number) : null,
+      id: value.id,
+      status: value.status as Incident['status'],
+      severity: value.severity as Incident['severity'],
+      title: value.title,
+      locationName: typeof value.locationName === 'string' ? value.locationName : null,
+      affected: stringsOnly(value.affected),
+      // Line types are server-owned display metadata. Preserve the record while
+      // rejecting non-record containers that could poison badge lookups.
+      types: isRecord(value.types) ? { ...value.types } as Record<string, LineType> : {},
+      summary: value.summary,
+      shortNotificationTitle:
+        typeof value.shortNotificationTitle === 'string' ? value.shortNotificationTitle : null,
+      shortNotificationBody:
+        typeof value.shortNotificationBody === 'string' ? value.shortNotificationBody : null,
+      mapHints: {
+        stopNames: stringsOnly(mapHints.stopNames),
+        streetNames: stringsOnly(mapHints.streetNames),
+        areaNames: stringsOnly(mapHints.areaNames),
+      },
+      timeline: Array.isArray(value.timeline)
+        ? value.timeline.flatMap((entry) => {
+            const timelineEntry = normaliseTimelineEntry(entry);
+            return timelineEntry ? [timelineEntry] : [];
+          }).sort((left, right) => left.timestamp - right.timestamp)
+        : [],
+      sourceAlertIds: stringsOnly(value.sourceAlertIds),
+      firstSeenAt: value.firstSeenAt as number,
+      lastUpdatedAt: value.lastUpdatedAt as number,
+      ai,
+    }];
+  });
+
+  const responseAi = isRecord(payload.ai)
+    ? {
+        enabled: typeof payload.ai.enabled === 'boolean' ? payload.ai.enabled : undefined,
+        provider: optionalString(payload.ai.provider),
+        model: optionalString(payload.ai.model),
+        lastSuccessAt: optionalString(payload.ai.lastSuccessAt),
+        lastError: optionalString(payload.ai.lastError),
+      }
+    : undefined;
+
+  return {
+    incidents,
+    lastRefreshAt: typeof payload.lastRefreshAt === 'string' ? payload.lastRefreshAt : null,
+    ai: responseAi,
   };
 }
 
@@ -680,3 +844,14 @@ export const getStopsNear = async (
 
 export const getAlerts = async (options?: GetOptions) =>
   normaliseAlerts(await apiGet<unknown>('/alerts', options));
+
+export const getIncidents = async (
+  options?: GetOptions & { line?: string; status?: string },
+) => {
+  const query = new URLSearchParams();
+  if (options?.line) query.set('line', options.line);
+  if (options?.status) query.set('status', options.status);
+  const queryString = query.toString();
+  const suffix = queryString ? `?${queryString}` : '';
+  return normaliseIncidents(await apiGet<unknown>(`/incidents${suffix}`, options));
+};

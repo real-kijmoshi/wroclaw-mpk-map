@@ -17,7 +17,7 @@ import { useAreaStops } from '@/hooks/use-area-stops';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePoll } from '@/hooks/use-poll';
 import { useTheme } from '@/hooks/use-theme';
-import { getAlerts, getDeparturesForStops, getLocations, getShape, getStopsNear, getVehicle, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
+import { getAlerts, getDeparturesForStops, getIncidents, getLocations, getShape, getStopsNear, getVehicle, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
 import { REFRESH_MS } from '@/lib/config';
 import { plural } from '@/lib/format';
 import { colorFor } from '@/lib/lines';
@@ -115,10 +115,18 @@ export default function MapScreen() {
     { key: linesKey },
   );
 
-  // Only for the count on the sheet's "Utrudnienia" row — the alerts screen
-  // does its own polling and owns the list.
-  const alerts = usePoll(
-    (signal) => getAlerts({ signal, retryWhileLoading: false }),
+  // Only for the count on the sheet's "Utrudnienia" row — the incidents screen
+  // does its own polling and owns the list. Old servers still expose /alerts.
+  const incidentCount = usePoll(
+    async (signal) => {
+      try {
+        const response = await getIncidents({ signal, retryWhileLoading: false });
+        return response.incidents.filter((incident) => incident.status !== 'resolved').length;
+      } catch {
+        const response = await getAlerts({ signal, retryWhileLoading: false });
+        return response.alerts.length;
+      }
+    },
     REFRESH_MS.alerts,
   );
 
@@ -479,7 +487,7 @@ export default function MapScreen() {
         ) : (
           <MapSheetHome
             selectedLineCount={selectedLines.length}
-            alertCount={alerts.data?.alerts.length ?? null}
+            alertCount={incidentCount.data}
             nearbyAreas={nearbyAreas}
             located={userPosition !== null}
             locating={locating}

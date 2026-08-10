@@ -15,30 +15,31 @@ export function orderAlertsForSelectedLines(
   alerts: Alert[],
   selectedLines: readonly string[],
 ): { heading: string | null; alerts: Alert[] }[] {
+  const active = alerts.filter((alert) => !isResolvedAlert(alert));
+  const resolved = alerts.filter(isResolvedAlert);
+
   if (!selectedLines.length) {
-    return [{ heading: null, alerts }];
+    return [{ heading: null, alerts: [...active, ...resolved] }];
   }
 
   const selected = new Set(selectedLines.map((line) => line.toUpperCase()));
-  const relevant: Alert[] = [];
-  const other: Alert[] = [];
-
-  for (const alert of alerts) {
-    const isRelevant = alert.affected.some((line) => selected.has(line.toUpperCase()));
-    (isRelevant ? relevant : other).push(alert);
-  }
+  const relevant = active.filter((alert) =>
+    alert.affected.some((line) => selected.has(line.toUpperCase())));
+  const other = active.filter((alert) => !relevant.includes(alert));
 
   if (!relevant.length) {
-    // No alert touches the selected lines — render exactly as today.
-    return [{ heading: null, alerts }];
-  }
-
-  if (!other.length) {
-    return [{ heading: 'Twoje linie', alerts: relevant }];
+    return [{ heading: null, alerts: [...other, ...resolved] }];
   }
 
   return [
     { heading: 'Twoje linie', alerts: relevant },
-    { heading: 'Pozostałe', alerts: other },
+    ...(other.length ? [{ heading: 'Pozostałe aktywne', alerts: other }] : []),
+    ...(resolved.length ? [{ heading: 'Przywrócono ruch', alerts: resolved }] : []),
   ];
+}
+
+export function isResolvedAlert(alert: Alert): boolean {
+  return /ruch\s+(przywrócon|normalny)|wznowion|zakończon|odwołane utrudnien/.test(
+    `${alert.title ?? ''} ${alert.content}`.toLocaleLowerCase('pl-PL'),
+  );
 }
