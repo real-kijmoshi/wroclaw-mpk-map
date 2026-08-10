@@ -1,4 +1,20 @@
-import { LINE_COLOR, VEHICLE_BORDER_COLOR, VEHICLE_COLOR } from './lines';
+import { LINE_COLOR } from './lines';
+import {
+  BADGE_GROW_SELECTED,
+  BADGE_HEIGHT,
+  BADGE_RADIUS_TRAM,
+  DENSITY_SIZES,
+  DOT_SIZE,
+  DOT_TAIL_HALF_BASE,
+  DOT_TAIL_LENGTH,
+  DOT_TAIL_OUTLINE,
+  DOT_TAIL_SINK,
+  TAIL_HALF_BASE,
+  TAIL_LENGTH,
+  TAIL_OUTLINE,
+  TAIL_SINK,
+  badgeWidthFor,
+} from './vehicle-marker';
 
 /**
  * The map itself: a plain Leaflet page.
@@ -20,11 +36,10 @@ export type MapMessage =
   | { type: 'vehicle'; id: string }
   | { type: 'stop'; id: string; name: string }
   | { type: 'background' }
-  | { type: 'moved'; lat: number; lon: number; zoom: number };
+  | { type: 'moved'; lat: number; lon: number; zoom: number }
+  | { type: 'viewport'; lat: number; lon: number; radiusMeters: number; zoom: number };
 
 const PALETTE = JSON.stringify(LINE_COLOR);
-const VEHICLE_PALETTE = JSON.stringify(VEHICLE_COLOR);
-const VEHICLE_BORDER_PALETTE = JSON.stringify(VEHICLE_BORDER_COLOR);
 
 export const WROCLAW_CENTER = { lat: 51.1079, lon: 17.0385, zoom: 13 };
 
@@ -69,105 +84,251 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
   }
   .leaflet-control-attribution a { color: var(--chrome-fg) !important; }
 
-  /* Paper-map vehicle badges: roomy enough for a full three-digit line, with
-     a category colour and a direction tip that reads as part of the badge. */
+  /*
+   * Upright transit labels: bearing belongs to the tail, never the text.
+   *
+   * A vehicle is one shape — a badge with a directional tail growing out of
+   * its own outline — and src/lib/vehicle-marker.ts is the authority on where
+   * the two meet, at each heading, for each badge width. Its constants are
+   * interpolated below and its solver is mirrored in the script; the same
+   * marker is drawn by native-map.tsx and by server/views/map.html.
+   *
+   * Every marker carries both forms — the labelled badge and the bare dot —
+   * and a class on the root decides which one shows. That is what lets the
+   * zoom tier and the de-collision pass below change hundreds of markers with
+   * a classList toggle instead of rebuilding an icon each, which is the same
+   * "move markers, don't rebuild them" rule the rest of this file follows.
+   *
+   * The box is fixed and generous here, unlike on the native surface where it
+   * is also the hit target: nothing in it takes a pointer except the shape
+   * itself, so a vehicle cannot swallow the click meant for its neighbour.
+   */
   .vehicle {
     position: relative;
-    width: 58px; height: 58px;
+    width: 64px; height: 64px;
+    pointer-events: none;
     transition: opacity 200ms ease-out;
+    /* The dot every vehicle gets at district zoom. City zoom overrides it per
+       marker with the size its cell's count earned. */
+    --dot-size: ${DOT_SIZE}px;
   }
 
-  /* Rotate the complete badge, not only its tip: the reference markers behave
-     like small physical tiles whose top edge points along the vehicle bearing. */
   .vehicle__bearing {
     position: absolute;
     top: 0; left: 0; right: 0; bottom: 0;
   }
-  /* A square standing on its corner, sitting far enough out that the badge
-     covers its inner half. What is left is a spike growing out of the badge
-     with the same outline continuing around it — one shape, not a badge with a
-     triangle floating near it. */
-  .vehicle__spike {
+
+  /* The tail, drawn before the badge so the few pixels of it that sink inside
+     the outline are covered and the two read as one shape. */
+  .vehicle__tail,
+  .vehicle__tail-edge {
     position: absolute;
-    top: 1px; left: 50%;
-    margin-left: -8px;
-    width: 16px; height: 16px;
-    border-radius: 3px;
-    background: var(--vehicle-color, #6D86A7);
-    border: 2.5px solid var(--vehicle-edge, #668AB5);
-    transform: rotate(45deg);
+    left: 50%;
+    width: 0; height: 0;
+    border-style: solid;
+    border-color: transparent;
+  }
+  .vehicle__tail {
+    top: var(--tail-top);
+    margin-left: -${TAIL_HALF_BASE}px;
+    border-width: 0 ${TAIL_HALF_BASE}px ${TAIL_LENGTH}px;
+    border-bottom-color: var(--vehicle-color, #475569);
+  }
+  /* The badge's white keyline, continued around the tail. A tinted arrow on
+     its own disappears over a road drawn in roughly that colour. */
+  .vehicle__tail-edge {
+    top: var(--tail-edge-top);
+    margin-left: -${TAIL_HALF_BASE + TAIL_OUTLINE}px;
+    border-width: 0 ${TAIL_HALF_BASE + TAIL_OUTLINE}px ${TAIL_LENGTH + TAIL_OUTLINE}px;
+    border-bottom-color: var(--ring);
   }
 
+  /*
+   * Centred on the coordinate with margins rather than a transform: the marker
+   * itself is transitioned while it glides, and a second transform inside it
+   * is one more thing to keep out of that.
+   */
   .vehicle__body {
     position: absolute;
-    top: 9px; left: 9px; right: 9px; bottom: 9px;
+    top: 50%; left: 50%;
+    width: var(--badge-w); height: var(--badge-h);
+    margin: calc(var(--badge-h) / -2) 0 0 calc(var(--badge-w) / -2);
+    border-radius: var(--badge-r);
+    box-sizing: border-box;
+    padding: 0 5px;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 10.5px;
-    background-color: var(--vehicle-color, #6D86A7);
-    background-image: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0) 52%);
-    border: 2.5px solid var(--vehicle-edge, #668AB5);
-    /* Contact shadow plus an ambient one: the marker sits on the map rather
-       than hovering somewhere above it. */
-    box-shadow: 0 1px 3px rgba(0,0,0,${dark ? '0.34' : '0.20'});
+    background-color: var(--vehicle-color, #475569);
+    border: 1.5px solid var(--ring);
+    box-shadow: 0 1px 3px rgba(0,0,0,${dark ? '0.36' : '0.24'});
     z-index: 2;
-    transition: transform 140ms ease-out;
+    pointer-events: auto;
   }
+
+  /* Shape carries the mode as well as colour: two hues alone are no help to
+     anyone who cannot separate them, and this map is read in sunlight. The
+     badge's own radius comes from the geometry — square shoulders for a tram,
+     a pill for a bus — and the dot says it as a fraction of whatever size it
+     has been given, so it holds at every density step. */
+  .vehicle--tram .vehicle__dot { border-radius: 25%; }
 
   .vehicle__label {
     color: #ffffff;
-    font-size: 19px;
-    font-weight: 400;
+    font-size: 13px;
+    font-weight: 800;
     line-height: 1;
     letter-spacing: -0.02em;
     /* Line numbers are read as a column of digits when markers stack up. */
     font-variant-numeric: tabular-nums;
-    text-shadow: 0 1px 1px rgba(0,0,0,0.10);
   }
-  /* "715" and the letter lines still have to fit the same square. */
-  .vehicle__label--long { font-size: 15px; letter-spacing: -0.05em; }
+  .vehicle__label--long { font-size: 11px; letter-spacing: -0.04em; }
 
+  .vehicle__dot {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: var(--dot-size); height: var(--dot-size);
+    margin: calc(var(--dot-size) / -2) 0 0 calc(var(--dot-size) / -2);
+    box-sizing: border-box;
+    border-radius: 50%;
+    background: var(--vehicle-color, #475569);
+    border: 2px solid var(--ring);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.28);
+    display: none;
+    pointer-events: auto;
+  }
+
+  /* The dot tiers: the badge gives way to a dot, and the tail comes with it at
+     the smaller size a dot can carry. */
+  .vehicle--dot .vehicle__body { display: none; }
+  .vehicle--dot .vehicle__dot { display: block; }
+  .vehicle--dot .vehicle__tail {
+    top: var(--dot-tail-top);
+    margin-left: -${DOT_TAIL_HALF_BASE}px;
+    border-width: 0 ${DOT_TAIL_HALF_BASE}px ${DOT_TAIL_LENGTH}px;
+  }
+  .vehicle--dot .vehicle__tail-edge {
+    top: var(--dot-tail-edge-top);
+    margin-left: -${DOT_TAIL_HALF_BASE + DOT_TAIL_OUTLINE}px;
+    border-width: 0 ${DOT_TAIL_HALF_BASE + DOT_TAIL_OUTLINE}px ${DOT_TAIL_LENGTH + DOT_TAIL_OUTLINE}px;
+  }
+
+  /*
+   * City zoom: density instead of direction.
+   *
+   * One marker per cell survives and the rest are thinned out — the pile-up of
+   * seven hundred overlapping dots is not a map of a tram network. But a
+   * survivor that looks the same whether it stands for one bus or eight trams
+   * throws away the one thing this scale is good for, so applyTier sizes it by
+   * its cell's count. It carries no tail: at this scale the dot speaks for the
+   * vehicles it swallowed as much as for itself, and a heading would be a claim
+   * about them too.
+   */
+  .vehicle--small .vehicle__dot {
+    --dot-size: var(--far-dot, ${DENSITY_SIZES[1]}px);
+    border-width: var(--far-ring, 1.5px);
+  }
+  .vehicle--small .vehicle__bearing { display: none; }
+  .vehicle--thinned { display: none; }
+
+  /* The selected vehicle grows by real pixels — the geometry hands back a
+     larger badge and re-solves the tail against it. Scaling the badge with a
+     transform would slide it away from the tail joined to it, which is the one
+     seam this marker cannot afford. */
   .vehicle--selected { z-index: 1000 !important; }
   .vehicle--selected .vehicle__body {
-    transform: scale(1.14);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.35), 0 10px 22px rgba(0,0,0,0.42);
-  }
-  .vehicle--selected .vehicle__body::after {
-    content: '';
-    position: absolute;
-    top: -4px; left: -4px; right: -4px; bottom: -4px;
-    border-radius: 12px;
-    border: 2.5px solid var(--vehicle-edge, #536D8E);
-    animation: pulse 1.8s ease-out infinite;
-  }
-  @keyframes pulse {
-    0%   { transform: scale(0.86); opacity: 0.85; }
-    100% { transform: scale(1.5); opacity: 0; }
+    border-width: 2.5px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.42), 0 0 0 3px rgba(255,255,255,0.28);
   }
 
   /* With one vehicle chosen the rest step back, so the eye lands on it and its
      route. It is one class on the pane — not a single marker is rebuilt for it,
      which is the whole reason it can be done on every selection. */
-  .leaflet-vehicles-pane.is-focused .vehicle:not(.vehicle--selected) { opacity: 0.4; }
+  .leaflet-vehicles-pane.is-focused .vehicle:not(.vehicle--selected) { opacity: 0.28; }
 
-  /* Markers glide between polls instead of jumping, but never during a zoom —
-     Leaflet is already animating a transform there and the two fight. */
-  .leaflet-marker-icon.vehicle-marker { transition: transform 900ms linear; }
-  .leaflet-zoom-anim .leaflet-marker-icon.vehicle-marker { transition: none; }
+  /* Markers glide between polls instead of jumping — but only while *we* are
+     the ones moving them.
+
+     A blanket transition on the marker's transform is not that. Leaflet
+     repositions every marker itself at the end of a zoom, from the animated
+     pre-zoom coordinate space into the new one, and it removes its own
+     leaflet-zoom-anim guard *before* it does — _onZoomTransitionEnd clears the
+     class, then fires 'zoom', and every marker updates with the transition
+     live. The un-animated viewreset path never sets that class at all. Either
+     way the whole fleet was left sliding in from where it used to be for a full
+     second
+     after every zoom: vehicles a street or two off the rails they run on.
+     is-gliding is added around a poll's own setLatLng calls and dropped the
+     moment a zoom starts, so a zoom lands on the truth instead of racing it. */
+  .leaflet-vehicles-pane.is-gliding .leaflet-marker-icon.vehicle-marker {
+    transition: transform 1000ms linear;
+  }
+
+  /* Two hundred markers sliding across the screen every ten seconds is the
+     large, unavoidable motion this setting exists to remove. */
+  @media (prefers-reduced-motion: reduce) {
+    .leaflet-marker-icon.vehicle-marker,
+    .vehicle { transition: none !important; }
+  }
 
   .stop-dot {
-    width: 12px; height: 12px;
+    width: 10px; height: 10px;
     border-radius: 50%;
     background: var(--ring);
-    border: 3px solid var(--line-color, #475569);
+    border: 2px solid var(--line-color, #475569);
     box-shadow: 0 1px 3px rgba(0,0,0,0.45);
   }
-  .stop-dot--plain {
-    width: 10px; height: 10px;
-    border-width: 2.5px;
-    border-color: var(--chrome-fg);
+
+  /*
+   * A stop: the dot on the coordinate, its name under it.
+   *
+   * The name is drawn with a halo rather than on a chip, the way the base map
+   * draws its own labels — dozens of filled pills turn a map into a list. Both
+   * forms live in the DOM and a class picks between them, so zooming is a
+   * class toggle and not a rebuilt icon.
+   */
+  .stop {
+    position: relative;
+    width: 104px; height: 42px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 6px;
+    box-sizing: border-box;
+    pointer-events: none;
   }
+  .stop__dot {
+    width: 13px; height: 13px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    background: #ffffff;
+    border: 3.5px solid ${dark ? '#e5e5ea' : '#1C1C1E'};
+    box-shadow: 0 1px 3px rgba(0,0,0,0.45);
+    pointer-events: auto;
+    cursor: pointer;
+  }
+  .stop__name {
+    display: none;
+    margin-top: 2px;
+    max-width: 104px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    line-height: 14px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: ${dark ? '#ffffff' : '#1C1C1E'};
+    text-shadow:
+      0 0 3px ${dark ? 'rgba(0,0,0,0.95)' : 'rgba(255,255,255,0.95)'},
+      0 0 3px ${dark ? 'rgba(0,0,0,0.95)' : 'rgba(255,255,255,0.95)'};
+    pointer-events: auto;
+    cursor: pointer;
+  }
+  .stop--named .stop__name { display: block; }
+  .stop--selected .stop__dot { transform: scale(1.25); border-width: 4px; }
+  .stop--selected .stop__name { font-weight: 800; }
+  .leaflet-marker-icon.stop-marker { z-index: 400 !important; }
 
   .user-dot {
     width: 16px; height: 16px; border-radius: 50%;
@@ -197,8 +358,6 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
   'use strict';
 
   var LINE_COLOR = ${PALETTE};
-  var VEHICLE_COLOR = ${VEHICLE_PALETTE};
-  var VEHICLE_BORDER_COLOR = ${VEHICLE_BORDER_PALETTE};
   var dark = ${dark ? 'true' : 'false'};
 
   /* Line and stop names come from upstream feeds, so nothing reaches the DOM
@@ -210,10 +369,6 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
   }
 
   function colorFor(type) { return LINE_COLOR[type] || LINE_COLOR.unknown; }
-  function vehicleColorFor(type) { return VEHICLE_COLOR[type] || VEHICLE_COLOR.unknown; }
-  function vehicleBorderColorFor(type) {
-    return VEHICLE_BORDER_COLOR[type] || VEHICLE_BORDER_COLOR.unknown;
-  }
 
   /* --- the map ---------------------------------------------------------- */
 
@@ -261,6 +416,10 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
   var selectedId = null;
   var followId = null;
 
+  /** Every stop marker on the layer, in the order it was added. */
+  var stopMarkers = [];
+  var selectedStopId = null;
+
   /* --- route progress: travelled vs remaining ----------------------------- */
 
   var OFF_ROUTE_METERS = 150;
@@ -272,47 +431,276 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
   var progressLastVehicle = null; // { lat, lon } of the last projected fix
   var routePolylines = { halo: null, line: null, travel: null };
 
+  var TRAM_TYPES = { tram: 1, tramSpecial: 1, tramTemporary: 1 };
+
+  /* --- marker geometry ----------------------------------------------------
+   *
+   * Mirrors src/lib/vehicle-marker.ts, whose constants are interpolated here
+   * so the two cannot drift on a number. The badge and its tail are one shape,
+   * so the tail has to touch the badge's outline at every heading — and that
+   * outline is a rounded rectangle, 12px from its centre due north and 19px
+   * due east. A tail on a fixed orbit either floats off the short sides or is
+   * buried in the long ones, which is what the chevron this replaced did.
+   */
+  var BOX_HALF = 32;
+  var TAIL_LENGTH = ${TAIL_LENGTH};
+  var TAIL_OUTLINE = ${TAIL_OUTLINE};
+  var TAIL_SINK = ${TAIL_SINK};
+  var DOT_SIZE = ${DOT_SIZE};
+  var DOT_TAIL_LENGTH = ${DOT_TAIL_LENGTH};
+  var DOT_TAIL_OUTLINE = ${DOT_TAIL_OUTLINE};
+  var DOT_TAIL_SINK = ${DOT_TAIL_SINK};
+  var DENSITY_SIZES = ${JSON.stringify(DENSITY_SIZES)};
+
+  /** How big the one dot that survives a cell is, for the number it stands for. */
+  function dotSizeForDensity(count) {
+    if (count >= 8) return DENSITY_SIZES[3];
+    if (count >= 4) return DENSITY_SIZES[2];
+    if (count >= 2) return DENSITY_SIZES[1];
+    return DENSITY_SIZES[0];
+  }
+
+  function badgeWidth(label) {
+    var n = label.length;
+    return n <= 2 ? ${badgeWidthFor('11')} : n === 3 ? ${badgeWidthFor('111')} : ${badgeWidthFor('1111')};
+  }
+
+  /**
+   * Distance from the badge's centre to its outline, along a unit direction.
+   *
+   * A ray leaves a rounded rectangle either through a flat edge — when the
+   * crossing lands on the straight part — or through a corner arc, which is
+   * the quadratic for a ray hitting a circle centred on that corner.
+   */
+  function outlineDistance(ux, uy, a, b, r) {
+    var x = Math.abs(ux), y = Math.abs(uy);
+    var flatA = Math.max(0, a - r), flatB = Math.max(0, b - r);
+    if (x > 0) {
+      var tx = a / x;
+      if (tx * y <= flatB) return tx;
+    }
+    if (y > 0) {
+      var ty = b / y;
+      if (ty * x <= flatA) return ty;
+    }
+    var along = x * flatA + y * flatB;
+    var gap = flatA * flatA + flatB * flatB - r * r;
+    return along + Math.sqrt(Math.max(0, along * along - gap));
+  }
+
+  /**
+   * The custom properties the CSS above reads, for one vehicle's look.
+   *
+   * Both tails are placed here, the badge's and the dot's, because which one
+   * shows is decided later by a class — the tier must never rebuild an icon.
+   */
+  function markerVars(label, tram, selected, heading) {
+    var grow = selected ? ${BADGE_GROW_SELECTED} : 0;
+    var w = badgeWidth(label) + grow * 2;
+    var h = ${BADGE_HEIGHT} + grow * 2;
+    var r = tram ? ${BADGE_RADIUS_TRAM} + grow : h / 2;
+    var vars = '--badge-w:' + w + 'px;--badge-h:' + h + 'px;--badge-r:' + r + 'px;';
+    if (!Number.isFinite(heading)) return vars;
+
+    // Screen axes: x right, y down, heading 0 = north.
+    var radians = (heading * Math.PI) / 180;
+    var ux = Math.sin(radians), uy = -Math.cos(radians);
+    var base = outlineDistance(ux, uy, w / 2, h / 2, r) - TAIL_SINK;
+    // The dot is a circle for a bus and a 25%-rounded square for a tram, at
+    // whatever size it is drawn — the same outline the CSS gives it.
+    var dotR = tram ? DOT_SIZE * 0.25 : DOT_SIZE / 2;
+    var dotBase = outlineDistance(ux, uy, DOT_SIZE / 2, DOT_SIZE / 2, dotR) - DOT_TAIL_SINK;
+    return vars
+      + '--tail-top:' + (BOX_HALF - base - TAIL_LENGTH) + 'px;'
+      + '--tail-edge-top:' + (BOX_HALF - base - TAIL_LENGTH - TAIL_OUTLINE) + 'px;'
+      + '--dot-tail-top:' + (BOX_HALF - dotBase - DOT_TAIL_LENGTH) + 'px;'
+      + '--dot-tail-edge-top:' + (BOX_HALF - dotBase - DOT_TAIL_LENGTH - DOT_TAIL_OUTLINE) + 'px;';
+  }
+
+  /**
+   * The marker, with both of its forms in the DOM.
+   *
+   * Which one is shown is decided later, by class, so a zoom change or a
+   * de-collision pass never has to rebuild an icon.
+   */
   function iconHtml(vehicle, selected) {
-    var color = vehicleColorFor(vehicle.type);
-    var edge = vehicleBorderColorFor(vehicle.type);
+    var color = colorFor(vehicle.type);
     var chosen = selected ? ' vehicle--selected' : '';
+    var tram = Boolean(TRAM_TYPES[vehicle.type]);
+    var mode = tram ? ' vehicle--tram' : ' vehicle--bus';
     var label = String(vehicle.line == null ? '' : vehicle.line);
     var long = label.length > 3 ? ' vehicle__label--long' : '';
-    var rotation = Number.isFinite(vehicle.heading)
-      ? ' style="transform:rotate(' + vehicle.heading + 'deg)"'
-      : '';
-    var labelRotation = Number.isFinite(vehicle.heading)
-      ? ' style="transform:rotate(' + (-vehicle.heading) + 'deg)"'
-      : '';
-    var spike = Number.isFinite(vehicle.heading) ? '<div class="vehicle__spike"></div>' : '';
-    return '<div class="vehicle' + chosen + '" style="--vehicle-color:' + color
-      + ';--vehicle-edge:' + edge + '">'
-      + '<div class="vehicle__bearing"' + rotation + '>'
-      + spike + '<div class="vehicle__body">'
-      + '<span class="vehicle__label' + long + '"' + labelRotation + '>'
+    // The drawn angle is the bucketed one, so it always matches the key that
+    // decides whether the icon is rebuilt at all.
+    var angle = headingAngle(vehicle);
+    var bearing = angle === null
+      ? ''
+      : '<div class="vehicle__bearing" style="transform:rotate(' + angle + 'deg)">'
+        + '<div class="vehicle__tail-edge"></div><div class="vehicle__tail"></div></div>';
+    return '<div class="vehicle' + chosen + mode + '" style="--vehicle-color:' + color + ';'
+      + markerVars(label, tram, selected, angle) + '">'
+      + bearing
+      + '<div class="vehicle__body">'
+      + '<span class="vehicle__label' + long + '">'
       + escapeHtml(label) + '</span>'
-      + '</div></div></div>';
+      + '</div>'
+      + '<div class="vehicle__dot"></div>'
+      + '</div>';
+  }
+
+  /**
+   * How the fleet is drawn, by how much of the city is on screen.
+   *
+   * The same three tiers the native surface uses, at the zoom levels that
+   * correspond to its region spans: thinned dots across the whole city, all
+   * dots across a district, labelled badges down a street.
+   */
+  function tierFor() {
+    var zoom = map.getZoom();
+    if (zoom <= 11) return 'far';
+    if (zoom <= 13) return 'mid';
+    return 'near';
+  }
+
+  /**
+   * The heading, bucketed to 15° — and drawn at that angle, not the raw one.
+   *
+   * A degree of GPS jitter is not a change anyone can see on a 24px badge, and
+   * rebuilding every icon on the screen for it every ten seconds is the cost
+   * this avoids. Since the icon is only rebuilt when the bucket changes, the
+   * bucket is also the only angle that can honestly be drawn.
+   */
+  function headingAngle(vehicle) {
+    return Number.isFinite(vehicle.heading)
+      ? (Math.round(vehicle.heading / 15) % 24) * 15
+      : null;
   }
 
   /**
    * What the marker looks like, reduced to a string.
    *
-   * The heading is bucketed to 15° because otherwise a degree of GPS jitter
-   * counts as a change and redraws every icon on the screen on every poll.
+   * The tier is deliberately *not* part of this: it is a class, not an icon.
    */
   function keyFor(vehicle, selected) {
-    var bucket = Number.isFinite(vehicle.heading) ? Math.round(vehicle.heading / 15) : -1;
-    return vehicle.line + '|' + vehicle.type + '|' + bucket + '|' + (selected ? 1 : 0);
+    var angle = headingAngle(vehicle);
+    return vehicle.line + '|' + vehicle.type + '|' + angle + '|' + (selected ? 1 : 0);
   }
 
-  /** One place that knows the marker's geometry. */
+  /**
+   * One place that knows the marker's geometry.
+   *
+   * The box is fixed at BOX_HALF either way: nothing in it takes a pointer
+   * except the badge and the dot, so its size costs no one a click.
+   */
   function vehicleIcon(vehicle, selected) {
     return L.divIcon({
       className: 'vehicle-marker',
       html: iconHtml(vehicle, selected),
-      iconSize: [58, 58],
-      iconAnchor: [29, 29],
+      iconSize: [BOX_HALF * 2, BOX_HALF * 2],
+      iconAnchor: [BOX_HALF, BOX_HALF],
     });
+  }
+
+  /**
+   * The glide, switched on only for the moves this page makes itself.
+   *
+   * Leaflet moves markers too — at the end of every zoom, and on every
+   * viewreset — and those moves are a jump between two coordinate spaces, not a
+   * vehicle travelling. Transitioning them drags the whole fleet across the
+   * screen from its pre-zoom position. So the transition lives on a class that
+   * is only on the pane while a poll's own setLatLng calls are being made, and
+   * comes off the instant the map itself starts moving markers.
+   */
+  // Kept in step with GLIDE_MS in native-map.tsx and with the CSS above: the
+  // same vehicle travelling the same way, whichever surface is drawing it.
+  var GLIDE_MS = 1000;
+  var glideTimer = null;
+
+  function beginGlide() {
+    var pane = map.getPane('vehicles');
+    if (!pane) return;
+    pane.classList.add('is-gliding');
+    if (glideTimer) clearTimeout(glideTimer);
+    glideTimer = setTimeout(endGlide, GLIDE_MS);
+  }
+
+  function endGlide() {
+    if (glideTimer) { clearTimeout(glideTimer); glideTimer = null; }
+    var pane = map.getPane('vehicles');
+    if (pane) pane.classList.remove('is-gliding');
+  }
+
+  // A zoom mid-glide would otherwise animate from wherever the interrupted
+  // glide had got to, in the old scale, to the new one.
+  map.on('zoomstart', endGlide);
+  map.on('viewreset', endGlide);
+
+  /** The grid a marker has to have to itself, in screen pixels. */
+  var THIN_CELL = 26;
+  var LABEL_CELL = 46;
+
+  /**
+   * Decide, per marker, whether it is a badge, a dot, or not drawn at all.
+   *
+   * Pure class toggling on elements that already exist — no icon is rebuilt, so
+   * this can run on every pan, zoom and poll. Markers are walked in id order so
+   * the one that wins a cell is the same one from poll to poll; walking them in
+   * whatever order the payload arrived in made the survivor change every ten
+   * seconds and the map twinkled.
+   */
+  function applyTier() {
+    var tier = tierFor();
+    var cell = tier === 'far' ? THIN_CELL : LABEL_CELL;
+    var taken = tier === 'mid' ? null : Object.create(null);
+
+    var ids = Array.from(markers.keys()).sort(function (a, b) {
+      // The selected vehicle is considered first, so it always wins its cell.
+      if (a === selectedId) return -1;
+      if (b === selectedId) return 1;
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+
+    // What each marker's cell is, and how crowded it is. At city zoom the
+    // count is the whole point: the survivor is sized by how many it stands
+    // for, so a busy corridor reads as a thicker string of beads instead of
+    // looking exactly like an empty one.
+    var cells = [];
+    var counts = tier === 'far' ? Object.create(null) : null;
+    for (var c = 0; c < ids.length; c++) {
+      var owner = markers.get(ids[c]);
+      if (!owner || !taken) { cells.push(null); continue; }
+      var at = map.latLngToLayerPoint(owner.marker.getLatLng());
+      var cellKey = Math.round(at.x / cell) + ':' + Math.round(at.y / cell);
+      cells.push(cellKey);
+      if (counts) counts[cellKey] = (counts[cellKey] || 0) + 1;
+    }
+
+    for (var i = 0; i < ids.length; i++) {
+      var entry = markers.get(ids[i]);
+      var element = entry && entry.marker.getElement();
+      if (!element) continue;
+      var root = element.firstElementChild;
+      if (!root) continue;
+
+      var free = true;
+      var key = cells[i];
+      if (key !== null) {
+        free = !taken[key];
+        taken[key] = 1;
+      }
+
+      var selected = ids[i] === selectedId;
+      root.classList.toggle('vehicle--thinned', tier === 'far' && !free && !selected);
+      root.classList.toggle('vehicle--small', tier === 'far');
+      root.classList.toggle('vehicle--dot', tier !== 'near' || !(free || selected));
+
+      if (counts && free) {
+        // A style write, not a rebuilt icon — the same rule the classes follow.
+        var size = dotSizeForDensity(counts[key]);
+        root.style.setProperty('--far-dot', size + 'px');
+        root.style.setProperty('--far-ring', (size >= 10 ? 2 : 1.5) + 'px');
+      }
+    }
   }
 
   function tooltipFor(vehicle) {
@@ -335,6 +723,10 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
   function setVehicles(list) {
     var seen = new Set();
 
+    // Everything below this line that moves a marker is a vehicle travelling,
+    // so this is the one place the glide is allowed.
+    beginGlide();
+
     for (var i = 0; i < list.length; i++) {
       var vehicle = list[i];
       if (!vehicle || !isFinite(vehicle.lat) || !isFinite(vehicle.lon)) continue;
@@ -354,7 +746,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
           keyboard: false,
           riseOnHover: true,
         });
-        marker.bindTooltip(tooltipFor(vehicle), { direction: 'top', offset: [0, -22] });
+        marker.bindTooltip(tooltipFor(vehicle), { direction: 'top', offset: [0, -26] });
         marker.on('click', function (id) {
           return function (event) {
             // Without this the tap also reaches the map's own click handler,
@@ -403,10 +795,19 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
       markers.delete(id);
     });
 
+    applyTier();
+
     // The selected vehicle may have moved, so re-project its progress along the
     // route. Guarded so the idle map does no work on every poll.
     if (selectedId) updateRouteSplit();
   }
+
+  // Thinning and de-collision are decided in screen space, so both a zoom and a
+  // pan change the answer. Neither rebuilds an icon.
+  map.on('zoomend', applyTier);
+  map.on('moveend', applyTier);
+  map.on('zoomend', applyStopTier);
+  map.on('moveend', applyStopTier);
 
   function selectVehicle(id) {
     var previous = selectedId;
@@ -427,6 +828,10 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
       entry.marker.setIcon(vehicleIcon(entry.vehicle, isSelected));
       entry.key = keyFor(entry.vehicle, isSelected);
     });
+
+    // A selected vehicle is always drawn as a badge, whatever the tier and
+    // whichever marker took its cell.
+    applyTier();
 
     // A different vehicle (or a cleared selection) starts the progress state
     // over so the last split does not bleed onto a new route.
@@ -606,7 +1011,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     // on each poll, so selecting a moving vehicle never rebuilds the layers.
     routePolylines.halo = L.polyline([], {
       color: dark ? '#ffffff' : '#000000',
-      weight: 9,
+      weight: 6,
       opacity: dark ? 0.32 : 0.22,
       lineJoin: 'round',
       lineCap: 'round',
@@ -614,7 +1019,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
 
     routePolylines.line = L.polyline([], {
       color: color,
-      weight: 5.5,
+      weight: 4,
       opacity: 1,
       lineJoin: 'round',
       lineCap: 'round',
@@ -622,8 +1027,8 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
 
     routePolylines.travel = L.polyline([], {
       color: color,
-      weight: 5.5,
-      opacity: 0.3,
+      weight: 3,
+      opacity: 0.24,
       lineJoin: 'round',
       lineCap: 'round',
     }).addTo(routeLayer);
@@ -634,8 +1039,8 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
         icon: L.divIcon({
           className: '',
           html: '<div class="stop-dot" style="--line-color:' + color + '"></div>',
-          iconSize: [11, 11],
-          iconAnchor: [5.5, 5.5],
+          iconSize: [10, 10],
+          iconAnchor: [5, 5],
         }),
         keyboard: false,
       });
@@ -660,27 +1065,100 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     updateRouteSplit();
   }
 
-  /** Nearby stops, shown when nothing else is selected. */
+  /**
+   * The stops layer: a dot on the coordinate, the name under it.
+   *
+   * Both forms are in the DOM and a class decides which shows, the same way
+   * the vehicles work, so the de-collision pass below is a class toggle and
+   * never a rebuilt icon. Names are what the layer is for — a field of
+   * anonymous dots tells a rider nothing they cannot already see.
+   */
   function setStops(stops) {
     stopLayer.clearLayers();
+    stopMarkers.length = 0;
+
     (stops || []).forEach(function (stop) {
       if (!isFinite(stop.lat) || !isFinite(stop.lon)) return;
+      var name = String(stop.name || '');
       var marker = L.marker([stop.lat, stop.lon], {
         icon: L.divIcon({
-          className: '',
-          html: '<div class="stop-dot stop-dot--plain"></div>',
-          iconSize: [9, 9],
-          iconAnchor: [4.5, 4.5],
+          className: 'stop-marker',
+          html: '<div class="stop"><div class="stop__dot"></div>'
+            + '<div class="stop__name">' + escapeHtml(name) + '</div></div>',
+          iconSize: [STOP_BOX_W, STOP_BOX_H],
+          iconAnchor: [STOP_BOX_W / 2, STOP_DOT_CENTRE_Y],
         }),
         keyboard: false,
       });
-      marker.bindTooltip(escapeHtml(String(stop.name || '')), { direction: 'top', offset: [0, -8] });
       marker.on('click', function (event) {
         L.DomEvent.stopPropagation(event);
-        send({ type: 'stop', id: String(stop.id), name: String(stop.name || '') });
+        send({ type: 'stop', id: String(stop.id), name: name });
       });
       marker.addTo(stopLayer);
+      stopMarkers.push({ marker: marker, id: String(stop.id), name: name });
     });
+
+    applyStopTier();
+  }
+
+  /** The box the stop marker occupies, and where its dot sits inside it. */
+  var STOP_BOX_W = 104;
+  var STOP_BOX_H = 42;
+  var STOP_DOT_CENTRE_Y = 12;
+  /** A stop name needs more room than a two-digit line badge. */
+  var STOP_LABEL_CELL = 78;
+  /** Below this the map is showing districts, and no name would fit anyway. */
+  var STOP_LABEL_ZOOM = 15;
+
+  /**
+   * Which stops get their name, and which stay a dot.
+   *
+   * Two rules, in order. A place is named once — the stops endpoint answers
+   * with one record per platform, so a junction came back as "Galeria
+   * Dominikanska" five times over and was printed five times across the same
+   * block. Then the same screen-cell trick the vehicles use, at a wider cell
+   * because these are words. Every platform keeps its dot either way; the
+   * selected stop wins both rules.
+   */
+  function applyStopTier() {
+    var labelled = map.getZoom() >= STOP_LABEL_ZOOM;
+    var takenCells = Object.create(null);
+    var takenNames = Object.create(null);
+
+    var ordered = stopMarkers.slice().sort(function (a, b) {
+      if (a.id === selectedStopId) return -1;
+      if (b.id === selectedStopId) return 1;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+
+    for (var i = 0; i < ordered.length; i++) {
+      var entry = ordered[i];
+      var element = entry.marker.getElement();
+      var root = element && element.firstElementChild;
+      if (!root) continue;
+
+      var free = true;
+      if (labelled) {
+        var point = map.latLngToLayerPoint(entry.marker.getLatLng());
+        var cell = Math.round(point.x / STOP_LABEL_CELL) + ':' + Math.round(point.y / STOP_LABEL_CELL);
+        // Prefixed so a stop actually named "12:8" cannot collide with a cell.
+        var nameKey = 'n:' + entry.name;
+        free = !takenCells[cell] && !takenNames[nameKey];
+        if (free) {
+          takenCells[cell] = 1;
+          takenNames[nameKey] = 1;
+        }
+      }
+
+      var selected = entry.id === selectedStopId;
+      root.classList.toggle('stop--named', labelled && (free || selected));
+      root.classList.toggle('stop--selected', selected);
+    }
+  }
+
+  function setSelectedStop(id) {
+    selectedStopId = id ? String(id) : null;
+    applyStopTier();
   }
 
   function setUser(position) {
@@ -732,7 +1210,11 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     switch (message.type) {
       case 'vehicles': setVehicles(message.vehicles || []); break;
       case 'route': setRoute(message.shape); break;
-      case 'stops': setStops(message.stops || []); break;
+      case 'stops':
+        setStops(message.stops || []);
+        setSelectedStop(message.selectedId || null);
+        break;
+      case 'selectStop': setSelectedStop(message.id || null); break;
       case 'user': setUser(message.position); break;
       case 'theme': setTheme(Boolean(message.dark)); break;
       case 'select':
@@ -770,6 +1252,19 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
   map.on('moveend', function () {
     var center = map.getCenter();
     send({ type: 'moved', lat: center.lat, lon: center.lng, zoom: map.getZoom() });
+
+    // The radius that covers the corners of the screen, not just its middle:
+    // a stops request built from the shorter axis leaves gaps at the edges the
+    // rider can plainly see.
+    var bounds = map.getBounds();
+    var diagonal = bounds.getNorthWest().distanceTo(bounds.getSouthEast());
+    send({
+      type: 'viewport',
+      lat: center.lat,
+      lon: center.lng,
+      radiusMeters: Math.round(diagonal / 2),
+      zoom: map.getZoom(),
+    });
   });
 
   send({ type: 'ready' });

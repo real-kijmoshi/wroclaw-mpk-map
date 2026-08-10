@@ -24,9 +24,11 @@ export const OsmMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function Osm
     fitRoute = false,
     userPosition,
     nearbyStops,
+    selectedStopId,
     onSelectVehicle,
     onSelectStop,
     onBackground,
+    onViewportChange,
   },
   ref,
 ) {
@@ -59,8 +61,14 @@ export const OsmMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function Osm
     // A route's own stops own the layer while there is one; the nearby stops
     // would otherwise clear them.
     if (route) return;
-    mapRef.current?.send({ type: 'stops', stops: nearbyStops });
-  }, [nearbyStops, route]);
+    mapRef.current?.send({ type: 'stops', stops: nearbyStops, selectedId: selectedStopId ?? null });
+  }, [nearbyStops, route, selectedStopId]);
+
+  useEffect(() => {
+    // Selecting a stop must name it straight away, without waiting for the
+    // next stops payload to come round.
+    mapRef.current?.send({ type: 'selectStop', id: selectedStopId ?? null });
+  }, [selectedStopId]);
 
   useEffect(() => {
     mapRef.current?.send({ type: 'user', position: userPosition });
@@ -92,11 +100,19 @@ export const OsmMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function Osm
         case 'background':
           onBackground();
           break;
+        case 'viewport':
+          onViewportChange?.({
+            lat: message.lat,
+            lon: message.lon,
+            radiusMeters: message.radiusMeters,
+            zoom: message.zoom,
+          });
+          break;
         default:
           break;
       }
     },
-    [nearbyStops, onSelectVehicle, onSelectStop, onBackground, route],
+    [nearbyStops, onSelectVehicle, onSelectStop, onBackground, onViewportChange, route],
   );
 
   return <LiveMap ref={mapRef} dark={dark} onMessage={handleMessage} />;

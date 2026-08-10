@@ -13,10 +13,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LineBadge } from '@/components/line-badge';
 import { ModalScreen } from '@/components/modal-screen';
+import { StopAreaRow } from '@/components/stop-area-row';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { Motion, Radius, Space, Type, Weight } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
-import { etaParts, plural } from '@/lib/format';
+import { etaParts } from '@/lib/format';
 import {
   getAllLocations,
   getDeparturesForStops,
@@ -27,18 +28,18 @@ import {
   type Lines,
   type Stop,
 } from '@/lib/api';
-import { CATEGORY_ORDER, compareLines } from '@/lib/lines';
+import { CATEGORY_ORDER, compareLines, LINE_COLOR } from '@/lib/lines';
 import { mapIntentStore } from '@/lib/map-intent';
 import { recentStopsStore, useRecentStops } from '@/lib/recent-stops';
 import { selectionStore } from '@/lib/selection';
-import { searchStops } from '@/lib/stops-api';
+import { groupStopAreas, searchStops, type StopArea } from '@/lib/stops-api';
 
 const STOP_MIN_QUERY = 2;
 const DEBOUNCE_MS = 220;
 
 type LineResult = { line: string; type: LineType };
 type SearchResult =
-  | { kind: 'stop'; value: Stop }
+  | { kind: 'stop'; value: StopArea }
   | { kind: 'line'; value: LineResult }
   | { kind: 'vehicle'; value: FleetVehicle };
 type Results = { stops: Stop[]; lines: LineResult[]; vehicles: FleetVehicle[] };
@@ -118,38 +119,39 @@ export default function SearchScreen() {
   const visibleResults = resultQuery === needle ? results : EMPTY_RESULTS;
   const isSearching = !!needle && (loading || resultQuery !== needle);
   const activeError = error && resultQuery === needle;
-  const sameNameAreaCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const stop of visibleResults.stops) {
-      const key = normaliseStopName(stop.name);
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
-    return counts;
-  }, [visibleResults.stops]);
+  /**
+   * One row per place, not per platform.
+   *
+   * Searching "Rynek" returned its four boarding points as four identical
+   * rows — same name, same subtitle, same destination — which is the same
+   * duplication the nearby list had. Grouped with `groupStopAreas`, the one
+   * function that decides what counts as a single stop anywhere in the app.
+   */
+  const stopAreas = useMemo(() => groupStopAreas(visibleResults.stops), [visibleResults.stops]);
+
   const sections = useMemo<ResultSection[]>(() => {
     const all: ResultSection[] = [
-      { key: 'stop', title: 'Przystanki', data: visibleResults.stops.map((value) => ({ kind: 'stop', value })) },
+      { key: 'stop', title: 'Przystanki', data: stopAreas.map((value) => ({ kind: 'stop', value })) },
       { key: 'line', title: 'Linie', data: visibleResults.lines.map((value) => ({ kind: 'line', value })) },
       { key: 'vehicle', title: 'Pojazdy na żywo', data: visibleResults.vehicles.map((value) => ({ kind: 'vehicle', value })) },
     ];
     return all.filter((section) => section.data.length > 0);
-  }, [visibleResults]);
+  }, [stopAreas, visibleResults]);
 
   const openStop = useCallback((stop: Stop) => {
     recentStopsStore.add(stop);
     mapIntentStore.openStop(stop);
     router.back();
   }, [router]);
-  const selectStop = useCallback((stop: Stop) => {
-    const sameNamedAreas = visibleResults.stops.filter(
-      (candidate) => normaliseStopName(candidate.name) === normaliseStopName(stop.name),
-    );
-    if (sameNamedAreas.length > 1) {
-      setStopChoices(sameNamedAreas);
+  const selectStop = useCallback((area: StopArea) => {
+    // Several boarding points under one name: which one matters, because they
+    // face opposite directions. One boarding point: just open it.
+    if (area.platforms.length > 1) {
+      setStopChoices(area.platforms);
       return;
     }
-    openStop(stop);
-  }, [openStop, visibleResults.stops]);
+    openStop(area.primary);
+  }, [openStop]);
   const selectVehicle = useCallback((vehicle: FleetVehicle) => {
     mapIntentStore.openVehicle(vehicle);
     router.back();
@@ -159,7 +161,7 @@ export default function SearchScreen() {
   const showNoResults = !!needle && !isSearching && !activeError && sections.length === 0;
 
   return (
-    <ModalScreen title="Szukaj" subtitle="Przystanki, linie i pojazdy">
+    <ModalScreen title="Szukaj">
       <View style={styles.searchArea}>
         <View
           style={[
@@ -173,7 +175,7 @@ export default function SearchScreen() {
               setStopChoices(null);
               setQuery(text);
             }}
-            placeholder="Dokąd jedziesz?"
+            placeholder="Szukaj linii, przystanku, pojazdu"
             placeholderTextColor={theme.textSecondary}
             style={[styles.input, { color: theme.text }]}
             autoCapitalize="none"
@@ -196,9 +198,6 @@ export default function SearchScreen() {
             </Pressable>
           )}
         </View>
-        <ThemedText type="small" themeColor="textSecondary" style={styles.searchHint}>
-          Wpisz nazwę, numer linii albo kierunek.
-        </ThemedText>
       </View>
 
       {stopChoices ? (
@@ -225,16 +224,16 @@ export default function SearchScreen() {
         <SectionList
           sections={sections}
           keyExtractor={(item) => {
-            if (item.kind === 'stop') return `stop-${item.value.id}`;
+            if (item.kind === 'stop') return `stop-${item.value.primary.id}`;
             if (item.kind === 'line') return `line-${item.value.line}`;
             return `vehicle-${item.value.id}`;
           }}
           renderSectionHeader={({ section }) => (
             <View style={styles.sectionHeader}>
-              <ThemedText type="smallBold" themeColor="textSecondary">
-                {section.title}
+              <ThemedText type="footnote" weight="semibold" themeColor="textSecondary">
+                {section.title.toLocaleUpperCase('pl')}
               </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
+              <ThemedText type="footnote" themeColor="textSecondary">
                 {section.data.length}
               </ThemedText>
             </View>
@@ -242,9 +241,9 @@ export default function SearchScreen() {
           renderItem={({ item }) => {
             if (item.kind === 'stop') {
               return (
-                <StopRow
-                  stop={item.value}
-                  alternativeCount={sameNameAreaCounts.get(normaliseStopName(item.value.name)) ?? 1}
+                <StopAreaRow
+                  area={item.value}
+                  trailing={<Ionicons name="chevron-forward" size={17} color={theme.textTertiary} />}
                   onPress={() => selectStop(item.value)}
                 />
               );
@@ -259,8 +258,11 @@ export default function SearchScreen() {
             return <VehicleRow vehicle={item.value} onPress={() => selectVehicle(item.value)} />;
           }}
           keyboardDismissMode="on-drag"
+          // Without this the first tap on a result only dismisses the keyboard
+          // and the rider has to tap the same row twice.
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={[styles.results, { paddingBottom: insets.bottom + Spacing.five }]}
+          contentContainerStyle={[styles.results, { paddingBottom: insets.bottom + Space.xxl }]}
           ListFooterComponent={isSearching ? <InlineLoading /> : null}
         />
       )}
@@ -286,15 +288,6 @@ function matchesVehicle(vehicle: FleetVehicle, needle: string) {
     vehicle.trip?.headsign ?? '',
     vehicle.trip?.towards ?? '',
   ].join(' ').toLocaleUpperCase('pl').includes(needle);
-}
-
-function normaliseStopName(name: string) {
-  return name
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
-    .replace(/[łŁ]/g, 'l')
-    .toLocaleLowerCase('pl-PL')
-    .trim();
 }
 
 type StopAreaBoard = {
@@ -353,15 +346,15 @@ function StopAreaChooser({
           <Ionicons name="arrow-back" size={18} color={theme.text} />
         </Pressable>
         <View style={styles.chooserTitle}>
-          <ThemedText type="defaultSemiBold" numberOfLines={1}>{name}</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">Wybierz właściwe stanowisko</ThemedText>
+          <ThemedText type="headline" numberOfLines={1}>{name}</ThemedText>
+          <ThemedText type="footnote" themeColor="textSecondary">Wybierz właściwe stanowisko</ThemedText>
         </View>
       </View>
 
       {!boards ? (
         <View style={styles.centered}>
           <ActivityIndicator color={theme.accent} />
-          <ThemedText type="small" themeColor="textSecondary">Sprawdzamy odjazdy na każdym stanowisku…</ThemedText>
+          <ThemedText type="footnote" themeColor="textSecondary">Sprawdzamy odjazdy na każdym stanowisku…</ThemedText>
         </View>
       ) : (
         <SectionList
@@ -369,7 +362,7 @@ function StopAreaChooser({
           keyExtractor={({ stop }) => stop.id}
           renderSectionHeader={() => (
             <View style={styles.chooserHint}>
-              <ThemedText type="small" themeColor="textSecondary">
+              <ThemedText type="footnote" themeColor="textSecondary">
                 Linie pokazują, z którego miejsca odjeżdżają.
               </ThemedText>
             </View>
@@ -377,6 +370,7 @@ function StopAreaChooser({
           renderItem={({ item }) => (
             <PlatformRow board={item} onPress={() => onSelect(item.stop)} />
           )}
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.chooserList}
         />
@@ -406,17 +400,27 @@ function PlatformRow({ board, onPress }: { board: StopAreaBoard; onPress: () => 
       accessibilityRole="button"
       accessibilityLabel={`${platform}, ${label}`}
       style={({ pressed }) => [styles.platformRow, { borderColor: theme.separator }, pressed && styles.pressed]}>
-      <View style={[styles.platformIcon, { backgroundColor: hasTram ? 'rgba(11,95,191,0.12)' : theme.backgroundElement }]}>
-        <Ionicons name={hasTram ? 'train-outline' : 'bus-outline'} size={21} color={hasTram ? '#0B5FBF' : theme.textSecondary} />
+      {/*
+        * A line colour is always drawn the way a LineBadge draws it: solid, with
+        * white on top. That is the contrast the palette is built for (invariant
+        * 11) — as a 16% tint the tram blue is a dark colour on a dark card and
+        * the glyph disappears at 2.5:1.
+        */}
+      <View
+        style={[
+          styles.platformIcon,
+          { backgroundColor: hasTram ? LINE_COLOR.tram : hasBus ? LINE_COLOR.bus : theme.textSecondary },
+        ]}>
+        <Ionicons name={hasTram ? 'train' : 'bus'} size={20} color="#ffffff" />
       </View>
       <View style={styles.rowText}>
-        <ThemedText type="defaultSemiBold">{platform}</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">{label}</ThemedText>
-        {nextDeparture && <ThemedText type="small" themeColor="textSecondary">{nextDeparture}</ThemedText>}
+        <ThemedText type="headline">{platform}</ThemedText>
+        <ThemedText type="footnote" themeColor="textSecondary">{label}</ThemedText>
+        {nextDeparture && <ThemedText type="footnote" themeColor="textSecondary">{nextDeparture}</ThemedText>}
         {lines.length > 0 && (
           <View style={styles.platformBadges}>
             {lines.slice(0, 5).map(({ line, type }) => <LineBadge key={line} line={line} type={type} size="small" />)}
-            {lines.length > 5 && <ThemedText type="small" themeColor="textSecondary">+{lines.length - 5}</ThemedText>}
+            {lines.length > 5 && <ThemedText type="footnote" themeColor="textSecondary">+{lines.length - 5}</ThemedText>}
           </View>
         )}
       </View>
@@ -459,20 +463,32 @@ function StartState({
       keyExtractor={(item) => item.id}
       renderSectionHeader={({ section }) => (
         <View style={styles.startSectionHeader}>
-          <ThemedText type="smallBold" themeColor="textSecondary">{section.title}</ThemedText>
-          <Pressable onPress={onClearRecents} accessibilityRole="button" accessibilityLabel="Wyczyść ostatnie przystanki">
-            <ThemedText type="small" style={{ color: theme.accent }}>Wyczyść</ThemedText>
+          <ThemedText type="footnote" weight="semibold" themeColor="textSecondary" style={styles.sectionLabel}>{section.title.toLocaleUpperCase('pl')}</ThemedText>
+          <Pressable
+            onPress={onClearRecents}
+            accessibilityRole="button"
+            accessibilityLabel="Wyczyść ostatnie przystanki"
+            hitSlop={8}>
+            <ThemedText type="footnote" weight="semibold" color={theme.accent}>Wyczyść</ThemedText>
           </Pressable>
         </View>
       )}
-      renderItem={({ item }) => <StopRow stop={item} onPress={() => onSelectStop(item)} />}
+      renderItem={({ item }) => (
+        <StopAreaRow
+          area={asArea(item)}
+          trailing={<Ionicons name="chevron-forward" size={17} color={theme.textTertiary} />}
+          onPress={() => onSelectStop(item)}
+        />
+      )}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
       ListHeaderComponent={
         <View style={styles.welcome}>
           <View style={[styles.welcomeIcon, { backgroundColor: theme.backgroundElement }]}>
             <Ionicons name="navigate-outline" size={25} color={theme.text} />
           </View>
-          <ThemedText type="defaultSemiBold">Znajdź swój przejazd</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary" style={styles.welcomeText}>
+          <ThemedText type="headline">Znajdź swój przejazd</ThemedText>
+          <ThemedText type="footnote" themeColor="textSecondary" style={styles.welcomeText}>
             Wyniki otwierają się od razu na mapie z najbliższymi odjazdami.
           </ThemedText>
           <Pressable
@@ -480,48 +496,31 @@ function StartState({
             accessibilityRole="button"
             style={({ pressed }) => [styles.browseLines, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}>
             <Ionicons name="git-branch-outline" size={18} color={theme.text} />
-            <ThemedText type="smallBold">Przeglądaj linie</ThemedText>
+            <ThemedText type="footnote" weight="semibold">Przeglądaj linie</ThemedText>
             <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
           </Pressable>
         </View>
       }
       showsVerticalScrollIndicator={false}
-      contentContainerStyle={[styles.startContent, { paddingBottom: bottomInset + Spacing.five }]}
+      contentContainerStyle={[styles.startContent, { paddingBottom: bottomInset + Space.xxl }]}
     />
   );
 }
 
-function StopRow({
-  stop,
-  alternativeCount = 1,
-  onPress,
-}: {
-  stop: Stop;
-  alternativeCount?: number;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-  const hasChoice = alternativeCount > 1;
-  const meta = hasChoice
-    ? `${alternativeCount} ${plural(alternativeCount, ['lokalizacja', 'lokalizacje', 'lokalizacji'])} · wybierz stanowisko`
-    : stop.code
-      ? `Stanowisko ${stop.code}`
-      : 'Stanowisko';
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`${stop.name}${hasChoice ? `, ${meta}` : ''}`}
-      style={({ pressed }) => [styles.row, { borderBottomColor: theme.separator }, pressed && styles.pressed]}>
-      <ResultIcon name={hasChoice ? 'git-branch-outline' : 'location-outline'} highlighted={hasChoice} />
-      <View style={styles.rowText}>
-        <ThemedText>{stop.name}</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>{meta}</ThemedText>
-      </View>
-      <Ionicons name="chevron-forward" size={17} color={theme.textSecondary} />
-    </Pressable>
-  );
-}
+/**
+ * A stop the rider already picked, as an area of one.
+ *
+ * A recent stop is a specific boarding point — the direction was chosen when it
+ * was first opened — so it needs no chooser and is rendered by the same row as
+ * everything else rather than by a second, nearly-identical component.
+ */
+const asArea = (stop: Stop): StopArea => ({
+  primary: stop,
+  name: stop.name,
+  platforms: [stop],
+  distance: stop.distance,
+  lines: stop.lines ?? [],
+});
 
 function LineRow({ line, onPress }: { line: LineResult; onPress: () => void }) {
   const theme = useTheme();
@@ -530,7 +529,7 @@ function LineRow({ line, onPress }: { line: LineResult; onPress: () => void }) {
       <LineBadge line={line.line} type={line.type} />
       <View style={styles.rowText}>
         <ThemedText>Linia {line.line}</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">Pokaż trasę i pojazdy na mapie</ThemedText>
+        <ThemedText type="footnote" themeColor="textSecondary">Pokaż trasę i pojazdy na mapie</ThemedText>
       </View>
       <Ionicons name="chevron-forward" size={17} color={theme.textSecondary} />
     </Pressable>
@@ -545,63 +544,133 @@ function VehicleRow({ vehicle, onPress }: { vehicle: FleetVehicle; onPress: () =
       <LineBadge line={vehicle.line} type={vehicle.type} />
       <View style={styles.rowText}>
         <ThemedText numberOfLines={1}>{vehicle.vehicleLabel || `Pojazd ${vehicle.id}`}</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>Linia {vehicle.line} · {direction}</ThemedText>
+        <ThemedText type="footnote" themeColor="textSecondary" numberOfLines={1}>Linia {vehicle.line} · {direction}</ThemedText>
       </View>
       <Ionicons name="chevron-forward" size={17} color={theme.textSecondary} />
     </Pressable>
   );
 }
 
-function ResultIcon({
-  name,
-  highlighted = false,
-}: {
-  name: 'location-outline' | 'git-branch-outline';
-  highlighted?: boolean;
-}) {
-  const theme = useTheme();
-  return (
-    <View style={[styles.resultIcon, { backgroundColor: highlighted ? 'rgba(11,95,191,0.12)' : theme.backgroundElement }]}>
-      <Ionicons name={name} size={19} color={highlighted ? '#0B5FBF' : theme.textSecondary} />
-    </View>
-  );
-}
-
 function LoadingState() {
   const theme = useTheme();
-  return <View style={styles.centered}><ActivityIndicator color={theme.accent} /><ThemedText type="small" themeColor="textSecondary">Szukamy po mieście…</ThemedText></View>;
+  return <View style={styles.centered}><ActivityIndicator color={theme.accent} /><ThemedText type="footnote" themeColor="textSecondary">Szukamy po mieście…</ThemedText></View>;
 }
 function InlineLoading() { const theme = useTheme(); return <View style={styles.inlineLoading}><ActivityIndicator size="small" color={theme.accent} /></View>; }
-function NoResults({ query }: { query: string }) { const theme = useTheme(); return <View style={styles.centered}><Ionicons name="search-outline" size={30} color={theme.textSecondary} /><ThemedText type="defaultSemiBold">Brak wyników dla „{query}”</ThemedText><ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>Sprawdź pisownię albo spróbuj nazwy części przystanku.</ThemedText></View>; }
-function FailureState({ onRetry }: { onRetry: () => void }) { const theme = useTheme(); return <View style={styles.centered}><Ionicons name="cloud-offline-outline" size={30} color={theme.textSecondary} /><ThemedText type="defaultSemiBold">Nie udało się wyszukać</ThemedText><Pressable onPress={onRetry} accessibilityRole="button"><ThemedText type="linkPrimary">Spróbuj ponownie</ThemedText></Pressable></View>; }
+function NoResults({ query }: { query: string }) { const theme = useTheme(); return <View style={styles.centered}><Ionicons name="search-outline" size={30} color={theme.textSecondary} /><ThemedText type="headline">Brak wyników dla „{query}”</ThemedText><ThemedText type="footnote" themeColor="textSecondary" style={styles.emptyText}>Sprawdź pisownię albo spróbuj nazwy części przystanku.</ThemedText></View>; }
+function FailureState({ onRetry }: { onRetry: () => void }) { const theme = useTheme(); return <View style={styles.centered}><Ionicons name="cloud-offline-outline" size={30} color={theme.textSecondary} /><ThemedText type="headline">Nie udało się wyszukać</ThemedText><Pressable onPress={onRetry} accessibilityRole="button" hitSlop={8}><ThemedText type="callout" weight="semibold" color={theme.accent}>Spróbuj ponownie</ThemedText></Pressable></View>; }
 
 const styles = StyleSheet.create({
-  searchArea: { paddingHorizontal: Spacing.three, paddingTop: Spacing.three, paddingBottom: Spacing.two, gap: Spacing.one },
-  search: { minHeight: 52, borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.three },
-  input: { flex: 1, minWidth: 0, fontSize: 17, fontWeight: '500', paddingVertical: 0 },
-  searchHint: { paddingHorizontal: Spacing.one, },
-  results: { paddingBottom: Spacing.five },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: Spacing.three, paddingTop: Spacing.three, paddingBottom: Spacing.one },
-  row: { minHeight: 68, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
-  rowText: { flex: 1, gap: 1 },
-  resultIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.two, padding: Spacing.five },
-  inlineLoading: { alignItems: 'center', paddingVertical: Spacing.three },
+  searchArea: { paddingHorizontal: Space.lg, paddingBottom: Space.sm },
+  search: {
+    minHeight: 48,
+    borderRadius: Radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm,
+    paddingHorizontal: Space.md,
+  },
+  input: { ...Type.headline, flex: 1, minWidth: 0, fontWeight: Weight.medium, paddingVertical: 0 },
+  results: { paddingBottom: Space.xxl },
+  sectionLabel: { letterSpacing: 0.5 },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: Space.lg,
+    paddingTop: Space.lg,
+    paddingBottom: Space.xs,
+  },
+  row: {
+    minHeight: 64,
+    paddingHorizontal: Space.lg,
+    paddingVertical: Space.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
+  },
+  rowText: { flex: 1, gap: 1, minWidth: 0 },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Space.sm, padding: Space.xxl },
+  inlineLoading: { alignItems: 'center', paddingVertical: Space.lg },
   emptyText: { textAlign: 'center', maxWidth: 280 },
-  pressed: { opacity: 0.6 },
+  pressed: { opacity: Motion.pressedOpacity },
   chooser: { flex: 1 },
-  chooserHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.three, paddingTop: Spacing.three, paddingBottom: Spacing.two },
-  backButton: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  chooserTitle: { flex: 1, gap: 1 },
-  chooserHint: { paddingHorizontal: Spacing.three, paddingTop: Spacing.one, paddingBottom: Spacing.two },
-  chooserList: { paddingBottom: Spacing.five },
-  platformRow: { minHeight: 82, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, borderTopWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  platformIcon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  platformBadges: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginTop: Spacing.one },
-  startContent: { paddingBottom: Spacing.five },
-  welcome: { alignItems: 'center', paddingHorizontal: Spacing.five, paddingTop: Spacing.four, paddingBottom: Spacing.four, gap: Spacing.one },
-  welcomeIcon: { width: 52, height: 52, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.one },
+  chooserHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
+    paddingHorizontal: Space.lg,
+    paddingBottom: Space.sm,
+  },
+  backButton: {
+    width: 36,
+    height: 36,
+    borderRadius: Radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chooserTitle: { flex: 1, gap: 1, minWidth: 0 },
+  chooserHint: { paddingHorizontal: Space.lg, paddingTop: Space.xs, paddingBottom: Space.sm },
+  chooserList: { paddingBottom: Space.xxl },
+  platformRow: {
+    minHeight: 80,
+    paddingHorizontal: Space.lg,
+    paddingVertical: Space.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
+  },
+  platformIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: Radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Left-aligned: a partial last row centred leaves a margin that reads as a
+  // layout bug.
+  platformBadges: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: Space.xs,
+    marginTop: Space.xs,
+  },
+  startContent: { paddingBottom: Space.xxl },
+  welcome: {
+    alignItems: 'center',
+    paddingHorizontal: Space.xxl,
+    paddingTop: Space.lg,
+    paddingBottom: Space.xl,
+    gap: Space.xs,
+  },
+  welcomeIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: Radius.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Space.xs,
+  },
   welcomeText: { textAlign: 'center', maxWidth: 275 },
-  browseLines: { alignSelf: 'stretch', minHeight: 48, marginTop: Spacing.two, borderRadius: 15, paddingHorizontal: Spacing.three, flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  startSectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.three, paddingTop: Spacing.three, paddingBottom: Spacing.one },
+  browseLines: {
+    alignSelf: 'stretch',
+    minHeight: 48,
+    marginTop: Space.md,
+    borderRadius: Radius.md,
+    paddingHorizontal: Space.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
+  },
+  startSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Space.lg,
+    paddingTop: Space.lg,
+    paddingBottom: Space.xs,
+  },
 });

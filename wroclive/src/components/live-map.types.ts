@@ -4,7 +4,8 @@ import type { MapMessage } from '@/lib/map-html';
 export type MapCommand =
   | { type: 'vehicles'; vehicles: unknown[] }
   | { type: 'route'; shape: unknown | null }
-  | { type: 'stops'; stops: unknown[] }
+  | { type: 'stops'; stops: unknown[]; selectedId?: string | null }
+  | { type: 'selectStop'; id: string | null }
   | { type: 'user'; position: { lat: number; lon: number } | null }
   | { type: 'theme'; dark: boolean }
   | { type: 'select'; id: string | null; follow?: boolean; center?: boolean }

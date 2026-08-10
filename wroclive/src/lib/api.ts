@@ -259,6 +259,12 @@ export type Stop = {
   lines?: string[];
   lat: number;
   lon: number;
+  /**
+   * Metres from whatever point the query used — which is *not* always the
+   * rider. The stops layer asks around the centre of the map, so only a
+   * caller that knows it asked around a person may present this as "how far
+   * away it is"; everyone else measures for themselves.
+   */
   distance?: number;
 };
 
@@ -383,6 +389,54 @@ export function normaliseAlerts(payload: unknown): Alerts {
     alerts,
     lastRefreshAt: typeof payload.lastRefreshAt === 'string' ? payload.lastRefreshAt : null,
   };
+}
+
+/**
+ * One stop record, field by field.
+ *
+ * Every endpoint that serves stops — search, nearby, a line's stop list —
+ * comes through here, so a 503 body cannot arrive as a stop called "error" and
+ * a missing coordinate cannot reach the map as `NaN`. `lines` is optional
+ * because only some endpoints carry it, but it is what lets a nearby list and
+ * a map marker say anything about a stop beyond its name.
+ */
+export function normaliseStop(value: unknown): Stop | null {
+  if (!isRecord(value)) return null;
+
+  const id = typeof value.id === 'string' && value.id ? value.id : null;
+  const name = typeof value.name === 'string' ? value.name.trim() : '';
+  const lat = Number.isFinite(value.lat) ? (value.lat as number) : null;
+  const lon = Number.isFinite(value.lon) ? (value.lon as number) : null;
+  if (!id || !name || lat === null || lon === null) return null;
+
+  const stop: Stop = { id, name, lat, lon };
+
+  const code = optionalString(value.code);
+  if (code) stop.code = code;
+  if (Number.isFinite(value.distance)) stop.distance = value.distance as number;
+
+  const ids = Array.isArray(value.ids)
+    ? value.ids.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+    : [];
+  if (ids.length) stop.ids = ids;
+
+  const lines = Array.isArray(value.lines)
+    ? value.lines.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+    : [];
+  if (lines.length) stop.lines = lines;
+
+  return stop;
+}
+
+/** A `{stops: [...]}` body, with every unusable record dropped rather than kept. */
+export function normaliseStopList(payload: unknown, endpoint: string): Stop[] {
+  if (!isRecord(payload) || !Array.isArray(payload.stops)) {
+    throw new ApiError(`Unexpected ${endpoint} payload`, 0);
+  }
+  return payload.stops.flatMap((item) => {
+    const stop = normaliseStop(item);
+    return stop ? [stop] : [];
+  });
 }
 
 /** Only the MPK departure shape is served: `{departure, inSeconds, serviceDay}`. */
@@ -603,18 +657,26 @@ export const getDeparturesForStops = async (stop: Stop, options?: GetOptions): P
   return { stop: boards[0]?.stop ?? stop, departures };
 };
 
+/**
+ * Stops around a point.
+ *
+ * Used both for "near me" and for the stops inside the map's viewport, which is
+ * why the radius and the cap are callers' business: a locate button wants a
+ * short walk's worth, a zoomed-in map wants everything it can see.
+ */
 export const getStopsNear = async (
   lat: number,
   lon: number,
   radius = 700,
-  options?: GetOptions,
-) => {
-  const payload = await apiGet<{ stops: Stop[] }>(
-    `/stops/near?lat=${lat}&lon=${lon}&radius=${radius}&limit=40`,
-    options,
+  options?: GetOptions & { limit?: number },
+) =>
+  normaliseStopList(
+    await apiGet<unknown>(
+      `/stops/near?lat=${lat}&lon=${lon}&radius=${Math.round(radius)}&limit=${options?.limit ?? 40}`,
+      options,
+    ),
+    '/stops/near',
   );
-  return Array.isArray(payload?.stops) ? payload.stops : [];
-};
 
 export const getAlerts = async (options?: GetOptions) =>
   normaliseAlerts(await apiGet<unknown>('/alerts', options));

@@ -1,6 +1,8 @@
 import { useSyncExternalStore } from 'react';
 import { useColorScheme as useRNColorScheme } from 'react-native';
 
+import { usePreferences } from '@/lib/preferences';
+
 /** Nothing to subscribe to: this only reports whether we are on the client. */
 const subscribe = () => () => {};
 
@@ -12,14 +14,14 @@ const subscribe = () => () => {};
  * that differs between the server snapshot and the client — so hydration is
  * handled without a state update fired from an effect.
  */
-export function useColorScheme() {
-  const hasHydrated = useSyncExternalStore(
-    subscribe,
-    () => true,
-    () => false,
-  );
+export function useColorScheme(): 'light' | 'dark' {
+  const hasHydrated = useSyncExternalStore(subscribe, () => true, () => false);
+  const { colorScheme } = usePreferences();
+  const osScheme = useRNColorScheme();
 
-  const colorScheme = useRNColorScheme();
+  const resolved = colorScheme === 'system'
+    ? (osScheme === 'dark' ? 'dark' : 'light')
+    : colorScheme;
 
-  return hasHydrated ? colorScheme : 'light';
+  return hasHydrated ? resolved : 'light';
 }
