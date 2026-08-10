@@ -1,8 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
 
-import { type ThemeName, DEFAULT_THEME } from '@/constants/themes';
-
 /**
  * Settings the rider chose. Small enough to live outside React, like the line
  * filter it sits next to.
@@ -26,16 +24,25 @@ export type MapProvider = 'auto' | 'osm';
  */
 export type AppleMapType = 'standard' | 'satellite' | 'hybrid';
 
+/** The app's colour scheme: light, dark, or follow the system. */
+export type ColorScheme = 'light' | 'dark' | 'system';
+
 export type Preferences = {
   mapProvider: MapProvider;
   /** Base map style for the system (MapKit) surface on iOS. */
   appleMapType: AppleMapType;
-  /** Draw stops near the rider when nothing else is selected. */
+  /**
+   * Draw the stops layer.
+   *
+   * The key is historical — it used to mean "stops around the rider, after the
+   * locate button" — and is kept so a stored choice survives the upgrade. What
+   * it now controls is the layer that follows the map's viewport.
+   */
   showNearbyStops: boolean;
   /** Keep the selected vehicle centred and fit its route into view. */
   followSelectedVehicle: boolean;
-  /** Accent theme for links and selected-state markers (amber stays fixed). */
-  theme: ThemeName;
+  /** Light, dark, or follow the system colour scheme. */
+  colorScheme: ColorScheme;
 };
 
 const DEFAULTS: Preferences = {
@@ -43,7 +50,7 @@ const DEFAULTS: Preferences = {
   appleMapType: 'standard',
   showNearbyStops: true,
   followSelectedVehicle: false,
-  theme: DEFAULT_THEME,
+  colorScheme: 'system',
 };
 
 let preferences: Preferences = DEFAULTS;

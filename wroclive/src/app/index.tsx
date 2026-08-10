@@ -1,39 +1,48 @@
-import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 
-import { Glass } from '@/components/glass';
-import { MapView } from '@/components/map-view';
-import type { MapRoute, MapSurfaceHandle } from '@/components/map-surface.types';
-import { Sheet } from '@/components/sheet';
-import { StopDetails } from '@/components/stop-details';
-import { ThemedText } from '@/components/themed-text';
-import { VehicleDetails } from '@/components/vehicle-details';
-import { Spacing } from '@/constants/theme';
+import { MapControls } from '@/components/map-controls';
+import { MapLayers } from '@/components/map-layers';
+import { MapSheet, MEDIUM_FRACTION, type Detent } from '@/components/map-sheet';
+import { MapSheetHeader, MapSheetHome, type LiveStatus } from '@/components/map-sheet-home';
+import { MapView, platformMapAvailable } from '@/components/map-view';
+import type { MapRoute, MapSurfaceHandle, MapViewport } from '@/components/map-surface.types';
+import { StopDetails, StopSummary } from '@/components/stop-details';
+import { VehicleDetails, VehicleSummary } from '@/components/vehicle-details';
+import { Space } from '@/constants/design';
+import { useAreaStops } from '@/hooks/use-area-stops';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePoll } from '@/hooks/use-poll';
 import { useTheme } from '@/hooks/use-theme';
-import { getDeparturesForStops, getLocations, getShape, getStopsNear, getVehicle, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
+import { getAlerts, getDeparturesForStops, getLocations, getShape, getStopsNear, getVehicle, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
 import { REFRESH_MS } from '@/lib/config';
 import { plural } from '@/lib/format';
 import { colorFor } from '@/lib/lines';
 import { mapIntentStore, useMapIntent } from '@/lib/map-intent';
 import { usePreferences } from '@/lib/preferences';
-import { selectionStore, useSelectedLines } from '@/lib/selection';
+import { failed, tapped } from '@/lib/haptics';
+import { useSelectedLines } from '@/lib/selection';
+import { groupStopAreas } from '@/lib/stops-api';
 
 type Selection =
   | { kind: 'vehicle'; id: string }
   | { kind: 'stop'; stop: Stop }
   | null;
 
+/** Clearance between the sheet's top edge and the map controls above it. */
+const CONTROLS_GAP = Space.md;
+
+/** How far around the rider the sheet's "near you" list reaches — a short walk. */
+const NEARBY_RADIUS_METERS = 700;
+
 export default function MapScreen() {
   const scheme = useColorScheme();
   const dark = scheme === 'dark';
   const theme = useTheme();
-  const insets = useSafeAreaInsets();
+  const screen = useWindowDimensions();
   const router = useRouter();
 
   const mapRef = useRef<MapSurfaceHandle>(null);
@@ -49,8 +58,44 @@ export default function MapScreen() {
   // line filter deliberately excludes it.
   const [pinnedVehicle, setPinnedVehicle] = useState<FleetVehicle | null>(null);
   const [userPosition, setUserPosition] = useState<{ lat: number; lon: number } | null>(null);
-  const [nearbyStops, setNearbyStops] = useState<Stop[]>([]);
+  /** Stops around the rider, for the sheet's list. Distinct from what the map draws. */
+  const [myStops, setMyStops] = useState<Stop[]>([]);
   const [locating, setLocating] = useState(false);
+  /** What the map is showing, reported by whichever surface is mounted. */
+  const [viewport, setViewport] = useState<MapViewport | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  /* --- the sheet ------------------------------------------------------------ */
+
+  const [detent, setDetent] = useState<Detent>('collapsed');
+  const [layersOpen, setLayersOpen] = useState(false);
+
+  /**
+   * How much of the sheet is on screen, written by the sheet on every frame of
+   * a drag. The map controls ride on it, which is what replaced the hardcoded
+   * "188 when a vehicle is open, 262 when a stop is" offsets.
+   */
+  const sheetHeight = useSharedValue(0);
+
+  const controlsStyle = useAnimatedStyle(() => {
+    // Full visibility right through the medium detent — that is the detent a
+    // rider spends most of their time at, and a locate button that has already
+    // half-faded there reads as broken rather than as deliberate. Only past it,
+    // where the sheet has covered the map and the controls have nothing left to
+    // control, do they get out of the way instead of being pushed off the top.
+    const fadeStart = screen.height * (MEDIUM_FRACTION + 0.02);
+    const fadeEnd = fadeStart + 100;
+    const rise = Math.min(sheetHeight.value + CONTROLS_GAP, fadeEnd);
+    const fade = Math.max(0, Math.min(1, (fadeEnd - sheetHeight.value) / (fadeEnd - fadeStart)));
+    return { transform: [{ translateY: -rise }], opacity: fade };
+  });
+
+  // The fleet payload has an authoritative timestamp. Tick only the copy in
+  // the sheet header so "Live · 3 s temu" stays honest between ten-second polls.
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, []);
 
   /* --- the fleet ---------------------------------------------------------- */
 
@@ -68,6 +113,13 @@ export default function MapScreen() {
       }),
     REFRESH_MS.vehicles,
     { key: linesKey },
+  );
+
+  // Only for the count on the sheet's "Utrudnienia" row — the alerts screen
+  // does its own polling and owns the list.
+  const alerts = usePoll(
+    (signal) => getAlerts({ signal, retryWhileLoading: false }),
+    REFRESH_MS.alerts,
   );
 
   const filteredVehicles = fleet.data?.locations ?? EMPTY_VEHICLES;
@@ -171,19 +223,38 @@ export default function MapScreen() {
   }, [focusedLine]);
 
   const handleVehicle = useCallback((id: string) => {
+    tapped();
     setFocusedLine(null);
     setPinnedVehicle(null);
     setSelection({ kind: 'vehicle', id });
+    setDetent('medium');
+    setLayersOpen(false);
   }, []);
   const handleStop = useCallback((stop: Stop) => {
+    tapped();
     setSelection({ kind: 'stop', stop });
+    setDetent('medium');
+    setLayersOpen(false);
   }, []);
   const handleBackground = useCallback(() => {
     setSelection(null);
     setFocusedLine(null);
     setPinnedVehicle(null);
+    setDetent('collapsed');
+    setLayersOpen(false);
   }, []);
-  const closeSheet = useCallback(() => setSelection(null), []);
+  /**
+   * Putting the open selection away.
+   *
+   * The sheet never leaves the screen — dragging it below its collapsed detent
+   * means "I am done with this", so the home content comes back rather than the
+   * map being left bare with chrome floating on it.
+   */
+  const closeSelection = useCallback(() => {
+    setSelection(null);
+    setFocusedLine(null);
+    setPinnedVehicle(null);
+  }, []);
 
   // A stop opened from search posts an `open-stop` intent. It is consumed
   // here, once: the map recentres on the stop and the existing stop sheet
@@ -201,25 +272,45 @@ export default function MapScreen() {
       setFocusedLine(null);
       setPinnedVehicle(null);
       setSelection({ kind: 'stop', stop });
+      setDetent('medium');
     } else if (consumed?.kind === 'open-line') {
       setSelection(null);
       setPinnedVehicle(null);
       setFocusedLine({ line: consumed.line, type: consumed.type });
+      setDetent('collapsed');
     } else if (consumed?.kind === 'open-vehicle') {
       mapRef.current?.centerOn(consumed.vehicle.lat, consumed.vehicle.lon, 16);
       setFocusedLine(null);
       setPinnedVehicle(consumed.vehicle);
       setSelection({ kind: 'vehicle', id: consumed.vehicle.id });
+      setDetent('medium');
     }
   }, [intent, handleStop, handleVehicle]);
 
   /* --- where the rider is --------------------------------------------------- */
 
+  /**
+   * Why the locate button did nothing, when it did nothing.
+   *
+   * A button that silently does nothing is the worst version of this: the
+   * rider presses it again, and again. Denial and failure are different
+   * problems with different answers — one is fixed in Settings, the other by
+   * trying again — so they are told apart and said out loud.
+   */
+  const [locateProblem, setLocateProblem] = useState<'denied' | 'failed' | null>(null);
+
   const locate = useCallback(async () => {
     setLocating(true);
+    setLocateProblem(null);
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') return;
+      const { status, canAskAgain } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        // Only "denied for good" sends someone to Settings; a dismissed prompt
+        // can simply be asked again by pressing the button.
+        setLocateProblem(canAskAgain ? null : 'denied');
+        if (!canAskAgain) failed();
+        return;
+      }
 
       const position = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
@@ -227,51 +318,68 @@ export default function MapScreen() {
       const coords = { lat: position.coords.latitude, lon: position.coords.longitude };
 
       setUserPosition(coords);
-      mapRef.current?.centerOn(coords.lat, coords.lon, 15);
+      mapRef.current?.centerOn(coords.lat, coords.lon, 16);
 
-      if (showNearbyStops) setNearbyStops(await getStopsNear(coords.lat, coords.lon));
+      // For the sheet's list only. What the map draws follows the viewport and
+      // does not wait for this.
+      setMyStops(await getStopsNear(coords.lat, coords.lon, NEARBY_RADIUS_METERS));
     } catch {
-      // Location is a convenience here; the map works without it.
+      // A fix can fail indoors, or the stops request can. Either way the map
+      // still works — say so and let the rider try again.
+      setLocateProblem('failed');
+      failed();
     } finally {
       setLocating(false);
     }
-  }, [showNearbyStops]);
+  }, []);
 
-  // Turning the setting off hides them straight away, without another render
-  // spent clearing the list it was holding.
-  const visibleStops = showNearbyStops ? nearbyStops : EMPTY_STOPS;
+  /* --- the stops layer -------------------------------------------------------- */
+
+  /**
+   * Stops follow the map, not the locate button.
+   *
+   * They used to appear only after the rider had shared their position, so
+   * panning to a district you were not standing in showed a map with no stops
+   * on it at all. Zooming in anywhere now loads what is there.
+   */
+  const areaStops = useAreaStops(viewport, showNearbyStops);
+
   const selectedStop = selection?.kind === 'stop' ? selection.stop : null;
-  // The selected search result is always a map marker, even with the nearby
-  // stops preference off. This also preserves the real coordinates received
-  // from search instead of replacing them with the map tap's id and name.
+  // The selected stop is always a map marker, even where the layer is off or
+  // the stop is outside the loaded area. This also preserves the real
+  // coordinates received from search instead of replacing them with the map
+  // tap's id and name.
   const mapStops = useMemo(() => {
     if (!selectedStop || !Number.isFinite(selectedStop.lat) || !Number.isFinite(selectedStop.lon)) {
-      return visibleStops;
+      return areaStops;
     }
-    return [selectedStop, ...visibleStops.filter((stop) => stop.id !== selectedStop.id)];
-  }, [selectedStop, visibleStops]);
+    return [selectedStop, ...areaStops.filter((stop) => stop.id !== selectedStop.id)];
+  }, [selectedStop, areaStops]);
+
+  /**
+   * The sheet's list: the places around the rider, not the raw platforms.
+   *
+   * `/stops/near` answers with one record per platform, so a street's stop came
+   * back two or three times — the list read "Spółdzielcza 10 m / Spółdzielcza
+   * 10 m / Spółdzielcza 40 m" and buried the next real stop below the fold.
+   */
+  const nearbyAreas = useMemo(() => groupStopAreas(myStops), [myStops]);
 
   /* --- status --------------------------------------------------------------- */
 
-  const status = (() => {
-    if (fleet.error) return { text: 'Brak połączenia z serwerem', tone: 'error' as const };
-    if (!fleet.data) return { text: 'Ładowanie…', tone: 'loading' as const };
-    if (!fleet.data.count) return { text: 'Brak pojazdów w tej chwili', tone: 'loading' as const };
+  const status: LiveStatus = (() => {
+    if (fleet.error) return { text: 'Brak połączenia', freshness: 'Spróbujemy ponownie', tone: 'error' };
+    if (!fleet.data) return { text: 'Łączenie z siecią', freshness: 'Pobieranie pojazdów', tone: 'loading' };
+    if (!fleet.data.count) return { text: 'Brak pojazdów', freshness: 'Live', tone: 'loading' };
     return {
       text: `${fleet.data.count} ${plural(fleet.data.count, ['pojazd', 'pojazdy', 'pojazdów'])}`,
-      tone: fleet.data.stale ? ('stale' as const) : ('live' as const),
+      freshness: freshnessLabel(fleet.data.lastUpdated, fleet.data.stale, now),
+      tone: fleet.data.stale ? 'stale' : 'live',
     };
   })();
 
-  const dotColor =
-    status.tone === 'live'
-      ? theme.success
-      : status.tone === 'error'
-        ? theme.danger
-        : theme.textSecondary;
-
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.background }]}>
       <MapView
         ref={mapRef}
         dark={dark}
@@ -282,235 +390,131 @@ export default function MapScreen() {
         fitRoute={Boolean(focusedLine)}
         userPosition={userPosition}
         nearbyStops={mapStops}
+        selectedStopId={stopId}
         onSelectVehicle={handleVehicle}
         onSelectStop={handleStop}
         onBackground={handleBackground}
+        onViewportChange={setViewport}
       />
 
-      {/* Floating chrome. `box-none` so taps fall through to the map itself. */}
-      <View
+      {/* Dismisses the layer picker without also clearing the selection, which
+          a press on the map itself would. Below the controls in the tree so it
+          never swallows a press meant for them. */}
+      {layersOpen && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Zamknij warstwy mapy"
+          style={StyleSheet.absoluteFill}
+          onPress={() => setLayersOpen(false)}
+        />
+      )}
+
+      {/* Anchored to the bottom and lifted by the sheet, so one animated value
+          keeps the controls just clear of it at every detent and mid-drag. */}
+      <Animated.View
         pointerEvents="box-none"
-        style={[styles.overlay, { paddingTop: insets.top + Spacing.two }]}>
-        <View style={styles.topRow} pointerEvents="box-none">
-          <Glass variant="regular" style={styles.statusPill}>
-            <View style={[styles.dot, { backgroundColor: dotColor }]} />
-            <View style={styles.statusText}>
-              <ThemedText type="smallBold" numberOfLines={1}>
-                {status.text}
-              </ThemedText>
-            </View>
-          </Glass>
-
-          {selectedLines.length > 0 && (
-            <Pressable
-              onPress={() => selectionStore.clear()}
-              accessibilityRole="button"
-              accessibilityLabel="Wyczyść filtr linii">
-              <Glass variant="regular" interactive style={styles.filterChip}>
-                <Ionicons name="funnel" size={13} color={theme.text} />
-                <ThemedText type="smallBold">{selectedLines.length}</ThemedText>
-                <Ionicons name="close" size={15} color={theme.textSecondary} />
-              </Glass>
-            </Pressable>
-          )}
-
-          <Pressable
-            onPress={() => router.push('/search')}
-            accessibilityRole="button"
-            accessibilityLabel="Szukaj przystanku"
-            style={({ pressed }) => [styles.searchButton, pressed && styles.pressed]}>
-            <Glass variant="regular" interactive style={styles.searchButtonInner}>
-              <Ionicons name="search" size={20} color={theme.text} />
-            </Glass>
-          </Pressable>
-        </View>
-      </View>
-
-      <View
-        pointerEvents="box-none"
-        style={[styles.sideControls, { bottom: insets.bottom + Spacing.four }]}>
-        <RoundButton
-          icon="git-branch"
-          label="Linie"
-          onPress={() => router.push('/lines')}
-          badge={selectedLines.length || undefined}
+        style={[styles.controls, { right: Space.lg }, controlsStyle]}>
+        {layersOpen && (
+          <View style={styles.layers}>
+            <MapLayers onClose={() => setLayersOpen(false)} />
+          </View>
+        )}
+        <MapControls
+          controls={[
+            ...(platformMapAvailable
+              ? [
+                  {
+                    icon: 'layers-outline' as const,
+                    label: 'Warstwy mapy',
+                    onPress: () => setLayersOpen((open) => !open),
+                  },
+                ]
+              : []),
+            {
+              icon: locating ? 'ellipsis-horizontal' : 'locate',
+              label: 'Pokaż moją lokalizację',
+              onPress: locate,
+              disabled: locating,
+            },
+          ]}
         />
-        <RoundButton
-          icon="warning-outline"
-          label="Utrudnienia"
-          onPress={() => router.push('/alerts')}
-        />
-        <RoundButton
-          icon="settings-outline"
-          label="Ustawienia"
-          onPress={() => router.push('/settings')}
-        />
-        <RoundButton
-          icon={locating ? 'ellipsis-horizontal' : 'locate'}
-          label="Pokaż moją lokalizację"
-          onPress={locate}
-          disabled={locating}
-        />
-      </View>
+      </Animated.View>
 
-      <Sheet
-        visible={selection !== null}
-        onClose={closeSheet}
-        peekHeight={selection?.kind === 'vehicle' ? 340 : 300}>
+      <MapSheet
+        detent={detent}
+        onDetentChange={setDetent}
+        onDismiss={closeSelection}
+        visibleHeight={sheetHeight}
+        header={
+          vehicleId ? (
+            <VehicleSummary detail={detail.data} onClose={closeSelection} />
+          ) : stopId && selectedStop ? (
+            <StopSummary
+              stop={selectedStop}
+              userPosition={userPosition}
+              onClose={closeSelection}
+            />
+          ) : (
+            <MapSheetHeader
+              status={status}
+              onSearch={() => router.push('/search')}
+              onSettings={() => router.push('/settings')}
+            />
+          )
+        }>
         {/* Keyed off what is actually selected, so a dismissed sheet is not
             left rendering a departure board for a stop nobody picked. */}
         {vehicleId ? (
-          <VehicleDetails detail={detail.data} loading={detail.loading} error={detail.error} />
+          <VehicleDetails
+            detail={detail.data}
+            loading={detail.loading}
+            error={detail.error}
+            onOpenRoute={() => {
+              const vehicle = detail.data?.vehicle;
+              if (vehicle) mapRef.current?.centerOn(vehicle.lat, vehicle.lon, 14);
+            }}
+          />
         ) : stopId ? (
           <StopDetails data={departures.data} loading={departures.loading} error={departures.error} />
-        ) : null}
-      </Sheet>
+        ) : (
+          <MapSheetHome
+            selectedLineCount={selectedLines.length}
+            alertCount={alerts.data?.alerts.length ?? null}
+            nearbyAreas={nearbyAreas}
+            located={userPosition !== null}
+            locating={locating}
+            locateProblem={locateProblem}
+            offline={Boolean(fleet.error)}
+            onRetry={fleet.refresh}
+            onLines={() => router.push('/lines')}
+            onAlerts={() => router.push('/alerts')}
+            onLocate={locate}
+            onStop={(stop) => {
+              mapRef.current?.centerOn(stop.lat, stop.lon, 17);
+              handleStop(stop);
+            }}
+          />
+        )}
+      </MapSheet>
     </View>
   );
 }
 
-function RoundButton({
-  icon,
-  label,
-  onPress,
-  disabled,
-  badge,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-  badge?: number;
-}) {
-  const theme = useTheme();
-
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled: Boolean(disabled) }}
-      style={({ pressed }) => [
-        styles.roundButtonPressable,
-        pressed && !disabled && styles.pressed,
-        disabled && styles.disabled,
-      ]}>
-      <View style={styles.roundButtonWrap}>
-        <Glass variant="regular" interactive style={styles.roundButton}>
-          <Ionicons name={icon} size={20} color={theme.text} />
-        </Glass>
-        {badge !== undefined && (
-          // Outside Glass on purpose: Glass clips to its rounded shape with
-          // `overflow: hidden`, which cut off this badge where it pokes past
-          // the button's edge.
-          <View style={[styles.badge, { backgroundColor: theme.text }]}>
-            <ThemedText
-              type="small"
-              style={[styles.badgeText, { color: theme.background }]}
-              allowFontScaling={false}>
-              {badge}
-            </ThemedText>
-          </View>
-        )}
-      </View>
-    </Pressable>
-  );
-}
-
-// Stable empty arrays: a new `[]` every render would re-run the effects that
+// A stable empty array: a new `[]` every render would re-run the effects that
 // push data into the map.
 const EMPTY_VEHICLES: never[] = [];
-const EMPTY_STOPS: never[] = [];
 
-/** Floating chrome needs a shadow to separate it from the map underneath. */
-const shadow = Platform.select({
-  ios: {
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-  },
-  android: { elevation: 6 },
-  default: { boxShadow: '0 4px 14px rgba(0,0,0,0.18)' },
-}) as object;
+function freshnessLabel(lastUpdated: string | null, stale: boolean, now: number) {
+  if (!lastUpdated) return stale ? 'Dane nieaktualne' : 'Live';
+  const parsed = Date.parse(lastUpdated);
+  if (!Number.isFinite(parsed)) return stale ? 'Dane nieaktualne' : 'Live';
+  const seconds = Math.max(0, Math.floor((now - parsed) / 1_000));
+  const elapsed = seconds < 5 ? 'teraz' : seconds < 60 ? `${seconds} s temu` : `${Math.floor(seconds / 60)} min temu`;
+  return stale ? `Ostatnio · ${elapsed}` : `Live · ${elapsed}`;
+}
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  overlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    paddingHorizontal: Spacing.three,
-  },
-  topRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
-  },
-  statusPill: {
-    flexShrink: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: 22,
-    ...shadow,
-  },
-  statusText: { flexShrink: 1, minWidth: 0 },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  filterChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.one,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: 22,
-    ...shadow,
-  },
-  searchButton: {
-    marginLeft: 'auto',
-  },
-  searchButtonInner: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...shadow,
-  },
-  pressed: { opacity: 0.6 },
-  disabled: { opacity: 0.5 },
-  sideControls: {
-    position: 'absolute',
-    right: Spacing.three,
-    gap: Spacing.two,
-  },
-  roundButtonWrap: {
-    width: 46,
-    height: 46,
-  },
-  roundButtonPressable: { borderRadius: 23 },
-  roundButton: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...shadow,
-  },
-  badge: {
-    position: 'absolute',
-    top: -2,
-    right: -2,
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
-    paddingHorizontal: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  badgeText: { fontSize: 11, lineHeight: 14, fontWeight: '700' },
+  controls: { position: 'absolute', bottom: 0, alignItems: 'flex-end', gap: Space.sm },
+  layers: { alignItems: 'flex-end' },
 });

@@ -1,11 +1,12 @@
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
+import { Weight } from '@/constants/design';
 import { colorFor } from '@/lib/lines';
 
 export type LineBadgeProps = {
   line: string;
   type?: string | null;
-  size?: 'small' | 'medium' | 'large';
+  size?: 'xs' | 'small' | 'medium' | 'large';
   style?: StyleProp<ViewStyle>;
 };
 
@@ -44,6 +45,8 @@ export function LineBadge({ line, type, size = 'medium', style }: LineBadgeProps
 }
 
 const SIZES = {
+  /** Inline in a row of running text. */
+  xs: { box: 22, font: 11, padding: 5 },
   small: { box: 26, font: 13, padding: 6 },
   medium: { box: 34, font: 16, padding: 8 },
   large: { box: 44, font: 20, padding: 10 },
@@ -56,7 +59,7 @@ const styles = StyleSheet.create({
   },
   label: {
     color: '#ffffff',
-    fontWeight: '800',
+    fontWeight: Weight.heavy,
     letterSpacing: -0.3,
     // Digits line up when badges stack in a column, the way they do on the map.
     fontVariant: ['tabular-nums'],

@@ -53,6 +53,19 @@ export function plural(count: number, [one, few, many]: [string, string, string]
   return many;
 }
 
+/**
+ * How far away a nearby stop is.
+ *
+ * Metres up to a kilometre — the resolution someone deciding whether to walk
+ * actually wants — and rounded to 10m, because the position this is measured
+ * from is a phone fix and not worth more precision than that.
+ */
+export function formatDistance(meters: number | null | undefined): string | null {
+  if (meters === null || meters === undefined || !Number.isFinite(meters)) return null;
+  if (meters < 1000) return `${Math.max(10, Math.round(meters / 10) * 10)} m`;
+  return `${(meters / 1000).toFixed(1).replace('.', ',')} km`;
+}
+
 /** Relative age of an alert or a fleet snapshot. */
 export function formatAge(timestamp: number | string | null | undefined): string {
   if (timestamp === null || timestamp === undefined) return '';

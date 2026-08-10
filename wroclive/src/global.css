@@ -7,3 +7,20 @@
   --font-rounded: 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif;
   --font-serif: Georgia, 'Times New Roman', serif;
 }
+
+/*
+ * The web build is the app's preview surface, and a browser's own focus ring
+ * around a search field is a control neither phone draws. The fields carry
+ * their own filled background as the focus affordance, and keyboard focus is
+ * still visible through `:focus-visible` below.
+ */
+input:focus,
+textarea:focus {
+  outline: none;
+}
+
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid Highlight;
+  outline-offset: 2px;
+}

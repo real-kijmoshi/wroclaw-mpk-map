@@ -1,39 +1,60 @@
-import { Platform, StyleSheet, Text, type TextProps } from 'react-native';
+import { StyleSheet, Text, type TextProps } from 'react-native';
 
-import { Fonts, ThemeColor } from '@/constants/theme';
+import { Fonts, type ThemeColor } from '@/constants/theme';
+import { Type, Weight, type TypeStep, type WeightName } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
 
 export type ThemedTextProps = TextProps & {
-  type?:
-    | 'default'
-    | 'defaultSemiBold'
-    | 'title'
-    | 'small'
-    | 'smallBold'
-    | 'subtitle'
-    | 'link'
-    | 'linkPrimary'
-    | 'code';
+  /** A step of the ramp in `design.ts`. Defaults to running text. */
+  type?: TypeStep | 'mono';
+  /**
+   * Weight is its own axis.
+   *
+   * It used to be folded into the name — `smallBold` beside `small` — which
+   * doubled the ramp and still left no way to bold a caption. Each step has a
+   * sensible default weight; this overrides it.
+   */
+  weight?: WeightName;
+  /** Any colour in the palette. Defaults to the primary text colour. */
   themeColor?: ThemeColor;
+  /** Overrides `themeColor` — for the accent, or a line colour. */
+  color?: string;
 };
 
-export function ThemedText({ style, type = 'default', themeColor, ...rest }: ThemedTextProps) {
+/**
+ * How far text is allowed to grow inside a box that cannot.
+ *
+ * Content scales without limit — that is the point of Dynamic Type. Chrome
+ * with a fixed height (the sheet's status line, a map control) caps out, so
+ * the largest accessibility sizes clip a glyph instead of pushing the whole
+ * layout apart. Pass it explicitly; nothing gets it by default.
+ */
+export const CHROME_MAX_SCALE = 1.4;
+
+/**
+ * Text, on the ramp.
+ *
+ * Every size in the app comes from `Type`; a component that needs a size the
+ * ramp does not have needs a ramp step, not an inline `fontSize`.
+ */
+export function ThemedText({
+  style,
+  type = 'body',
+  weight,
+  themeColor,
+  color,
+  ...rest
+}: ThemedTextProps) {
   const theme = useTheme();
+  const step = type === 'mono' ? Type.footnote : Type[type];
 
   return (
     <Text
       style={[
-        { color: theme[themeColor ?? 'text'] },
-        type === 'default' && styles.default,
-        type === 'defaultSemiBold' && styles.defaultSemiBold,
-        type === 'title' && styles.title,
-        type === 'small' && styles.small,
-        type === 'smallBold' && styles.smallBold,
-        type === 'subtitle' && styles.subtitle,
-        type === 'link' && styles.link,
-        type === 'linkPrimary' && styles.linkPrimary,
-        type === 'linkPrimary' && { color: theme.accent },
-        type === 'code' && styles.code,
+        step,
+        { fontWeight: Weight[weight ?? DEFAULT_WEIGHT[type]] },
+        { color: color ?? theme[themeColor ?? 'text'] },
+        type === 'mono' && styles.mono,
         style,
       ]}
       {...rest}
@@ -41,48 +62,26 @@ export function ThemedText({ style, type = 'default', themeColor, ...rest }: The
   );
 }
 
+/**
+ * What each step weighs when nothing says otherwise.
+ *
+ * Headlines and titles carry their emphasis in the weight, so they do not need
+ * a caller to remember it; body text stays regular so a paragraph does not
+ * shout. `medium` rather than `regular` for the small steps because they are
+ * usually read at a glance, outdoors, at arm's length.
+ */
+const DEFAULT_WEIGHT: Record<TypeStep | 'mono', WeightName> = {
+  display: 'bold',
+  title: 'bold',
+  headline: 'semibold',
+  body: 'regular',
+  callout: 'regular',
+  subhead: 'medium',
+  footnote: 'medium',
+  caption: 'semibold',
+  mono: 'medium',
+};
+
 const styles = StyleSheet.create({
-  small: {
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: 500,
-  },
-  smallBold: {
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: 700,
-  },
-  default: {
-    fontSize: 16,
-    lineHeight: 24,
-    fontWeight: 500,
-  },
-  defaultSemiBold: {
-    fontSize: 16,
-    lineHeight: 24,
-    fontWeight: 700,
-  },
-  title: {
-    fontSize: 48,
-    fontWeight: 600,
-    lineHeight: 52,
-  },
-  subtitle: {
-    fontSize: 32,
-    lineHeight: 44,
-    fontWeight: 600,
-  },
-  link: {
-    lineHeight: 30,
-    fontSize: 14,
-  },
-  linkPrimary: {
-    lineHeight: 30,
-    fontSize: 14,
-  },
-  code: {
-    fontFamily: Fonts.mono,
-    fontWeight: Platform.select({ android: 700 }) ?? 500,
-    fontSize: 12,
-  },
+  mono: { fontFamily: Fonts.mono },
 });

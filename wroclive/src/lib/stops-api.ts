@@ -1,7 +1,18 @@
-import { apiGet, type Stop, ApiError } from '@/lib/api';
+import { apiGet, normaliseStopList, type Stop } from '@/lib/api';
 
 /** Raw GTFS records that share a pole/platform are normally within a few metres. */
 const SAME_PLATFORM_RADIUS_METERS = 12;
+
+/**
+ * How far apart the two directions of one stop can be and still be one place.
+ *
+ * A street's two platforms sit either side of the road, or a tram stop's two
+ * are staggered along it — tens of metres, not hundreds. Two genuinely
+ * different stops that happen to share a name (Wrocław has several "Rynek"-ish
+ * repeats across the city) are kilometres apart, so this separates them without
+ * needing the feed to carry a parent station.
+ */
+const SAME_AREA_RADIUS_METERS = 150;
 
 /**
  * A normal, server-validated stop search.
@@ -17,8 +28,10 @@ export async function searchStops(
   options: { signal?: AbortSignal } = {},
 ): Promise<Stop[]> {
   const needle = query.trim();
-  const payload = await apiGet<unknown>(`/stops?q=${encodeURIComponent(needle)}&limit=100`, options);
-  const direct = normaliseStops(payload);
+  const direct = normaliseStopList(
+    await apiGet<unknown>(`/stops?q=${encodeURIComponent(needle)}&limit=100`, options),
+    '/stops',
+  );
   if (direct.length || needle.length < 2) return groupSamePlatform(direct);
 
   // Older deployed servers do not fold ł into l. Probe with a short prefix
@@ -26,14 +39,14 @@ export async function searchStops(
   // locally. This path disappears once every server has the current index.
   const prefix = foldSearchText(needle).slice(0, 2);
   if (!prefix) return [];
-  const fallbackPayload = await apiGet<unknown>(`/stops?q=${encodeURIComponent(prefix)}&limit=100`, options);
-  const fallback = normaliseStops(fallbackPayload).filter(
-    (stop) => foldSearchText(stop.name).includes(foldSearchText(needle)),
-  );
+  const fallback = normaliseStopList(
+    await apiGet<unknown>(`/stops?q=${encodeURIComponent(prefix)}&limit=100`, options),
+    '/stops',
+  ).filter((stop) => foldSearchText(stop.name).includes(foldSearchText(needle)));
   return groupSamePlatform(fallback);
 }
 
-function foldSearchText(value: string) {
+export function foldSearchText(value: string) {
   return value
     .normalize('NFD')
     .replace(/\p{Diacritic}/gu, '')
@@ -43,56 +56,89 @@ function foldSearchText(value: string) {
 }
 
 /**
- * /stops returns `{ query, stops }` — but `query` is only echoed back for
- * debugging, and the array is plain objects. Validate every field rather than
- * trusting the shape: a 503 body would otherwise read as a list of stops called
- * "error".
+ * One place a rider would name, gathered from its platforms.
+ *
+ * `platforms` keeps every record so a departure board can still be opened for
+ * the right side of the street; everything else is the merged view a list
+ * should show.
  */
-function normaliseStops(payload: unknown): Stop[] {
-  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-    throw new ApiError('Unexpected /stops payload', 0);
+export type StopArea = {
+  /** The nearest platform — what a tap opens, and where the coordinates come from. */
+  primary: Stop;
+  name: string;
+  platforms: Stop[];
+  /** Distance to the nearest platform, when the source carried one. */
+  distance?: number;
+  /** Every line calling at any platform of the area. */
+  lines: string[];
+};
+
+/**
+ * Group nearby platforms into the places they belong to.
+ *
+ * `/stops/near` returns raw GTFS records, and a street's stop is two or three
+ * of them: the list read "Spółdzielcza 10 m / Spółdzielcza 10 m / Spółdzielcza
+ * 40 m", which tells a rider nothing and buries the next real stop below the
+ * fold. Grouping by name *and* proximity keeps two same-named stops in
+ * different districts apart — the name alone is not unique in this feed.
+ *
+ * Input order is preserved: `/stops/near` sorts by distance, so the first
+ * platform seen for an area is the nearest one, and the areas come out in the
+ * same order.
+ */
+export function groupStopAreas(stops: Stop[]): StopArea[] {
+  const areas: StopArea[] = [];
+
+  for (const stop of stops) {
+    const area = areas.find(
+      (candidate) =>
+        candidate.name === stop.name &&
+        distanceMeters(candidate.primary.lat, candidate.primary.lon, stop.lat, stop.lon) <=
+          SAME_AREA_RADIUS_METERS,
+    );
+
+    if (!area) {
+      areas.push({
+        primary: stop,
+        name: stop.name,
+        platforms: [stop],
+        distance: stop.distance,
+        lines: [...(stop.lines ?? [])],
+      });
+      continue;
+    }
+
+    // A publisher repeats a physical boarding point once per pattern it serves,
+    // and `/stops/near` hands those back unmerged — which turned Rynek's
+    // platforms into "8 stanowisk". `sameBoardingArea` is the same test the
+    // search path has always used, so both routes into a stop list now count
+    // boarding points the same way.
+    if (!area.platforms.some((platform) => sameBoardingArea(platform, stop))) {
+      area.platforms.push(stop);
+    }
+
+    if (stop.distance !== undefined && (area.distance === undefined || stop.distance < area.distance)) {
+      area.distance = stop.distance;
+      area.primary = stop;
+    }
+    for (const line of stop.lines ?? []) {
+      if (!area.lines.includes(line)) area.lines.push(line);
+    }
   }
 
-  const record = payload as Record<string, unknown>;
-  const raw = record.stops;
-  if (!Array.isArray(raw)) throw new ApiError('Unexpected /stops payload', 0);
-
-  const stops: Stop[] = [];
-  for (const item of raw) {
-    const stop = toStop(item);
-    if (stop) stops.push(stop);
-  }
-  return stops;
+  for (const area of areas) area.lines.sort(compareLineLabels);
+  return areas;
 }
 
-function toStop(value: unknown): Stop | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const record = value as Record<string, unknown>;
-
-  const id = typeof record.id === 'string' && record.id ? record.id : null;
-  const name = typeof record.name === 'string' ? record.name.trim() : '';
-  const lat = toFinite(record.lat);
-  const lon = toFinite(record.lon);
-  if (!id || !name || lat === null || lon === null) return null;
-
-  const code = toStringField(record.code);
-  const distance = toFinite(record.distance);
-  const ids = Array.isArray(record.ids)
-    ? record.ids.filter((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0)
-    : [];
-
-  const stop: Stop = { id, name, lat, lon };
-  if (code !== undefined) stop.code = code;
-  if (distance != null) stop.distance = distance;
-  if (ids.length) stop.ids = ids;
-  return stop;
+/** "4" before "10", letters after numbers — the order a badge row is read in. */
+function compareLineLabels(a: string, b: string) {
+  const aNum = /^\d+$/.test(a) ? Number.parseInt(a, 10) : null;
+  const bNum = /^\d+$/.test(b) ? Number.parseInt(b, 10) : null;
+  if (aNum !== null && bNum !== null) return aNum - bNum;
+  if (aNum !== null) return -1;
+  if (bNum !== null) return 1;
+  return a.localeCompare(b, 'pl');
 }
-
-const toFinite = (value: unknown): number | null =>
-  typeof value === 'number' && Number.isFinite(value) ? value : null;
-
-const toStringField = (value: unknown): string | undefined =>
-  typeof value === 'string' && value.trim() ? value.trim() : undefined;
 
 /**
  * One boarding point can have several GTFS records, while the two directions
@@ -131,7 +177,7 @@ function stopAreaCode(code: string | undefined) {
   return /^\d{5,}$/.test(value) ? value.slice(0, -2) : null;
 }
 
-function distanceMeters(latA: number, lonA: number, latB: number, lonB: number): number {
+export function distanceMeters(latA: number, lonA: number, latB: number, lonB: number): number {
   const radians = Math.PI / 180;
   const aLat = latA * radians;
   const bLat = latB * radians;

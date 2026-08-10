@@ -24,43 +24,6 @@ export const LINE_COLOR: Record<LineType, string> = {
   unknown: '#475569',
 };
 
-/**
- * Softer colours used only by vehicles on the map.
- *
- * They reproduce the paper-map markers from the original app: blue trams, red
- * city buses, yellow letter/temporary services and pink regional services.
- * The stronger LINE_COLOR palette remains in use for small badges and route
- * lines, where contrast matters more than the larger marker's visual weight.
- */
-export const VEHICLE_COLOR: Record<LineType, string> = {
-  tram: '#7799CC',
-  tramSpecial: '#7799CC',
-  tramTemporary: '#F1CD77',
-  bus: '#C65A55',
-  busNight: '#7799CC',
-  busSuburban: '#DE95B0',
-  busTemporary: '#F1CD77',
-  busZone: '#DE95B0',
-  busExpress: '#F1CD77',
-  busSpecial: '#C65A55',
-  unknown: '#99B1D0',
-};
-
-/** A slightly darker edge makes the marker legible without the modern white ring. */
-export const VEHICLE_BORDER_COLOR: Record<LineType, string> = {
-  tram: '#537EC4',
-  tramSpecial: '#537EC4',
-  tramTemporary: '#EFC25A',
-  bus: '#BB3932',
-  busNight: '#537EC4',
-  busSuburban: '#D76C96',
-  busTemporary: '#EFC25A',
-  busZone: '#D76C96',
-  busExpress: '#EFC25A',
-  busSpecial: '#BB3932',
-  unknown: '#668AB5',
-};
-
 export const LINE_LABEL: Record<LineType, string> = {
   tram: 'Tramwaje',
   tramSpecial: 'Tramwaje specjalne',
@@ -118,12 +81,6 @@ export const CATEGORY_ORDER: LineType[] = [
 
 export const colorFor = (type: string | null | undefined): string =>
   LINE_COLOR[(type ?? 'unknown') as LineType] ?? LINE_COLOR.unknown;
-
-export const vehicleColorFor = (type: string | null | undefined): string =>
-  VEHICLE_COLOR[(type ?? 'unknown') as LineType] ?? VEHICLE_COLOR.unknown;
-
-export const vehicleBorderColorFor = (type: string | null | undefined): string =>
-  VEHICLE_BORDER_COLOR[(type ?? 'unknown') as LineType] ?? VEHICLE_BORDER_COLOR.unknown;
 
 export const labelFor = (type: string): string =>
   LINE_LABEL[type as LineType] ?? LINE_LABEL.unknown;

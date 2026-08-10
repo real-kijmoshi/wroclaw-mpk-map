@@ -2,16 +2,29 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { Platform, useColorScheme } from 'react-native';
+import { Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { ErrorScreen } from '@/components/error-screen';
 import { getLines } from '@/lib/api';
 import { hydratePreferences, usePreferences } from '@/lib/preferences';
-import { THEMES } from '@/constants/themes';
+import { ACCENT } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { hydrateRecentStops } from '@/lib/recent-stops';
 import { hydrateSelection, selectionStore } from '@/lib/selection';
 
 SplashScreen.preventAutoHideAsync();
+
+/**
+ * expo-router renders this instead of the route when a render throws.
+ *
+ * Without it a release build shows a white screen with no way out but force
+ * quitting. The name is the contract — expo-router looks for an exported
+ * `ErrorBoundary` on a route or layout file.
+ */
+export function ErrorBoundary({ error, retry }: { error: Error; retry: () => Promise<void> }) {
+  return <ErrorScreen error={error} retry={retry} />;
+}
 
 /**
  * Lines, alerts and settings are popups over the map, not places you navigate
@@ -28,11 +41,43 @@ const MODAL_OPTIONS = Platform.select({
   default: { presentation: 'modal' as const },
 });
 
+/**
+ * Search opens at full height and stays there.
+ *
+ * It is the one modal with a keyboard in it: a sheet that stops at a detent
+ * leaves the results squeezed between the field and the keyboard, and dragging
+ * it while typing dismisses the keyboard instead of the sheet.
+ */
+const SEARCH_MODAL_OPTIONS = Platform.select({
+  ios: {
+    presentation: 'formSheet' as const,
+    sheetGrabberVisible: true,
+    sheetAllowedDetents: [1],
+    sheetCornerRadius: 28,
+  },
+  default: { presentation: 'modal' as const },
+});
+
+const LINE_MODAL_OPTIONS = Platform.select({
+  ios: {
+    presentation: 'formSheet' as const,
+    sheetGrabberVisible: true,
+    sheetAllowedDetents: [0.78, 1],
+    sheetCornerRadius: 24,
+  },
+  default: { presentation: 'modal' as const },
+});
+
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const preferences = usePreferences();
   const dark = colorScheme === 'dark';
-  const accent = THEMES[preferences.theme].accent[dark ? 'dark' : 'light'];
+  const imagery =
+    Platform.OS === 'ios' &&
+    preferences.mapProvider === 'auto' &&
+    (preferences.appleMapType === 'satellite' || preferences.appleMapType === 'hybrid');
+  const statusBarStyle = imagery ? 'light' : 'auto';
+  const accent = ACCENT[dark ? 'dark' : 'light'];
   const base = dark ? DarkTheme : DefaultTheme;
   const navigationTheme = {
     ...base,
@@ -76,14 +121,20 @@ export default function RootLayout() {
     // The sheet's drag gesture needs this at the root.
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider value={navigationTheme}>
-        {/* The map runs edge to edge, so the status bar sits over it. */}
-        <StatusBar style="auto" />
+        {/*
+         * The map runs edge to edge, so the status bar sits over it — and
+         * `style="auto"` follows the phone's colour scheme, which is the wrong
+         * input. Satellite and hybrid tiles are a dark photograph in either
+         * scheme, and a light-scheme phone was drawing a black clock onto them.
+         * What the map is showing decides.
+         */}
+        <StatusBar style={statusBarStyle} />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="index" />
-          <Stack.Screen name="lines" options={MODAL_OPTIONS} />
+          <Stack.Screen name="lines" options={LINE_MODAL_OPTIONS} />
           <Stack.Screen name="alerts" options={MODAL_OPTIONS} />
           <Stack.Screen name="settings" options={MODAL_OPTIONS} />
-          <Stack.Screen name="search" options={MODAL_OPTIONS} />
+          <Stack.Screen name="search" options={SEARCH_MODAL_OPTIONS} />
         </Stack>
       </ThemeProvider>
     </GestureHandlerRootView>

@@ -1,20 +1,21 @@
-import Ionicons from '@expo/vector-icons/Ionicons';
-import { Platform, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Switch, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import Constants from 'expo-constants';
+
 import { liquidGlass } from '@/components/glass';
+import { Choice, Divider, Row, Section } from '@/components/list';
 import { platformMapAvailable } from '@/components/map-view';
 import { ModalScreen } from '@/components/modal-screen';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import { Motion, Radius, Space } from '@/constants/design';
 import { usePoll } from '@/hooks/use-poll';
 import { useTheme } from '@/hooks/use-theme';
 import { apiGet } from '@/lib/api';
 import { API_URL } from '@/lib/config';
 import { formatAge } from '@/lib/format';
-import { preferencesStore, usePreferences, type AppleMapType, type MapProvider } from '@/lib/preferences';
-import { THEMES, type ThemeName } from '@/constants/themes';
+import { preferencesStore, usePreferences, type AppleMapType, type ColorScheme, type MapProvider } from '@/lib/preferences';
 
 type Health = {
   status: string;
@@ -23,6 +24,19 @@ type Health = {
   alerts: { count: number; lastRefreshAt: string | null; lastError: string | null };
   lines: { total: number; trams: number; buses: number };
 };
+
+/**
+ * Read from the manifest rather than hardcoded, so a released build always
+ * reports the version someone can actually quote in a bug report.
+ */
+const APP_VERSION = Constants.expoConfig?.version ?? '—';
+const APP_BUILD = `${Constants.expoConfig?.slug ?? 'wroclive'} · ${Platform.OS}`;
+
+const MAP_TYPES: { id: AppleMapType; label: string }[] = [
+  { id: 'standard', label: 'Mapa' },
+  { id: 'hybrid', label: 'Hybrydowa' },
+  { id: 'satellite', label: 'Satelita' },
+];
 
 export default function SettingsScreen() {
   const theme = useTheme();
@@ -41,259 +55,224 @@ export default function SettingsScreen() {
 
   return (
     <ModalScreen title="Ustawienia">
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.five }]}
-        showsVerticalScrollIndicator={false}>
-        {platformMapAvailable && (
-          <Section title="Mapa">
-            <Choice
-              label="Mapa systemowa"
-              hint={Platform.OS === 'ios' ? 'Apple Maps' : 'Mapa platformy'}
-              selected={preferences.mapProvider === 'auto'}
-              onPress={() => preferencesStore.set('mapProvider', 'auto' satisfies MapProvider)}
-            />
-            <Divider />
-            <Choice
-              label="OpenStreetMap"
-              hint="Ta sama mapa na każdej platformie"
-              selected={preferences.mapProvider === 'osm'}
-              onPress={() => preferencesStore.set('mapProvider', 'osm' satisfies MapProvider)}
-            />
-          </Section>
-        )}
-
-        {Platform.OS === 'ios' && preferences.mapProvider === 'auto' && (
-          <Section title="Typ mapy">
-            <Choice
-              label="Standardowa"
-              selected={preferences.appleMapType === 'standard'}
-              onPress={() => preferencesStore.set('appleMapType', 'standard' satisfies AppleMapType)}
-            />
-            <Divider />
-            <Choice
-              label="Hybrydowa"
-              selected={preferences.appleMapType === 'hybrid'}
-              onPress={() => preferencesStore.set('appleMapType', 'hybrid' satisfies AppleMapType)}
-            />
-            <Divider />
-            <Choice
-              label="Satelitarna"
-              selected={preferences.appleMapType === 'satellite'}
-              onPress={() => preferencesStore.set('appleMapType', 'satellite' satisfies AppleMapType)}
-            />
-          </Section>
-        )}
-
-        <Section title="Na mapie">
-          <Row
-            label="Przystanki w pobliżu"
-            hint="Po użyciu przycisku lokalizacji"
-            control={
-              <Switch
-                value={preferences.showNearbyStops}
-                onValueChange={(value) => preferencesStore.set('showNearbyStops', value)}
-              />
-            }
-          />
-          <Divider />
-          <Row
-            label="Podążaj za pojazdem"
-            hint="Przy wyborze utrzymuj pojazd na środku mapy"
-            control={
-              <Switch
-                value={preferences.followSelectedVehicle}
-                onValueChange={(value) => preferencesStore.set('followSelectedVehicle', value)}
-              />
-            }
-          />
-        </Section>
-
-        <Section title="Motyw">
-          {(Object.keys(THEMES) as ThemeName[]).map((name, i, arr) => (
-            <View key={name}>
+      {(scroll) => (
+        <Animated.ScrollView
+          style={styles.scroll}
+          contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Space.xxl }]}
+          showsVerticalScrollIndicator={false}
+          onScroll={scroll.onScroll}
+          scrollEventThrottle={scroll.scrollEventThrottle}>
+          {platformMapAvailable && (
+            <Section title="Mapa">
               <Choice
-                label={THEMES[name].label}
-                selected={preferences.theme === name}
-                onPress={() => preferencesStore.set('theme', name)}
-              />
-              {i < arr.length - 1 && <Divider />}
-            </View>
-          ))}
-        </Section>
-
-        <Section title="Serwer">
-          <Row
-            label="Stan"
-            hint={API_URL}
-            control={
-              <View style={styles.statusRow}>
-                <View style={[styles.dot, { backgroundColor: serverState.color }]} />
-                {/* "Wczytywanie rozkładu…" is long enough to squeeze the URL
-                    beside it into a mid-word wrap; it gives way instead. */}
-                <ThemedText
-                  type="small"
-                  themeColor="textSecondary"
-                  numberOfLines={1}
-                  style={styles.statusText}>
-                  {serverState.text}
-                </ThemedText>
-              </View>
-            }
-          />
-          {!!health.data && (
-            <>
-              <Divider />
-              <Row
-                label="Rozkład"
-                hint={health.data.gtfs.snapshot ?? health.data.gtfs.state}
-                control={
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {health.data.lines.total} linii
-                  </ThemedText>
-                }
+                label="Mapa systemowa"
+                hint={Platform.OS === 'ios' ? 'Apple Maps' : 'Mapa platformy'}
+                selected={preferences.mapProvider === 'auto'}
+                onPress={() => preferencesStore.set('mapProvider', 'auto' satisfies MapProvider)}
               />
               <Divider />
-              <Row
-                label="Pojazdy"
-                hint={
-                  health.data.vehicles.lastSuccessAt
-                    ? `Odczyt ${formatAge(health.data.vehicles.lastSuccessAt)}`
-                    : (health.data.vehicles.lastError ?? 'Brak odczytu')
-                }
-                control={
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {health.data.vehicles.tracked}
-                  </ThemedText>
-                }
+              <Choice
+                label="OpenStreetMap"
+                hint="Ta sama mapa na każdej platformie"
+                selected={preferences.mapProvider === 'osm'}
+                onPress={() => preferencesStore.set('mapProvider', 'osm' satisfies MapProvider)}
               />
-              <Divider />
-              <Row
-                label="Utrudnienia"
-                hint={
-                  health.data.alerts.lastRefreshAt
-                    ? `Sprawdzono ${formatAge(health.data.alerts.lastRefreshAt)}`
-                    : (health.data.alerts.lastError ?? 'Brak danych')
-                }
-                control={
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {health.data.alerts.count}
-                  </ThemedText>
-                }
-              />
-            </>
+            </Section>
           )}
-        </Section>
 
-        <Section title="O aplikacji">
-          <ThemedText type="small" themeColor="textSecondary" style={styles.about}>
-            Pozycje pojazdów pochodzą z MPK Wrocław, rozkłady z otwartych danych miasta, a
-            komunikaty ze źródeł zewnętrznych. Czasy przyjazdu są wyliczane z rozkładu i pozycji
-            pojazdu — nie uwzględniają korków.
-          </ThemedText>
-          <ThemedText type="small" themeColor="textSecondary" style={styles.about}>
-            {liquidGlass ? 'Interfejs: liquid glass' : 'Interfejs: rozmycie zastępcze'}
-          </ThemedText>
-        </Section>
-      </ScrollView>
+          {/* Three mutually exclusive base styles are a segmented control, not
+              three rows of a list — and the same choice is a tap away on the
+              map itself, from the layers button. */}
+          {Platform.OS === 'ios' && preferences.mapProvider === 'auto' && (
+            <View style={styles.segmentSection}>
+              <ThemedText
+                type="footnote"
+                weight="semibold"
+                themeColor="textSecondary"
+                style={styles.segmentTitle}>
+                TYP MAPY
+              </ThemedText>
+              <View style={[styles.segment, { backgroundColor: theme.backgroundElement }]}>
+                {MAP_TYPES.map((entry) => {
+                  const active = preferences.appleMapType === entry.id;
+                  return (
+                    <Pressable
+                      key={entry.id}
+                      onPress={() => preferencesStore.set('appleMapType', entry.id)}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: active }}
+                      style={({ pressed }) => [
+                        styles.segmentItem,
+                        active && { backgroundColor: theme.backgroundCard },
+                        pressed && styles.pressed,
+                      ]}>
+                      <ThemedText
+                        type="footnote"
+                        weight={active ? 'semibold' : 'medium'}
+                        themeColor={active ? 'text' : 'textSecondary'}>
+                        {entry.label}
+                      </ThemedText>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
+          <Section title="Na mapie">
+            <Row
+              label="Przystanki"
+              hint="Pokazuj przystanki po przybliżeniu mapy"
+              accessory={
+                <Switch
+                  value={preferences.showNearbyStops}
+                  onValueChange={(value) => preferencesStore.set('showNearbyStops', value)}
+                />
+              }
+            />
+            <Divider />
+            <Row
+              label="Podążaj za pojazdem"
+              hint="Przy wyborze utrzymuj pojazd na środku mapy"
+              accessory={
+                <Switch
+                  value={preferences.followSelectedVehicle}
+                  onValueChange={(value) => preferencesStore.set('followSelectedVehicle', value)}
+                />
+              }
+            />
+          </Section>
+
+          <Section title="Motyw">
+            <Choice
+              label="Jasny"
+              selected={preferences.colorScheme === 'light'}
+              onPress={() => preferencesStore.set('colorScheme', 'light' satisfies ColorScheme)}
+            />
+            <Divider />
+            <Choice
+              label="Ciemny"
+              selected={preferences.colorScheme === 'dark'}
+              onPress={() => preferencesStore.set('colorScheme', 'dark' satisfies ColorScheme)}
+            />
+            <Divider />
+            <Choice
+              label="System"
+              hint="Podążaj za ustawieniami telefonu"
+              selected={preferences.colorScheme === 'system'}
+              onPress={() => preferencesStore.set('colorScheme', 'system' satisfies ColorScheme)}
+            />
+          </Section>
+
+          <Section title="Serwer" footer={API_URL}>
+            <Row
+              label="Stan"
+              accessory={
+                <View style={styles.statusRow}>
+                  <View style={[styles.dot, { backgroundColor: serverState.color }]} />
+                  <ThemedText
+                    type="footnote"
+                    themeColor="textSecondary"
+                    numberOfLines={1}
+                    style={styles.statusText}>
+                    {serverState.text}
+                  </ThemedText>
+                </View>
+              }
+            />
+            {!!health.data && (
+              <>
+                <Divider />
+                <Row
+                  label="Rozkład"
+                  hint={health.data.gtfs.snapshot ?? health.data.gtfs.state}
+                  accessory={
+                    <ThemedText type="footnote" themeColor="textSecondary">
+                      {health.data.lines.total} linii
+                    </ThemedText>
+                  }
+                />
+                <Divider />
+                <Row
+                  label="Pojazdy"
+                  hint={
+                    health.data.vehicles.lastSuccessAt
+                      ? `Odczyt ${formatAge(health.data.vehicles.lastSuccessAt)}`
+                      : (health.data.vehicles.lastError ?? 'Brak odczytu')
+                  }
+                  accessory={
+                    <ThemedText type="footnote" themeColor="textSecondary">
+                      {health.data.vehicles.tracked}
+                    </ThemedText>
+                  }
+                />
+                <Divider />
+                <Row
+                  label="Utrudnienia"
+                  hint={
+                    health.data.alerts.lastRefreshAt
+                      ? `Sprawdzono ${formatAge(health.data.alerts.lastRefreshAt)}`
+                      : (health.data.alerts.lastError ?? 'Brak danych')
+                  }
+                  accessory={
+                    <ThemedText type="footnote" themeColor="textSecondary">
+                      {health.data.alerts.count}
+                    </ThemedText>
+                  }
+                />
+              </>
+            )}
+          </Section>
+
+          <Section title="O aplikacji" footer={APP_BUILD}>
+            <Row
+              label="Wersja"
+              accessory={
+                <ThemedText type="footnote" themeColor="textSecondary">
+                  {APP_VERSION}
+                </ThemedText>
+              }
+            />
+            <Divider />
+            <Row
+              label="Interfejs"
+              accessory={
+                <ThemedText type="footnote" themeColor="textSecondary">
+                  {liquidGlass ? 'Liquid glass' : 'Rozmycie zastępcze'}
+                </ThemedText>
+              }
+            />
+          </Section>
+
+          <View style={styles.about}>
+            <ThemedText type="footnote" themeColor="textSecondary">
+              Pozycje pojazdów pochodzą z MPK Wrocław, rozkłady z otwartych danych miasta, a
+              komunikaty ze źródeł zewnętrznych. Czasy przyjazdu są wyliczane z rozkładu i pozycji
+              pojazdu — nie uwzględniają korków.
+            </ThemedText>
+          </View>
+        </Animated.ScrollView>
+      )}
     </ModalScreen>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.section}>
-      <ThemedText type="smallBold" themeColor="textSecondary" style={styles.sectionTitle}>
-        {title}
-      </ThemedText>
-      <ThemedView type="backgroundElement" style={styles.card}>
-        {children}
-      </ThemedView>
-    </View>
-  );
-}
-
-function Row({
-  label,
-  hint,
-  control,
-}: {
-  label: string;
-  hint?: string | null;
-  control?: React.ReactNode;
-}) {
-  return (
-    <View style={styles.row}>
-      <View style={styles.rowText}>
-        <ThemedText>{label}</ThemedText>
-        {!!hint && (
-          <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
-            {hint}
-          </ThemedText>
-        )}
-      </View>
-      {control}
-    </View>
-  );
-}
-
-function Choice({
-  label,
-  hint,
-  selected,
-  onPress,
-}: {
-  label: string;
-  hint?: string;
-  selected: boolean;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="radio"
-      accessibilityState={{ selected }}
-      style={({ pressed }) => [pressed && styles.pressed]}>
-      <Row
-        label={label}
-        hint={hint}
-        control={
-          selected ? (
-            <Ionicons name="checkmark" size={20} color={theme.accent} />
-          ) : (
-            <View style={styles.spacer} />
-          )
-        }
-      />
-    </Pressable>
-  );
-}
-
-function Divider() {
-  const theme = useTheme();
-  return <View style={[styles.divider, { backgroundColor: theme.separator }]} />;
-}
-
 const styles = StyleSheet.create({
   scroll: { flex: 1 },
-  content: { paddingHorizontal: Spacing.three, paddingTop: Spacing.three, gap: Spacing.four },
-  section: { gap: Spacing.two },
-  sectionTitle: { textTransform: 'uppercase', letterSpacing: 0.6, paddingHorizontal: Spacing.one },
-  card: { borderRadius: 18, paddingHorizontal: Spacing.three },
-  row: {
-    flexDirection: 'row',
+  content: { paddingHorizontal: Space.lg, paddingTop: Space.sm, gap: Space.xl },
+  segmentSection: { gap: Space.sm },
+  segmentTitle: { letterSpacing: 0.5, paddingHorizontal: Space.lg },
+  segment: { flexDirection: 'row', borderRadius: Radius.sm, padding: 2, gap: 2 },
+  segmentItem: {
+    flex: 1,
+    minHeight: 34,
+    borderRadius: Radius.xs,
     alignItems: 'center',
-    gap: Spacing.three,
-    paddingVertical: Spacing.two + 2,
-    minHeight: 52,
+    justifyContent: 'center',
   },
-  rowText: { flex: 1, gap: 1, minWidth: 0 },
-  divider: { height: StyleSheet.hairlineWidth },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, flexShrink: 1 },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: Space.xs, flexShrink: 1 },
   statusText: { flexShrink: 1 },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  spacer: { width: 20 },
-  about: { paddingHorizontal: Spacing.one },
-  pressed: { opacity: 0.6 },
+  dot: { width: 8, height: 8, borderRadius: Radius.pill },
+  about: { paddingHorizontal: Space.lg, gap: Space.sm },
+  pressed: { opacity: Motion.pressedOpacity },
 });
