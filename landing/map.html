@@ -218,54 +218,145 @@
         @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
         /*
-         * Vehicle markers: the line badge, plus an arrow pointing the way it is
-         * travelling. The arrow sits at the top of a box bigger than the badge,
-         * and that whole box is what rotates — so it orbits the number instead
-         * of spinning in place, clearing it at every angle. Two stacked
-         * triangles, white behind the tint, for the same reason the badge has a
+         * Vehicle markers: one shape, not two.
+         *
+         * A badge carrying the line number, with a directional tail growing out
+         * of the badge's own outline on the heading side. It replaced a badge
+         * and a separate arrow orbiting it at a fixed radius — two objects the
+         * eye had to associate, and an arrow that floated off the badge's short
+         * sides and buried itself in the long ones, because a badge is a
+         * rounded rectangle and its outline is not a circle.
+         *
+         * The distance from the centre to that outline is therefore solved per
+         * heading, in `markerVars()` below. This is the app's marker: the
+         * geometry, the constants and the solver all come from
+         * `wroclive/src/lib/vehicle-marker.ts`, which is the authority (see
+         * invariant 19 — this page is a second client, and its markers are the
+         * app's markers). Change a number there and change it here.
+         *
+         * White behind the tint on the tail for the same reason the badge has a
          * white hairline: a coloured arrow alone disappears over a road drawn in
          * roughly that colour. There is no heading until a vehicle has visibly
-         * moved, so `iconFor()` only emits the wrapper when one exists.
+         * moved, so `iconFor()` only emits the tail when one exists.
+         *
+         * pointer-events: the box is generous and only the badge itself takes a
+         * click, so a vehicle cannot shadow its neighbour's badge in a cluster
+         * at a stop.
          */
-        .vehicle-pin { position: relative; width: 42px; height: 42px; }
+        .vehicle-pin {
+            position: relative;
+            width: 64px;
+            height: 64px;
+            pointer-events: none;
+            /* The dot every vehicle gets at district zoom. City zoom overrides
+               it per marker with the size its cell's count earned. */
+            --dot-size: 12px;
+        }
         .vehicle-badge {
             position: absolute;
-            top: 4px;
-            left: 4px;
-            width: 34px;
-            height: 34px;
+            top: 50%;
+            left: 50%;
+            width: var(--badge-w);
+            height: var(--badge-h);
+            margin: calc(var(--badge-h) / -2) 0 0 calc(var(--badge-w) / -2);
+            border-radius: var(--badge-r);
             box-sizing: border-box;
-            border-radius: 9px;
+            padding: 0 5px;
             display: flex;
             align-items: center;
             justify-content: center;
             color: #fff;
-            font: 700 14px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+            font: 800 13px/1 -apple-system, BlinkMacSystemFont, sans-serif;
             letter-spacing: -0.02em;
+            font-variant-numeric: tabular-nums;
             border: 1.5px solid rgba(255, 255, 255, 0.92);
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+            z-index: 2;
+            pointer-events: auto;
         }
+        /* The selected vehicle grows by real pixels — the geometry hands back a
+           larger badge and re-solves the tail against it. A transform would
+           scale the badge away from the tail joined to it. */
         .vehicle-pin.selected .vehicle-badge {
+            border-width: 2.5px;
             border-color: #fff;
             box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.4), 0 4px 14px rgba(0, 0, 0, 0.5);
         }
-        /* pointer-events: none — purely decorative, and its -7px inset would
-           otherwise widen the marker's hit area past the badge, letting a
-           vehicle's arrow shadow a neighbour's badge in a cluster at a stop. */
-        .vehicle-arrow { position: absolute; inset: -7px; pointer-events: none; }
+        .vehicle-arrow { position: absolute; inset: 0; }
         .vehicle-arrow::before,
         .vehicle-arrow::after {
             content: '';
             position: absolute;
-            top: -1px;
             left: 50%;
             width: 0;
             height: 0;
             border-style: solid;
             border-color: transparent;
         }
-        .vehicle-arrow::before { margin-left: -6.5px; border-width: 0 6.5px 11px; border-bottom-color: rgba(255, 255, 255, 0.92); }
-        .vehicle-arrow::after { top: 0; margin-left: -5px; border-width: 0 5px 9px; border-bottom-color: currentColor; }
+        /* The white keyline first, the tint over it; both sink a few pixels
+           behind the badge so the two shapes meet without a hairline gap. */
+        .vehicle-arrow::before { top: var(--tail-edge-top); margin-left: -8.5px; border-width: 0 8.5px 14px; border-bottom-color: rgba(255, 255, 255, 0.92); }
+        .vehicle-arrow::after { top: var(--tail-top); margin-left: -6.5px; border-width: 0 6.5px 12px; border-bottom-color: currentColor; }
+
+        /*
+         * The zoom tiers, the app's (`native-map.tsx`, `map-html.ts`).
+         *
+         * Seven hundred badges at city zoom was not a map of a tram network, it
+         * was a rash: every vehicle drawn full size at a scale where two of them
+         * two hundred metres apart land on the same pixel. Zooming out should
+         * say *where the network is busy*; zooming in should say *which vehicle
+         * is which*. `applyTier()` decides which by toggling these classes —
+         * never by rebuilding an icon, which is the rule the whole file follows.
+         *
+         * The modifiers are `is-` prefixed because this page's classes share one
+         * flat namespace: `.dot` is already the live/stale indicator in the
+         * status pill, and a plain `.dot` on the pin picked up its grey
+         * background and painted a disc behind every zoomed-out marker.
+         *
+         * near   the badge with its line number and tail
+         * mid    every vehicle a dot, still carrying its heading
+         * far    one dot per screen cell, sized by how many it stands for and
+         *        carrying no heading — at that scale it speaks for the vehicles
+         *        it swallowed as much as for itself
+         */
+        .vehicle-dot {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: var(--dot-size);
+            height: var(--dot-size);
+            margin: calc(var(--dot-size) / -2) 0 0 calc(var(--dot-size) / -2);
+            box-sizing: border-box;
+            border-radius: 50%;
+            background: currentColor;
+            border: 2px solid rgba(255, 255, 255, 0.92);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+            display: none;
+            pointer-events: auto;
+        }
+        /* Shape carries the mode as well as colour, as a fraction of whatever
+           size the dot has been given, so it holds at every density step. */
+        .vehicle-pin.is-tram .vehicle-dot { border-radius: 25%; }
+
+        .vehicle-pin.is-dot .vehicle-badge { display: none; }
+        .vehicle-pin.is-dot .vehicle-dot { display: block; }
+        .vehicle-pin.is-dot .vehicle-arrow::before {
+            top: var(--dot-tail-edge-top);
+            margin-left: -5px;
+            border-width: 0 5px 9.5px;
+        }
+        .vehicle-pin.is-dot .vehicle-arrow::after {
+            top: var(--dot-tail-top);
+            margin-left: -3.5px;
+            border-width: 0 3.5px 8px;
+        }
+
+        .vehicle-pin.is-small .vehicle-dot {
+            --dot-size: var(--far-dot, 9px);
+            border-width: var(--far-ring, 1.5px);
+        }
+        .vehicle-pin.is-small .vehicle-arrow { display: none; }
+        .vehicle-pin.is-thinned { display: none; }
 
         /* Route card: what you get after tapping a vehicle. */
         .routecard {
@@ -1027,25 +1118,193 @@
         let routePoints = null;
         let routeShapeId = null;
 
+        /*
+         * Marker geometry. Mirrors wroclive/src/lib/vehicle-marker.ts, which is
+         * the authority — every constant below has a twin there and in the CSS
+         * above. The badge and its tail are one shape, so the tail has to touch
+         * the badge's outline at every heading, and that outline is a rounded
+         * rectangle: 12px from its centre due north, 19px due east.
+         */
+        const MARKER_BOX_HALF = 32;
+        const BADGE_HEIGHT = 24;
+        const BADGE_RADIUS_TRAM = 6;
+        const BADGE_GROW_SELECTED = 2;
+        const TAIL_LENGTH = 12;
+        const TAIL_OUTLINE = 2;
+        const TAIL_SINK = 3;
+        const DOT_SIZE = 12;
+        const DOT_TAIL_LENGTH = 8;
+        const DOT_TAIL_OUTLINE = 1.5;
+        const DOT_TAIL_SINK = 2;
+        const DENSITY_SIZES = [7, 9, 11, 13];
+
+        /** How big the one dot that survives a cell is, for the number it stands for. */
+        const dotSizeForDensity = (count) => count >= 8 ? DENSITY_SIZES[3]
+            : count >= 4 ? DENSITY_SIZES[2]
+            : count >= 2 ? DENSITY_SIZES[1]
+            : DENSITY_SIZES[0];
+
+        const badgeWidth = (label) => (label.length <= 2 ? 30 : label.length === 3 ? 34 : 38);
+
         /**
-         * The line badge, plus an arrow pointing the way the vehicle is
-         * travelling — omitted until a vehicle has visibly moved and actually
-         * has a heading, rather than pointed at an arbitrary north.
+         * Distance from the badge's centre to its outline, along a unit direction.
+         *
+         * A ray leaves a rounded rectangle either through a flat edge — when the
+         * crossing lands on the straight part — or through a corner arc, which
+         * is the quadratic for a ray hitting a circle centred on that corner.
+         */
+        function outlineDistance(ux, uy, a, b, r) {
+            const x = Math.abs(ux), y = Math.abs(uy);
+            const flatA = Math.max(0, a - r), flatB = Math.max(0, b - r);
+            if (x > 0) {
+                const tx = a / x;
+                if (tx * y <= flatB) return tx;
+            }
+            if (y > 0) {
+                const ty = b / y;
+                if (ty * x <= flatA) return ty;
+            }
+            const along = x * flatA + y * flatB;
+            const gap = flatA * flatA + flatB * flatB - r * r;
+            return along + Math.sqrt(Math.max(0, along * along - gap));
+        }
+
+        /**
+         * The heading, bucketed to 15° — and drawn at that angle, not the raw one.
+         *
+         * The icon is only rebuilt when the bucket changes (a degree of GPS
+         * jitter would otherwise redraw every marker on screen every ten
+         * seconds), so the bucket is the only angle that can honestly be drawn.
+         */
+        const headingAngle = (vehicle) => Number.isFinite(vehicle.heading)
+            ? (Math.round(vehicle.heading / 15) % 24) * 15
+            : null;
+
+        /**
+         * The custom properties the marker CSS reads, for one vehicle's look.
+         *
+         * Both tails are placed here, the badge's and the dot's, because which
+         * one shows is decided later by a class — a tier change must never
+         * rebuild an icon.
+         */
+        function markerVars(label, tram, selected, angle) {
+            const grow = selected ? BADGE_GROW_SELECTED : 0;
+            const w = badgeWidth(label) + grow * 2;
+            const h = BADGE_HEIGHT + grow * 2;
+            const r = tram ? BADGE_RADIUS_TRAM + grow : h / 2;
+            let vars = '--badge-w:' + w + 'px;--badge-h:' + h + 'px;--badge-r:' + r + 'px;';
+            if (angle === null) return vars;
+            // Screen axes: x right, y down, heading 0 = north.
+            const radians = (angle * Math.PI) / 180;
+            const ux = Math.sin(radians), uy = -Math.cos(radians);
+            const base = outlineDistance(ux, uy, w / 2, h / 2, r) - TAIL_SINK;
+            // The dot is a circle for a bus and a 25%-rounded square for a
+            // tram, at whatever size — the same outline the CSS gives it.
+            const dotR = tram ? DOT_SIZE * 0.25 : DOT_SIZE / 2;
+            const dotBase = outlineDistance(ux, uy, DOT_SIZE / 2, DOT_SIZE / 2, dotR) - DOT_TAIL_SINK;
+            return vars +
+                '--tail-top:' + (MARKER_BOX_HALF - base - TAIL_LENGTH) + 'px;' +
+                '--tail-edge-top:' + (MARKER_BOX_HALF - base - TAIL_LENGTH - TAIL_OUTLINE) + 'px;' +
+                '--dot-tail-top:' + (MARKER_BOX_HALF - dotBase - DOT_TAIL_LENGTH) + 'px;' +
+                '--dot-tail-edge-top:' + (MARKER_BOX_HALF - dotBase - DOT_TAIL_LENGTH - DOT_TAIL_OUTLINE) + 'px;';
+        }
+
+        /**
+         * The line badge with its tail, and the dot it becomes when zoomed out.
+         *
+         * Both forms are in the markup and a class picks between them, so the
+         * tier can change hundreds of markers without rebuilding one. The tail
+         * is omitted until a vehicle has visibly moved and actually has a
+         * heading, rather than pointed at an arbitrary north.
          */
         const iconFor = (vehicle, selected) => {
-            const arrow = Number.isFinite(vehicle.heading)
-                ? '<div class="vehicle-arrow" style="color:' + colourFor(vehicle.type) +
-                    ';transform:rotate(' + Math.round(vehicle.heading) + 'deg)"></div>'
-                : '';
+            const colour = colourFor(vehicle.type);
+            const tram = String(vehicle.type).startsWith('tram');
+            const label = String(vehicle.line == null ? '' : vehicle.line);
+            const angle = headingAngle(vehicle);
+            const arrow = angle === null
+                ? ''
+                : '<div class="vehicle-arrow" style="transform:rotate(' + angle + 'deg)"></div>';
             return L.divIcon({
                 className: 'vehicle-icon',
-                html: '<div class="vehicle-pin' + (selected ? ' selected' : '') + '">' + arrow +
-                    '<div class="vehicle-badge" style="background:' + colourFor(vehicle.type) + '">' +
-                    escapeHtml(vehicle.line) + '</div></div>',
-                iconSize: [42, 42],
-                iconAnchor: [21, 21]
+                html: '<div class="vehicle-pin' + (selected ? ' selected' : '') +
+                    (tram ? ' is-tram' : ' is-bus') + '" style="color:' + colour + ';' +
+                    markerVars(label, tram, selected, angle) + '">' + arrow +
+                    '<div class="vehicle-badge" style="background:' + colour + '">' +
+                    escapeHtml(label) + '</div><div class="vehicle-dot"></div></div>',
+                iconSize: [MARKER_BOX_HALF * 2, MARKER_BOX_HALF * 2],
+                iconAnchor: [MARKER_BOX_HALF, MARKER_BOX_HALF]
             });
         };
+
+        /** The grid a marker has to have to itself, in screen pixels. */
+        const THIN_CELL = 26;
+        const LABEL_CELL = 46;
+
+        /** How the fleet is drawn, by how much of the city is on screen. */
+        const tierFor = () => {
+            const zoom = map.getZoom();
+            return zoom <= 11 ? 'far' : zoom <= 13 ? 'mid' : 'near';
+        };
+
+        /**
+         * Decide, per marker, whether it is a badge, a dot, or not drawn at all.
+         *
+         * Pure class and custom-property writes on elements that already exist,
+         * so this can run on every pan, zoom and poll. Markers are walked in key
+         * order so the one that wins a cell is the same one from poll to poll;
+         * walking them in whatever order the payload arrived in made the
+         * survivor change every ten seconds and the map twinkled.
+         */
+        function applyTier() {
+            const tier = tierFor();
+            const cell = tier === 'far' ? THIN_CELL : LABEL_CELL;
+            const keys = [...markers.keys()].sort((a, b) => {
+                // The selected vehicle is considered first, so it wins its cell.
+                if (a === currentVehicleId) return -1;
+                if (b === currentVehicleId) return 1;
+                return a < b ? -1 : a > b ? 1 : 0;
+            });
+
+            // Which cell each marker is in, and how crowded that cell is. At
+            // city zoom the count is the whole point: the survivor is sized by
+            // how many it stands for, so a busy corridor reads as a thicker
+            // string of beads instead of looking exactly like an empty one.
+            const cells = keys.map((key) => {
+                if (tier === 'mid') return null;
+                const at = map.latLngToLayerPoint(markers.get(key).marker.getLatLng());
+                return Math.round(at.x / cell) + ':' + Math.round(at.y / cell);
+            });
+            const counts = Object.create(null);
+            if (tier === 'far') for (const key of cells) counts[key] = (counts[key] || 0) + 1;
+
+            const taken = Object.create(null);
+            keys.forEach((key, index) => {
+                const element = markers.get(key).marker.getElement();
+                const pin = element && element.firstElementChild;
+                if (!pin) return;
+
+                const at = cells[index];
+                const free = at === null || !taken[at];
+                if (at !== null) taken[at] = 1;
+                const selected = key === currentVehicleId;
+
+                pin.classList.toggle('is-thinned', tier === 'far' && !free && !selected);
+                pin.classList.toggle('is-small', tier === 'far');
+                pin.classList.toggle('is-dot', tier !== 'near' || !(free || selected));
+
+                if (tier === 'far' && free) {
+                    const size = dotSizeForDensity(counts[at]);
+                    pin.style.setProperty('--far-dot', size + 'px');
+                    pin.style.setProperty('--far-ring', (size >= 10 ? 2 : 1.5) + 'px');
+                }
+            });
+        }
+
+        // Thinning and de-collision are decided in screen space, so both a zoom
+        // and a pan change the answer. Neither rebuilds an icon.
+        map.on('zoomend', applyTier);
+        map.on('moveend', applyTier);
 
         /** Destination on hover, same as the routecard names once you tap it. */
         const vehicleTooltip = (vehicle) => {
@@ -1073,8 +1332,7 @@
                 // Heading is bucketed to 15°: redrawing the icon for every
                 // degree of GPS jitter is redrawing it constantly, and no one
                 // can see 5° of difference anyway.
-                const headingBucket = Number.isFinite(vehicle.heading) ? Math.round(vehicle.heading / 15) : -1;
-                const look = vehicle.line + '|' + vehicle.type + '|' + headingBucket + '|' + isSelected;
+                const look = vehicle.line + '|' + vehicle.type + '|' + headingAngle(vehicle) + '|' + isSelected;
 
                 const existing = markers.get(key);
                 if (existing) {
@@ -1097,7 +1355,7 @@
                     zIndexOffset: isSelected ? 1000 : 0,
                     keyboard: false
                 })
-                    .bindTooltip(vehicleTooltip(vehicle), { direction: 'top', offset: [0, -16] })
+                    .bindTooltip(vehicleTooltip(vehicle), { direction: 'top', offset: [0, -26] })
                     .addTo(map);
                 marker.on('click', (event) => {
                     L.DomEvent.stopPropagation(event);
@@ -1111,6 +1369,10 @@
                 map.removeLayer(entry.marker);
                 markers.delete(key);
             }
+
+            // A poll changes who is where, so it changes who wins a cell and how
+            // crowded that cell is.
+            applyTier();
 
             // The vehicle being followed stopped reporting: say so rather than
             // leaving a stop list up that stopped being true. Checked against

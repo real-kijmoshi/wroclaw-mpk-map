@@ -272,27 +272,29 @@ const VehicleMarker = memo(
     const markerRef = useRef<MapMarker>(null);
 
     /*
-     * Where the marker is standing right now — which is one fix behind the one
-     * that just arrived, because the new fix goes to the platform's own marker
-     * animator instead of into this prop.
+     * Where the marker is standing right now.
      *
      * The prop cannot carry the live fix: setting it moves the marker outright,
      * which is the teleport being removed, and it would also cut short a glide
      * already under way. It cannot be dropped either — a marker whose position
      * only ever came from a native command would sit still for good on any
-     * platform where that command turned out to be a no-op. Carrying the fix the
-     * marker has already arrived at is both: every write lands where the marker
-     * already is, and the fleet still advances a poll at a time if the animator
-     * ever stops working.
+     * platform where that command turned out to be a no-op. So the prop carries
+     * the fix the marker has already *arrived* at, and the glide is what takes
+     * it there.
      *
-     * `react-hooks/refs` forbids reading a ref during render; this one holds the
-     * single value that must *not* be recomputed from props on every render —
-     * the last position the native side was told about.
+     * "Already arrived at" has to include the glide that just finished, which is
+     * why this is state that settles rather than a value pinned to the previous
+     * poll. Every re-render writes this prop back to the native marker, and a
+     * zoom re-renders the whole fleet — the tier and the dot size change with
+     * it. Left one fix behind, that write dropped every vehicle back to where it
+     * was ten seconds ago the moment the map was zoomed: the fleet jumped a
+     * poll's travel backwards, along the street, in step. The settle lands the
+     * prop exactly where the animator already put the marker, so the write is a
+     * no-op and a zoom re-projects from the truth.
      */
-    /* eslint-disable react-hooks/refs */
-    const arrived = useRef(coordinate(vehicle.lat, vehicle.lon));
-    const standingAt = arrived.current;
-    /* eslint-enable react-hooks/refs */
+    const [standingAt, setStandingAt] = useState(() => coordinate(vehicle.lat, vehicle.lon));
+    const arrived = useRef(standingAt);
+    const settle = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
       const next = coordinate(vehicle.lat, vehicle.lon);
@@ -302,8 +304,18 @@ const VehicleMarker = memo(
       arrived.current = next;
       // Reduce Motion still goes through the animator, so there is one path to
       // the marker's position; a zero duration lands it on the fix next frame.
-      markerRef.current?.animateMarkerToCoordinate(next, glide ? GLIDE_MS : 0);
+      const duration = glide ? GLIDE_MS : 0;
+      markerRef.current?.animateMarkerToCoordinate(next, duration);
+      if (settle.current) clearTimeout(settle.current);
+      settle.current = setTimeout(() => setStandingAt(next), duration);
     }, [glide, vehicle.lat, vehicle.lon]);
+
+    useEffect(
+      () => () => {
+        if (settle.current) clearTimeout(settle.current);
+      },
+      [],
+    );
 
     return (
       <Marker
@@ -484,6 +496,29 @@ type StopMarkerProps = {
   onPress: (stop: Stop) => void;
 };
 
+/**
+ * A stop: a dot on the coordinate, and — when it is the one named in its cell
+ * — its name, as a *second* marker.
+ *
+ * The split is not decoration. A native marker's view may never change size:
+ * `AIRMapMarker.layoutSubviews` takes the largest frame its React child has
+ * ever had as the annotation view's bounds and never gives it back, MapKit
+ * centres those bounds on the coordinate, and the child is drawn at their
+ * top-left corner. So a marker that *shrinks* — a stop losing its name at a
+ * zoom threshold — draws its dot half the lost width and height away from the
+ * kerb it belongs to and stays there for good, and one that *grows* is shifted
+ * by `reactSetFrame`'s own half-the-difference compensation until the next time
+ * the map moves and MapKit re-places it. That is stops walking off their kerb
+ * on zoom, and neither the anchor nor `tracksViewChanges` can reach it: the box
+ * changed size, and the box is the thing that must not.
+ *
+ * Centring the shape in a box big enough for both states fixes the drawing and
+ * hands the tap target away — a 104pt-wide box over every platform of a
+ * junction, where tapping the right one is how a rider gets the right
+ * direction. Two markers keep both: the dot is one fixed 20pt box for the life
+ * of the marker, the name is a box that only ever mounts and unmounts, and
+ * mounting is the one path where the platform places the annotation itself.
+ */
 const StopMarker = memo(function StopMarker({
   stop,
   tint,
@@ -492,52 +527,71 @@ const StopMarker = memo(function StopMarker({
   onDark,
   onPress,
 }: StopMarkerProps) {
-  const tracking = useMarkerRedraw(`${tint}|${labelled}|${selected}|${onDark}`);
+  const dotTracking = useMarkerRedraw(`${tint}|${selected}`);
+  const nameTracking = useMarkerRedraw(`${selected}|${onDark}`);
+  const at = coordinate(stop.lat, stop.lon);
+  const press = (event: { stopPropagation: () => void }) => {
+    event.stopPropagation();
+    onPress(stop);
+  };
 
   return (
-    <Marker
-      coordinate={coordinate(stop.lat, stop.lon)}
-      // The dot is what sits on the coordinate; the name hangs below it. Both
-      // anchors put the *dot* on the stop, not the middle of the label box.
-      anchor={labelled ? STOP_LABEL_ANCHOR : ANCHOR_CENTRE}
-      centerOffset={
-        Platform.OS === 'ios'
-          ? labelled
-            ? STOP_LABEL_OFFSET
-            : APPLE_CENTRE_OFFSET
-          : undefined
-      }
-      tracksViewChanges={tracking}
-      zIndex={selected ? 900 : labelled ? 6 : 5}
-      onPress={(event) => {
-        event.stopPropagation();
-        onPress(stop);
-      }}
-      accessibilityLabel={`Przystanek ${stop.name}`}>
-      <View style={labelled ? styles.stopLabelled : styles.stopWrapper}>
-        <View
-          style={[
-            styles.stopDot,
-            { borderColor: tint },
-            selected && styles.stopDotSelected,
-          ]}
-        />
-        {labelled && (
-          <Text
-            numberOfLines={1}
-            allowFontScaling={false}
-            style={[
-              styles.stopName,
-              // A halo rather than a chip: dozens of filled pills turn a map
-              // into a list, and this is how the base map draws its own labels.
-              onDark ? styles.stopNameOnDark : styles.stopNameOnLight,
-              selected && styles.stopNameSelected,
-            ]}>
-            {stop.name}
-          </Text>
-        )}
-      </View>
-    </Marker>
+    <>
+      <Marker
+        coordinate={at}
+        /*
+         * Both boxes are symmetric about the coordinate — the dot in the middle
+         * of its own, the name hanging into the lower half of the wider one —
+         * so the anchor is dead centre on both and never has to be computed.
+         *
+         * The platform split is the same one the vehicle marker makes: Apple
+         * Maps ignores `anchor` and uses `centerOffset`, and passing both is
+         * asking two mechanisms to agree.
+         */
+        anchor={Platform.OS === 'ios' ? undefined : ANCHOR_CENTRE}
+        centerOffset={Platform.OS === 'ios' ? APPLE_CENTRE_OFFSET : undefined}
+        tracksViewChanges={dotTracking}
+        zIndex={selected ? 900 : 6}
+        onPress={press}
+        accessibilityLabel={`Przystanek ${stop.name}`}>
+        <View style={styles.stopDotBox}>
+          <View style={[styles.stopDot, { borderColor: tint }, selected && styles.stopDotSelected]} />
+        </View>
+      </Marker>
+
+      {labelled && (
+        <Marker
+          coordinate={at}
+          anchor={Platform.OS === 'ios' ? undefined : ANCHOR_CENTRE}
+          centerOffset={Platform.OS === 'ios' ? APPLE_CENTRE_OFFSET : undefined}
+          tracksViewChanges={nameTracking}
+          // Under the dots, always: the name is the same stop, so a tap on it
+          // is no loss, but it must never take one meant for a neighbouring
+          // platform's dot.
+          zIndex={selected ? 899 : 4}
+          onPress={press}
+          accessibilityLabel={`Przystanek ${stop.name}`}>
+          <View style={styles.stopNameBox}>
+            <Text
+              // Two lines, because one is not enough for the names this network
+              // actually has: "Dembowskiego (Chełmońskiego)" came back as
+              // "Dembowskiego (…" — a stop nobody can look for. The box holds
+              // two either way, so a one-line name does not change its size.
+              numberOfLines={STOP_NAME_LINES}
+              allowFontScaling={false}
+              style={[
+                styles.stopName,
+                // A halo rather than a chip: dozens of filled pills turn a map
+                // into a list, and this is how the base map draws its own labels.
+                onDark ? styles.stopNameOnDark : styles.stopNameOnLight,
+                selected && styles.stopNameSelected,
+              ]}>
+              {stop.name}
+            </Text>
+          </View>
+        </Marker>
+      )}
+    </>
   );
 });
 
@@ -982,30 +1036,28 @@ const APPLE_CENTRE_OFFSET: NonNullable<MapMarkerProps['centerOffset']> = { x: 0,
 const STOP_TINT = '#1C1C1E';
 
 /**
- * The labelled stop marker's box.
+ * The stop marker's two boxes. Neither ever changes size — see `StopMarker`.
  *
- * The dot sits on the coordinate and the name hangs under it, so the marker's
- * anchor has to be the dot's centre and not the middle of the box — otherwise
- * every named stop is drawn half a label north of where it actually is.
- * Android reads that as a normalized `anchor`, MapKit as a pixel
- * `centerOffset`, so the geometry is written once here and converted for each.
+ * The dot's is a dot's, floored the way the vehicle dot's is: big enough for
+ * the selected dot's 1.25 and no bigger, because on the native surface the box
+ * is the hit target and platforms of one junction are metres apart.
+ *
+ * The name's is symmetric about the coordinate with the name in its lower half,
+ * so its anchor is the same dead centre the dot's is: half the box is the empty
+ * mirror of the gap and the two lines that hang below the dot.
  */
 const STOP_DOT = 13;
+const STOP_DOT_BOX = 20;
 const STOP_LABEL_GAP = 2;
-const STOP_NAME_HEIGHT = 14;
+const STOP_NAME_LINE = 14;
+const STOP_NAME_LINES = 2;
 const STOP_LABEL_WIDTH = 104;
-const STOP_LABEL_HEIGHT = 42;
-const STOP_LABEL_PAD = (STOP_LABEL_HEIGHT - STOP_DOT - STOP_LABEL_GAP - STOP_NAME_HEIGHT) / 2;
-/** Where the dot's centre falls inside that box. */
-const STOP_DOT_CENTRE_Y = STOP_LABEL_PAD + STOP_DOT / 2;
-const STOP_LABEL_ANCHOR: MapMarkerProps['anchor'] = {
-  x: 0.5,
-  y: STOP_DOT_CENTRE_Y / STOP_LABEL_HEIGHT,
-};
-const STOP_LABEL_OFFSET: NonNullable<MapMarkerProps['centerOffset']> = {
-  x: 0,
-  y: Math.round(STOP_DOT_CENTRE_Y - STOP_LABEL_HEIGHT / 2),
-};
+/** The name is drawn with a halo, which needs room past its own line box. */
+const STOP_NAME_HALO = 3;
+/** Dot centre → the gap, the lines and the halo below it — and the same above. */
+const STOP_NAME_DROP = STOP_DOT / 2 + STOP_LABEL_GAP;
+const STOP_NAME_BLOCK = STOP_NAME_LINE * STOP_NAME_LINES + STOP_NAME_HALO;
+const STOP_NAME_HEIGHT = (STOP_NAME_DROP + STOP_NAME_BLOCK) * 2;
 
 const styles = StyleSheet.create({
   vehicleDimmed: { opacity: 0.28 },
@@ -1219,14 +1271,17 @@ const styles = StyleSheet.create({
     },
   }) as object,
 
-  // Keep the measured marker bounds fixed. The label is allowed to extend
-  // beyond this compact coordinate box without changing the map anchor.
-  stopWrapper: { width: 14, height: 14, alignItems: 'center', justifyContent: 'center' },
-  stopLabelled: {
-    width: STOP_LABEL_WIDTH,
-    height: STOP_LABEL_HEIGHT,
+  stopDotBox: {
+    width: STOP_DOT_BOX,
+    height: STOP_DOT_BOX,
     alignItems: 'center',
-    paddingTop: STOP_LABEL_PAD,
+    justifyContent: 'center',
+  },
+  stopNameBox: {
+    width: STOP_LABEL_WIDTH,
+    height: STOP_NAME_HEIGHT,
+    alignItems: 'center',
+    paddingTop: STOP_NAME_HEIGHT / 2 + STOP_NAME_DROP,
   },
   stopDot: {
     width: STOP_DOT,
@@ -1238,11 +1293,9 @@ const styles = StyleSheet.create({
   },
   stopDotSelected: { transform: [{ scale: 1.25 }], borderWidth: 4 },
   stopName: {
-    marginTop: STOP_LABEL_GAP,
     maxWidth: STOP_LABEL_WIDTH,
-    height: STOP_NAME_HEIGHT,
     fontSize: 11,
-    lineHeight: STOP_NAME_HEIGHT,
+    lineHeight: STOP_NAME_LINE,
     fontWeight: Weight.semibold,
     letterSpacing: -0.1,
     textAlign: 'center',

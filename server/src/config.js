@@ -13,6 +13,11 @@ const num = (value, fallback) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const decimal = (value, fallback) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
 const bool = (value, fallback) => {
   if (value === undefined || value === '') return fallback;
   return /^(1|true|yes|on)$/i.test(value);
@@ -46,6 +51,52 @@ const VEHICLE_SOURCES = list(process.env.VEHICLE_POSITION_URLS, DEFAULTS.vehicle
  * prints the headlines each one yields so that is easy to eyeball.
  */
 const ALERT_PAGES = list(process.env.ALERT_PAGE_URLS, DEFAULTS.alertPages);
+
+const requestedAiProvider = String(
+  process.env.AI_ALERTS_PROVIDER || DEFAULTS.aiAlerts.provider,
+).toLowerCase();
+const requestedAiEnabled = bool(process.env.AI_ALERTS_ENABLED, DEFAULTS.aiAlerts.enabled);
+const openrouterApiKey = process.env.OPENROUTER_API_KEY || '';
+const openrouterModel = process.env.OPENROUTER_MODEL || DEFAULTS.aiAlerts.openrouter.model;
+const cmdcApiKey = process.env.CMD_API_KEY || process.env.CMDC_API_KEY || '';
+const cmdcModel = process.env.CMDC_MODEL || DEFAULTS.aiAlerts.cmdc.model;
+const ollamaModel = process.env.OLLAMA_MODEL || DEFAULTS.aiAlerts.ollama.model;
+
+const resolveAiAlerts = () => {
+  if (!requestedAiEnabled) {
+    return { enabled: false, provider: 'off', reason: 'AI alerts are disabled' };
+  }
+
+  if (requestedAiProvider === 'openrouter') {
+    if (!openrouterApiKey) {
+      return { enabled: false, provider: 'off', reason: 'OPENROUTER_API_KEY is required' };
+    }
+    if (!openrouterModel) {
+      return { enabled: false, provider: 'off', reason: 'OPENROUTER_MODEL is required' };
+    }
+  } else if (requestedAiProvider === 'cmdc') {
+    if (!cmdcApiKey) {
+      return { enabled: false, provider: 'off', reason: 'CMD_API_KEY is required' };
+    }
+    if (!cmdcModel) {
+      return { enabled: false, provider: 'off', reason: 'CMDC_MODEL is required' };
+    }
+  } else if (requestedAiProvider === 'ollama') {
+    if (!ollamaModel) {
+      return { enabled: false, provider: 'off', reason: 'OLLAMA_MODEL is required' };
+    }
+  } else {
+    return {
+      enabled: false,
+      provider: 'off',
+      reason: `Unsupported AI alerts provider: ${requestedAiProvider || '(empty)'}`,
+    };
+  }
+
+  return { enabled: true, provider: requestedAiProvider, reason: null };
+};
+
+const aiAlertsSelection = resolveAiAlerts();
 
 module.exports = {
   port: num(process.env.PORT, DEFAULTS.port),
@@ -167,6 +218,37 @@ module.exports = {
       username: process.env.NITTER_USERNAME || DEFAULTS.alerts.nitter.username,
       maxPosts: num(process.env.NITTER_MAX_POSTS, DEFAULTS.alerts.nitter.maxPosts),
       timeoutMs: num(process.env.NITTER_TIMEOUT_MS, DEFAULTS.alerts.nitter.timeoutMs),
+    },
+  },
+
+  aiAlerts: {
+    enabled: aiAlertsSelection.enabled,
+    provider: aiAlertsSelection.provider,
+    requestedProvider: requestedAiProvider,
+    cacheTtlMs: num(process.env.AI_ALERTS_CACHE_TTL_MS, DEFAULTS.aiAlerts.cacheTtlMs),
+    timeoutMs: num(process.env.AI_ALERTS_TIMEOUT_MS, DEFAULTS.aiAlerts.timeoutMs),
+    maxInputAlerts: num(
+      process.env.AI_ALERTS_MAX_INPUT_ALERTS,
+      DEFAULTS.aiAlerts.maxInputAlerts,
+    ),
+    temperature: decimal(
+      process.env.AI_ALERTS_TEMPERATURE,
+      DEFAULTS.aiAlerts.temperature,
+    ),
+    status: aiAlertsSelection,
+    openrouter: {
+      apiKey: openrouterApiKey,
+      baseUrl: process.env.OPENROUTER_BASE_URL || DEFAULTS.aiAlerts.openrouter.baseUrl,
+      model: openrouterModel,
+    },
+    cmdc: {
+      apiKey: cmdcApiKey,
+      baseUrl: process.env.CMDC_BASE_URL || DEFAULTS.aiAlerts.cmdc.baseUrl,
+      model: cmdcModel,
+    },
+    ollama: {
+      baseUrl: process.env.OLLAMA_BASE_URL || DEFAULTS.aiAlerts.ollama.baseUrl,
+      model: ollamaModel,
     },
   },
 

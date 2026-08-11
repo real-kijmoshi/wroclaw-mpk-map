@@ -204,9 +204,44 @@ their own copy of the same `Platform.select` shadow.
   side: the duration must be a **whole second**, because `RNMapsMarkerView.mm`
   hands it on as integer `duration / 1000` and 900ms arrives as a zero-second
   animation; and the `coordinate` prop deliberately carries the fix the marker
-  has *already arrived at*, one behind the animator, because a live prop sets
-  the position outright (the jump) while no prop at all would freeze the fleet
-  wherever a native command turned out to be a no-op.
+  has *already arrived at*, because a live prop sets the position outright (the
+  jump) while no prop at all would freeze the fleet wherever a native command
+  turned out to be a no-op.
+- **"Already arrived at" means after the glide, not before it.** That prop was
+  a ref pinned to the previous poll, so it sat a fix behind the animator for
+  ten seconds at a time. Every re-render writes it back to the native marker
+  and a zoom re-renders the whole fleet — the tier and the dot size change with
+  it — so zooming dropped every vehicle back to where it had been ten seconds
+  earlier, the fleet jumping a poll's travel backwards in step. It is state
+  that settles on a `GLIDE_MS` timer (`standingAt` in `native-map.tsx`): the
+  write then lands where the animator already put the marker and changes
+  nothing.
+- **A native marker's box never changes size, and its shape is centred in it.**
+  The anchor is not the whole story and fixing the anchor alone did not fix the
+  bug: `AIRMapMarker.layoutSubviews` (react-native-maps, iOS) takes the largest
+  frame its React child has ever had as the annotation view's bounds and never
+  gives it back, MapKit centres *those bounds* on the coordinate, and the child
+  is drawn at their top-left corner. A marker whose box shrinks therefore draws
+  its shape half the lost width and height off its coordinate — permanently,
+  since nothing shrinks the bounds again — and one whose box grows is displaced
+  by `reactSetFrame`'s own half-the-difference compensation until the next map
+  movement re-places it. That is stops walking off their kerb on every zoom;
+  the earlier fix (a box tall enough for the name, dot centred, anchor dead
+  centre) removed the changing *anchor* but left the changing *box*. So the dot
+  is one marker of one fixed size (`STOP_DOT_BOX`) for the life of the marker,
+  and the name is a **second** marker that only ever mounts and unmounts —
+  mounting is the one path where the platform places the annotation itself. One
+  marker with a box big enough for both states would fix the drawing and hand
+  away the tap target: on the native surface the box *is* the hit target, and a
+  104pt-wide one over every platform of a junction takes the taps that pick the
+  direction a rider is travelling. Apple Maps ignores `anchor` and uses
+  `centerOffset`; pass one per platform, never both.
+- **A stop name gets two lines.** Wrocław has stops called "Dembowskiego
+  (Chełmońskiego)"; on one line that is "Dembowskiego (…", which is not a stop
+  anyone can look for. Both surfaces clamp at two (`numberOfLines` in
+  `native-map.tsx`, `-webkit-line-clamp` in `map-html.ts`) and both reserve the
+  two-line height whether or not the name uses it — a box that grows when a
+  name wraps is the size change the rule above forbids.
 - **Only *our* marker moves may be transitioned.** Leaflet repositions every
   marker itself at the end of a zoom and on `viewreset`, and it clears its own
   `leaflet-zoom-anim` guard *before* it does — so a blanket

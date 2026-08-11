@@ -143,6 +143,16 @@ class GtfsStore {
        * @type {Array<{ stop: object, normalized: string }>}
        */
       stopSearchIndex: [],
+      /**
+       * Which lines call at a stop, built once from the variants.
+       *
+       * Answering this by walking every variant of every line costs about
+       * twelve thousand comparisons per stop, which is fine for the one stop
+       * behind a departures board and not fine for the hundred behind a map
+       * viewport.
+       * @type {Map<string, string[]>} stop_id -> line short names
+       */
+      linesByStopId: new Map(),
       /** @type {object[]} compact trip records, addressed by index */
       trips: [],
       /** @type {Map<string, number>} trip_id -> index into this.trips */
@@ -181,6 +191,7 @@ class GtfsStore {
     this.variantByShapeId = state.variantByShapeId;
     this.stopsById = state.stopsById;
     this.stopSearchIndex = state.stopSearchIndex;
+    this.linesByStopId = state.linesByStopId;
     this.trips = state.trips;
     this.tripIndexById = state.tripIndexById;
     this.tripsByVehicleId = state.tripsByVehicleId;
@@ -787,6 +798,28 @@ class GtfsStore {
     for (const variants of state.variantsByLine.values()) {
       variants.sort((a, b) => b.tripCount - a.tripCount);
     }
+
+    // Invert the same data once: stop -> lines. Built here rather than lazily
+    // because the caller that needs it most asks for a hundred stops at a time.
+    const linesByStop = new Map();
+    for (const [line, variants] of state.variantsByLine) {
+      for (const variant of variants) {
+        for (const stop of variant.stops) {
+          let lines = linesByStop.get(stop.id);
+          if (!lines) {
+            lines = new Set();
+            linesByStop.set(stop.id, lines);
+          }
+          lines.add(line);
+        }
+      }
+    }
+    for (const [stopId, lines] of linesByStop) {
+      state.linesByStopId.set(
+        stopId,
+        [...lines].sort((a, b) => a.localeCompare(b, 'pl', { numeric: true })),
+      );
+    }
   }
 
   hasLine(line) {
@@ -886,13 +919,7 @@ class GtfsStore {
   }
 
   getLinesForStop(stopId) {
-    const lines = new Set();
-    for (const [line, variants] of this.variantsByLine) {
-      if (variants.some((variant) => variant.stops.some((stop) => stop.id === stopId))) {
-        lines.add(line);
-      }
-    }
-    return [...lines].sort((a, b) => a.localeCompare(b, 'pl', { numeric: true }));
+    return this.linesByStopId.get(stopId) ?? [];
   }
 
   /**
@@ -913,7 +940,14 @@ class GtfsStore {
       if (distance <= radiusMeters) found.push({ ...stop, distance: Math.round(distance) });
     }
 
-    return found.sort((a, b) => a.distance - b.distance).slice(0, limit);
+    // The lines are what make a list of nearby stops answerable — "is my tram
+    // one of these?" — and the map cannot render a stop's identity without
+    // them. Attached after the sort so only the stops actually returned pay
+    // for the lookup, which is a Map hit each.
+    return found
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, limit)
+      .map((stop) => ({ ...stop, lines: this.getLinesForStop(stop.id) }));
   }
 
   /** Case/diacritic-insensitive stop search, ranked by match quality. */
@@ -962,7 +996,7 @@ class GtfsStore {
 
     return platforms
       .slice(0, limit)
-      .map((stop) => (stop.ids.length > 1 ? stop : (({ ids, ...platform }) => platform)(stop)));
+      .map((stop) => (stop.ids.length > 1 ? stop : (({ ids: _ids, ...platform }) => platform)(stop)));
   }
 
   /** Is `serviceId` running on `date` (a Date in Europe/Warsaw)? */

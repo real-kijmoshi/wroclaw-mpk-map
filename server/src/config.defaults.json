@@ -68,6 +68,27 @@
     }
   },
 
+  "aiAlerts": {
+    "enabled": false,
+    "provider": "off",
+    "cacheTtlMs": 86400000,
+    "timeoutMs": 90000,
+    "maxInputAlerts": 30,
+    "temperature": 0.1,
+    "openrouter": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "model": ""
+    },
+    "cmdc": {
+      "baseUrl": "https://api.commandcode.ai/provider/v1",
+      "model": "deepseek/deepseek-v4-flash"
+    },
+    "ollama": {
+      "baseUrl": "http://127.0.0.1:11434",
+      "model": ""
+    }
+  },
+
   "cache": {
     "shapeEntries": 200,
     "vehicleDetailEntries": 512,

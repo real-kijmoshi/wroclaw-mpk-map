@@ -58,11 +58,34 @@ const fakeVehicles = {
   }),
 };
 
+const fakeIncidentStatus = {
+  enabled: false,
+  provider: 'off',
+  model: null,
+  lastSuccessAt: null,
+  lastError: 'AI alerts are disabled',
+  incidentCount: 1,
+};
+
 const fakeAlerts = {
-  status: { providers: [], lastRefreshAt: null, count: 1 },
+  status: { providers: [], lastRefreshAt: null, count: 1, aiIncidents: fakeIncidentStatus },
+  incidentStatus: fakeIncidentStatus,
   getAlerts: ({ since = 0, line = null } = {}) =>
     [{ id: 'a1', content: 'Linia 4 objazd', timestamp: 1_000, affected: ['4'], url: null, source: 'test' }].filter(
       (alert) => alert.timestamp >= since && (!line || alert.affected.includes(line)),
+    ),
+  getIncidents: ({ since = 0, line = null, status = null } = {}) =>
+    [{
+      id: 'incident-a1',
+      status: 'active',
+      affected: ['4'],
+      lastUpdatedAt: 1_000,
+      timeline: [],
+    }].filter(
+      (incident) =>
+        incident.lastUpdatedAt >= since &&
+        (!line || incident.affected.includes(line)) &&
+        (!status || incident.status === status),
     ),
 };
 
@@ -276,6 +299,9 @@ describe('HTTP API', () => {
     assert.equal(status, 200);
     assert.equal(body.stops[0].name, 'Rynek');
     assert.equal(body.stops[0].distance, 0);
+    // The app draws stop markers and the nearby list from this payload alone;
+    // without the lines both are anonymous.
+    assert.ok(Array.isArray(body.stops[0].lines), 'nearby stops carry their lines');
 
     assert.equal((await get('/stops/near')).status, 400, 'lat and lon are required');
   });
@@ -291,11 +317,29 @@ describe('HTTP API', () => {
   });
 
   it('serves alerts and supports filtering', async () => {
-    assert.equal((await get('/alerts')).body.alerts.length, 1);
+    const unfiltered = (await get('/alerts')).body;
+    assert.deepEqual(Object.keys(unfiltered).sort(), ['alerts', 'lastRefreshAt']);
+    assert.equal(unfiltered.alerts.length, 1);
     assert.equal((await get('/alerts?since=99999')).body.alerts.length, 0);
     assert.equal((await get('/alerts?from=99999')).body.alerts.length, 0, 'legacy ?from= still works');
     assert.equal((await get('/alerts?line=4')).body.alerts.length, 1);
     assert.equal((await get('/alerts?line=128')).body.alerts.length, 0);
+  });
+
+  it('serves grouped incidents and supports timeline filtering', async () => {
+    const response = await get('/incidents?line=4&status=active');
+    assert.equal(response.status, 200);
+    assert.equal(response.body.incidents.length, 1);
+    assert.deepEqual(response.body.ai, {
+      enabled: false,
+      provider: 'off',
+      model: null,
+      lastSuccessAt: null,
+      lastError: 'AI alerts are disabled',
+    });
+    assert.equal((await get('/incidents?from=99999')).body.incidents.length, 0);
+    assert.equal((await get('/incidents?status=resolved')).body.incidents.length, 0);
+    assert.equal((await get('/incidents?status=nope')).status, 400);
   });
 
   it('reports health', async () => {
@@ -305,6 +349,8 @@ describe('HTTP API', () => {
     assert.equal(body.lines.trams, 1);
     assert.equal(body.lines.buses, 2);
     assert.deepEqual(body.klosok, { enabled: false }, 'Kłosok is reported even when disabled');
+    assert.deepEqual(body.alerts.aiIncidents, fakeAlerts.incidentStatus);
+    assert.equal('aiAlerts' in body, false, 'AI status is nested in the alerts health block');
     // Both vehicle sources and the merge stats are part of the report.
     assert.equal(body.vehicles.openData.source, 'https://open-data.cui.wroclaw.pl/hdb/db/14?download=json');
     assert.equal(body.vehicles.stats.total, 2);

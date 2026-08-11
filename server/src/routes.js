@@ -325,6 +325,7 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt 
         { method: 'GET', path: '/stop/:id', description: 'Stop details' },
         { method: 'GET', path: '/stop/:id/departures', description: 'Next departures; ?limit= and ?within= (minutes)' },
         { method: 'GET', path: '/alerts', description: 'Service alerts; ?since= (ms epoch) and ?line=' },
+        { method: 'GET', path: '/incidents', description: 'Grouped incident timelines; ?since=, ?line= and ?status=' },
         { method: 'GET', path: '/health', description: 'Health and upstream source report' },
         { method: 'GET', path: '/map', description: 'Browser map' },
         { method: 'GET', path: '/status', description: 'Status dashboard' },
@@ -564,6 +565,36 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt 
     res.json({
       alerts: alerts.getAlerts({ since, line }),
       lastRefreshAt: alerts.status.lastRefreshAt,
+    });
+  });
+
+  router.get('/incidents', cacheFor(60), (req, res) => {
+    const since = Number.parseInt(req.query.since ?? req.query.from, 10) || 0;
+    const line = req.query.line ?? null;
+    const status = req.query.status ?? null;
+    if (status && !['active', 'resolved', 'unknown'].includes(status)) {
+      return res.status(400).json({
+        error: 'Invalid incident status',
+        availableStatuses: ['active', 'resolved', 'unknown'],
+      });
+    }
+    const ai = alerts.incidentStatus ?? {
+      enabled: false,
+      provider: null,
+      model: null,
+      lastSuccessAt: null,
+      lastError: 'Incident generation is unavailable',
+    };
+    return res.json({
+      incidents: alerts.getIncidents({ since, line, status }),
+      lastRefreshAt: alerts.status.lastRefreshAt,
+      ai: {
+        enabled: ai.enabled,
+        provider: ai.provider,
+        model: ai.model,
+        lastSuccessAt: ai.lastSuccessAt,
+        lastError: ai.lastError,
+      },
     });
   });
 

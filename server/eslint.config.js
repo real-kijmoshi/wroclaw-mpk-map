@@ -12,6 +12,7 @@ module.exports = [
         process: 'readonly',
         Buffer: 'readonly',
         fetch: 'readonly',
+        Intl: 'readonly',
         AbortController: 'readonly',
         URLSearchParams: 'readonly',
         URL: 'readonly',

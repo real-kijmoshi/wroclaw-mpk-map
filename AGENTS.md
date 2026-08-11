@@ -208,7 +208,11 @@ of `{error, state}`. When you change `LINE_COLOR` in `wroclive/src/lib/lines.ts`
 change `LINE_COLOR` here; when a payload shape changes, check both readers. It
 also stops click propagation on its own markers by hand — without that a tap on a
 stop reaches the map's click handler, which clears the very route the stop
-belongs to.
+belongs to. Its vehicle markers are the app's: the geometry lives in
+`wroclive/src/lib/vehicle-marker.ts` and this page carries a hand copy of the
+constants and the solver, because it has no build step and cannot import them.
+`test/map.test.js` compares the two the same way it compares the palette — that
+comparison is the only thing that keeps the copy honest.
 
 **20. Maps move their markers; they do not rebuild them.**
 The browser map used to clear the marker layer and recreate every vehicle on

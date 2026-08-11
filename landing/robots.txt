@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /map.html
+
+Sitemap: https://wroclive.kijmoshi.xyz/sitemap.xml
