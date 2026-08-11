@@ -79,8 +79,36 @@ export const CATEGORY_ORDER: LineType[] = [
   'unknown',
 ];
 
+/** A hex colour, darkened towards black by `amount` of itself. */
+const shade = (hex: string, amount: number): string => {
+  const value = Number.parseInt(hex.slice(1), 16);
+  const step = (channel: number) =>
+    Math.round(((value >> channel) & 255) * amount)
+      .toString(16)
+      .padStart(2, '0');
+  return `#${step(16)}${step(8)}${step(0)}`;
+};
+
+/**
+ * The classic marker's keyline: its own tint, a quarter of the way to black.
+ *
+ * The marker it comes from (commit a86981d) carried a pastel palette of its
+ * own — `#7799CC` for trams and for every night bus, with the line number in
+ * white on top at about 2.9:1. That is the contrast failure `LINE_COLOR`
+ * exists to prevent, and a night map where 240 through 255 are all the same
+ * washed-out blue is the legibility one. So the classic *shape* is what the
+ * setting brings back; the colour is the palette everything else in the app
+ * uses, and the border is derived from it so the two can never drift.
+ */
+export const CLASSIC_BORDER_COLOR: Record<LineType, string> = Object.fromEntries(
+  Object.entries(LINE_COLOR).map(([type, color]) => [type, shade(color, 0.75)]),
+) as Record<LineType, string>;
+
 export const colorFor = (type: string | null | undefined): string =>
   LINE_COLOR[(type ?? 'unknown') as LineType] ?? LINE_COLOR.unknown;
+
+export const classicBorderColorFor = (type: string | null | undefined): string =>
+  CLASSIC_BORDER_COLOR[(type ?? 'unknown') as LineType] ?? CLASSIC_BORDER_COLOR.unknown;
 
 export const labelFor = (type: string): string =>
   LINE_LABEL[type as LineType] ?? LINE_LABEL.unknown;

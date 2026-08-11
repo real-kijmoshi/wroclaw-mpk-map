@@ -145,6 +145,22 @@ their own copy of the same `Platform.select` shadow.
   a hand copy that names it. Change a number in one, change it in all three —
   `server/test/map.test.js` compares the constants and checks the solver lands
   on the outline, the same way it compares the palette.
+- **There are two marker styles, and the classic one is not a rebuild**
+  (`preferences.markerStyle`, chosen in Settings next to the layout). `modern`
+  is the marker above. `classic` is the tile from commit a86981d — a 40pt
+  glossy badge with a chevron orbiting it at one fixed radius, the pair rotated
+  together while the number is turned back upright — and its constants sit in
+  the same `vehicle-marker.ts`. Two things it does *not* restore: the pastel
+  palette that shipped with it (white numbers on `#7799CC` at about 2.9:1, and
+  every night line the same blue — it wears `LINE_COLOR` and a keyline derived
+  from it, `CLASSIC_BORDER_COLOR`), and the dot tiers, because a bare dot is a
+  shape that look does not have — the thinning still decides *which* vehicles
+  are drawn and every survivor keeps its badge (`alwaysLabelled` in
+  `native-map.tsx`). On the Leaflet page it is one class on the vehicles pane:
+  every marker already carries its keyline and its bearing as custom
+  properties, so switching the setting repaints the fleet without rebuilding an
+  icon, the same way the tier and the focus do. `server/views/map.html` has no
+  settings and draws the modern marker only.
 - **`server/views/map.html` uses `is-` prefixed marker modifiers.** That page
   has one flat class namespace and `.dot` is already the live/stale indicator
   in its status pill: a plain `.dot` on the marker picked up its grey
