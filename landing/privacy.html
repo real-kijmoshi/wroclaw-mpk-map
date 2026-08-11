@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Polityka prywatności wroclive — otwartej mapy komunikacji miejskiej we Wrocławiu.">
+  <link rel="canonical" href="https://wroclive.kijmoshi.xyz/privacy.html">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#0B5FBF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#05070C" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b5fbf'/%3E%3Cg fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='7' width='14' height='13' rx='2'/%3E%3Cpath d='M9 13h14M13 7v6M19 7v6M12 25l2-4M20 25l-2-4'/%3E%3C/g%3E%3C/svg%3E">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Spline+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      color-scheme: light dark;
+
+      --rail: #0B5FBF;
+      --rail-dark: #084A96;
+      --ink: #0E141B;
+      --ink-2: #0B1F38;
+      --live: #16A34A;
+      --amber: #FFB020;
+
+      --bg: #F2F2F7;
+      --surface: #FFFFFF;
+      --text: #0F172A;
+      --muted: #64748B;
+      --separator: rgba(60, 60, 67, 0.18);
+      --fill: rgba(120, 120, 128, 0.12);
+
+      --shadow-float: 0 8px 30px rgba(15, 23, 42, 0.18);
+      --shadow-chip: 0 2px 10px rgba(15, 23, 42, 0.14);
+
+      --radius-card: 18px;
+      --radius-control: 12px;
+      --radius-sheet: 22px;
+      --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+      --font-display: 'Spline Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+        'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #000000;
+        --surface: #1C1C1E;
+        --text: #F5F5F7;
+        --muted: #98989F;
+        --separator: rgba(255, 255, 255, 0.14);
+        --fill: rgba(120, 120, 128, 0.24);
+        --shadow-float: 0 8px 30px rgba(0, 0, 0, 0.6);
+        --shadow-chip: 0 2px 10px rgba(0, 0, 0, 0.5);
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+    html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+
+    body {
+      margin: 0;
+      font-family: var(--font-display);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      text-size-adjust: 100%;
+    }
+
+    a { color: var(--rail); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    a:focus-visible, button:focus-visible {
+      outline: 2px solid var(--rail);
+      outline-offset: 3px;
+      border-radius: 4px;
+    }
+
+    .container {
+      width: min(800px, 100% - 2 * 24px);
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ---------- Header ---------- */
+
+    header {
+      padding: 3.5rem 0 2.5rem;
+      text-align: center;
+    }
+    header .logo {
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 1.25rem;
+      border-radius: 14px;
+      background: var(--rail);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: var(--shadow-chip);
+    }
+    header .logo svg { width: 32px; height: 32px; fill: #fff; }
+    header h1 {
+      margin: 0 0 0.5rem;
+      font-size: clamp(1.8rem, 4vw, 2.4rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    header .subtitle {
+      font-size: 1.05rem;
+      color: var(--muted);
+      max-width: 560px;
+      margin: 0 auto;
+    }
+
+    /* ---------- TL;DR Card ---------- */
+
+    .tldr {
+      background: var(--surface);
+      border: 1px solid var(--separator);
+      border-radius: var(--radius-card);
+      box-shadow: var(--shadow-float);
+      padding: 1.5rem 1.75rem;
+      margin: 0 auto 2.5rem;
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+    }
+    .tldr .tldr__grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-top: 1.25rem;
+    }
+    .tldr .tldr__item {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .tldr .tldr__item .label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+    .tldr .tldr__item .value {
+      font-size: 1.1rem;
+      font-weight: 600;
+    }
+    .tldr .tldr__item .value.ok { color: var(--live); }
+    .tldr .tldr__item .value.warn { color: var(--amber); }
+    .tldr .tldr__item .value.bad { color: var(--rail); }
+
+    /* ---------- Navigation ---------- */
+
+    nav.toc {
+      position: sticky;
+      top: calc(56px - 1px);
+      z-index: 10;
+      background: color-mix(in srgb, var(--surface) 82%, transparent);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid var(--separator);
+      border-radius: var(--radius-card);
+      box-shadow: var(--shadow-chip);
+      margin-bottom: 2rem;
+    }
+    nav.toc ul {
+      list-style: none;
+      margin: 0;
+      padding: 0.5rem 1rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.25rem;
+    }
+    nav.toc li { margin: 0; }
+    nav.toc a {
+      display: block;
+      padding: 0.55rem 1rem;
+      border-radius: var(--radius-control);
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--muted);
+      transition: background-color 0.18s var(--ease), color 0.18s var(--ease);
+    }
+    nav.toc a:hover, nav.toc a:focus-visible {
+      background: var(--rail);
+      color: #fff;
+    }
+    nav.toc a.active {
+      background: var(--rail);
+      color: #fff;
+      font-weight: 600;
+    }
+
+    /* ---------- Content ---------- */
+
+    .prose {
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 0 0 4rem;
+    }
+    .prose section {
+      margin: 2.5rem 0;
+      scroll-margin-top: 80px;
+    }
+    .prose h2 {
+      margin: 0 0 1.25rem;
+      font-size: 1.4rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .prose h2 .icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--rail) 12%, transparent);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: none;
+    }
+    .prose h2 .icon svg { width: 20px; height: 20px; fill: var(--rail); }
+    .prose h3 {
+      margin: 1.75rem 0 0.75rem;
+      font-size: 1.1rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .prose p { margin: 1rem 0; }
+    .prose ul { margin: 0.75rem 0; padding-left: 1.25rem; }
+    .prose li { margin: 0.4rem 0; }
+    .prose .note {
+      font-size: 0.85rem;
+      font-family: var(--font-mono);
+      color: var(--muted);
+      background: var(--fill);
+      border-radius: 10px;
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+    }
+    .prose code {
+      font-family: var(--font-mono);
+      font-size: 0.9em;
+      background: var(--fill);
+      padding: 0.15em 0.4em;
+      border-radius: 4px;
+      font-weight: 500;
+    }
+    .prose .callout {
+      background: color-mix(in srgb, var(--rail) 6%, transparent);
+      border-left: 3px solid var(--rail);
+      padding: 1rem 1.25rem;
+      border-radius: 0 var(--radius-card) var(--radius-card) 0;
+      margin: 1.25rem 0;
+    }
+    .prose .callout strong { color: var(--ink); }
+    .prose .definition {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      margin: 0.75rem 0;
+    }
+    .prose .definition dt {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    .prose .definition dd {
+      margin: 0;
+      color: var(--text);
+    }
+
+    /* ---------- Timeline ---------- */
+
+    .timeline {
+      margin: 1.5rem 0;
+      position: relative;
+    }
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 19px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--separator);
+    }
+    .timeline-item {
+      position: relative;
+      padding-left: 52px;
+      margin-bottom: 1.5rem;
+    }
+    .timeline-item:last-child { margin-bottom: 0; }
+    .timeline-item .dot {
+      position: absolute;
+      left: 0;
+      top: 2px;
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      background: var(--surface);
+      border: 1px solid var(--separator);
+      box-shadow: var(--shadow-chip);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: none;
+    }
+    .timeline-item .dot svg { width: 18px; height: 18px; fill: var(--rail); stroke: var(--rail); }
+    .timeline-item .content { flex: 1; }
+    .timeline-item .content h4 {
+      margin: 0 0 0.25rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+    .timeline-item .content p {
+      margin: 0;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    /* ---------- Data table ---------- */
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+      background: var(--surface);
+      border: 1px solid var(--separator);
+      border-radius: var(--radius-card);
+      overflow: hidden;
+    }
+    .data-table th, .data-table td {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--separator);
+      font-size: 0.9rem;
+    }
+    .data-table th {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      background: var(--fill);
+    }
+    .data-table tr:last-child td { border-bottom: none; }
+
+    /* ---------- Footer ---------- */
+
+    footer {
+      padding: 2rem 0 3rem;
+      border-top: 1px solid var(--separator);
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    footer .links { display: flex; gap: 1.5rem; justify-content: center; margin-bottom: 1rem; }
+    footer .links a { color: var(--muted); font-weight: 500; }
+    footer .links a:hover { color: var(--text); }
+    footer .disclaimer { margin-top: 1rem; font-size: 0.8rem; }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 32 32">
+        <rect width="32" height="32" rx="7" fill="#0B5FBF"/>
+        <g fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="7" width="14" height="13" rx="2"/>
+          <path d="M9 13h14M13 7v6M19 7v6M12 25l2-4M20 25l-2-4"/>
+        </g>
+      </svg>
+    </div>
+    <h1>Polityka prywatności</h1>
+    <p class="subtitle">wroclive — otwarta, nieprzeznaczona do żadnych celów komercyjnych mapa komunikacji miejskiej we Wrocławiu</p>
+  </header>
+
+  <main class="container">
+    <!-- TL;DR -->
+    <div class="tldr">
+      <p style="margin:0; font-size:0.85rem; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; color:var(--muted);">Na szybko</p>
+      <p style="margin:0.5rem 0 0; font-size:1.1rem; font-weight:600;">wroclive nie sprzedaje Twoich danych, nie tworzy kont, nie śledzi Cię i nie wyświetla reklam.</p>
+      <div class="tldr__grid">
+        <div class="tldr__item">
+          <span class="label">Dane osobowe</span>
+          <span class="value ok">Zero</span>
+        </div>
+        <div class="tldr__item">
+          <span class="label">Lokalizacja</span>
+          <span class="value ok">Na urządzeniu</span>
+        </div>
+        <div class="tldr__item">
+          <span class="label">Reklamy / trackery</span>
+          <span class="value ok">Brak</span>
+        </div>
+        <div class="tldr__item">
+          <span class="label">Statystyki</span>
+          <span class="value warn">IP → DAU</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Table of contents -->
+    <nav class="toc" aria-label="Spis treści">
+      <ul>
+        <li><a href="#collected">Co jest zbierane</a></li>
+        <li><a href="#not-collected">Co nie jest zbierane</a></li>
+        <li><a href="#sources">Skąd pochodzą dane</a></li>
+        <li><a href="#third-party">Usługi stron trzecich</a></li>
+        <li><a href="#rights">Twoje prawa</a></li>
+        <li><a href="#retention">Przechowywanie i retencja</a></li>
+        <li><a href="#changes">Zmiany w polityce</a></li>
+        <li><a href="#contact">Kontakt</a></li>
+      </ul>
+    </nav>
+
+    <!-- Content -->
+    <div class="prose">
+      <p>
+        Ta aplikacja i jej serwer są projektem niezależnym, utrzymywanym przez ochotnego
+        programistę. Czyta on <strong>publiczne, otwarte dane</strong> miasta Wrocławia
+        i nie tworzy żadnych kont ani profili użytkowników. To, co poniżej opisujemy, to
+        jedynie to, co serwer i Twoja przeglądarka muszą zrobić, aby mapa działała.
+      </p>
+
+      <section id="collected">
+        <h2><span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2C7.58 2 4 5.58 4 10c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z"/><path d="M11 7h2v6h-2zM11 15h2v2h-2z"/></svg></span>Co jest zbierane</h2>
+
+        <h3>Statystyki serwera (domyślnie włączone)</h3>
+        <p>
+          Serwer rejestruje żądania, aby administratorzy mogli monitorować, jak aplikacja
+          jest używana. Dla każdego żądania (z wyjątkiem zapytań o status mapy) zapisuje:
+        </p>
+        <div class="definition">
+          <dl>
+            <dt>Adres IP klienta</dt>
+            <dd>Używany wyłącznie jako klucz do pola unikalnych użytkowników dziennie (DAU). Nie jest łączony z żadną inną informacją ani żadną sesją.</dd>
+          </dl>
+          <dl>
+            <dt>Numer żądań i ich liczba</dt>
+            <dd>Agregowane jako liczby, nie jako lista indywidualnych żądań.</dd>
+          </dl>
+          <dl>
+            <dt>Endpoint</dt>
+            <dd>Grupowany według wzorca trasy (np. <code>/locations</code>, <code>/shapes/:line</code>), nie według konkretnej linii ani ID pojazdu.</dd>
+          </dl>
+          <dl>
+            <dt>Godzina dnia</dt>
+            <dd>Wskazówka o tym, kiedy aplikacja jest najbardziej używana.</dd>
+          </dl>
+        </div>
+
+        <div class="note">
+          Statystyki są przechowywane jako agregowane liczby w pliku JSON na serwerze.
+          Adresy IP są przechowywane jako część dzienneego zestawu unikalnych adresów
+          i nie są łączone z żadną aktywnością ani danymi osobowymi. Możesz je wyłączyć
+          ustawiając <code>STATS_ENABLED=false</code> w konfiguracji serwera.
+        </div>
+
+        <h3>Dane lokalizacji</h3>
+        <p>
+          Gdy stukniesz ikonę lokalizacji, aplikacja poprosi Twoją przeglądarkę o dostęp do
+          Twojej pozycji — <strong>tylko wtedy, gdy Ty tego żądasz</strong>. Pozycja ta jest
+          używana wyłącznie po Twojej stronie, aby wyśrodkować mapę.
+          <strong> Nigdy nie jest wysyłana na żaden serwer ani nie jest zapisywana.</strong>
+        </p>
+
+        <h3>Dane przechowywane po Twojej stronie</h3>
+        <p>
+          Aplikacja i strona mapy zapisują w Twojej przeglądarce wyłącznie:
+        </p>
+        <table class="data-table">
+          <thead>
+            <tr><th>Co</th><th>Dlaczego</th><th>Gdzie</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Wybrane linie</td><td>By pamiętać Twój wybór przy następnym otwarciu</td><td>localStorage (<code>wromapa.selectedLines</code>)</td></tr>
+            <tr><td>Ustawienia aplikacji</td><td>Wybrany styl mapy, układ, filtry</td><td>localStorage / SecureStore</td></tr>
+          </tbody>
+        </table>
+        <p class="note">
+          To są dane czysto techniczne — nie zawierają Twojej tożsamości ani żadnych danych osobowych.
+        </p>
+      </section>
+
+      <section id="not-collected">
+        <h2><span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" fill="none"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" fill="none"/></svg></span>Co nie jest zbierane</h2>
+
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="dot"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/><path d="M9 9h2v6H9zm4 0h2v6h-2z"/></svg></div>
+            <div class="content">
+              <h4>Brak kont i profili</h4>
+              <p>Nie ma logowania, rejestracji ani żadnych kont użytkowników.</p>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="dot"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 3" stroke="currentColor" stroke-width="2" fill="none"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+            <div class="content">
+              <h4>Brak danych osobowych</h4>
+              <p>Nie zbieramy imion, adresów e-mail, numerów telefonów ani żadnych danych identyfikujących.</p>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="dot"><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27 8.91 8.26z" fill="currentColor"/></svg></div>
+            <div class="content">
+              <h4>Brak reklam i trackerów</h4>
+              <p>Nie ma Google Analytics, Meta Pixel, ani żadnych skryptów śledzących.</p>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="dot"><svg viewBox="0 0 24 24"><path d="M6 2h12v2H6zM6 20h12v2H6zM8 6h8v2H8zM8 10h8v2H8zM8 14h8v2H8zM8 18h8v2H8z" fill="currentColor"/></svg></div>
+            <div class="content">
+              <h4>Brak plików cookie śledzących</h4>
+              <p>Strona nie używa plików cookie do śledzenia ani profilowania.</p>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="dot"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/><path d="M9 9h2v6H9zm4 0h2v6h-2z"/></svg></div>
+            <div class="content">
+              <h4>Brak raportowania awarii</h4>
+              <p>Nie ma Sentry, Crashlytics ani żadnych usług raportujących błędy.</p>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="dot"><svg viewBox="0 0 24 24"><path d="M3 3h2l.3 1.5h13.4l1.7 6H7l-2 8-2 8v-2l2-8-2-8L3 3z" fill="currentColor"/></svg></div>
+            <div class="content">
+              <h4>Brak sprzedaży danych</h4>
+              <p>Żadne dane nie są sprzedawane ani udostępniane podmiotom trzecim w celach marketingowych.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="sources">
+        <h2><span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27 8.91 8.26z" fill="currentColor"/></svg></span>Skąd pochodzą dane na mapie</h2>
+        <p>
+          Pozycje pojazdów i rozkłady jazdy pochodzą wyłącznie z <strong>publicznych, otwartych źródeł</strong>:
+        </p>
+        <table class="data-table">
+          <thead>
+            <tr><th>Co</th><th>Źródło</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Rozkłady jazdy</td><td>Otwarte Dane Wrocław (api.open-data.cui.wroclaw.pl)</td></tr>
+            <tr><td>Pozycje na żywo</td><td>publiczny endpoint MPK Wrocław (mpk.wroc.pl/bus_position)</td></tr>
+            <tr><td>Uzupełniające pozycje</td><td>tabela pojazdów miasta (open-data.cui.wroclaw.pl)</td></tr>
+            <tr><td>Komunikaty o utrudnieniach</td><td>publiczne posty @AlertMPK, strony miasta</td></tr>
+          </tbody>
+        </table>
+        <p class="note">
+          Żadne z tych danych nie jest generowane ani nie jest Twoją własnością.
+        </p>
+      </section>
+
+      <section id="third-party">
+        <h2><span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/><path d="M9 9h2v6H9zm4 0h2v6h-2z"/></svg></span>Usługi stron trzecich</h2>
+        <p>Strona mapy ładuje tylko niezbędne zasoby zewnętrzne:</p>
+        <table class="data-table">
+          <thead>
+            <tr><th>Usługa</th><th>Cel</th><th>Dane przesyłane</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Tiles mapy OpenStreetMap (przez CARTO)</td><td>Warstwa bazowa mapy</td><td>Żadne — tylko standardowe nagłówki HTTP od przeglądarki</td></tr>
+            <tr><td>Leaflet.js</td><td>Biblioteka mapowa w przeglądarce</td><td>Żadne — skrypt działa lokalnie</td></tr>
+            <tr><td>AI (opcjonalnie, domyślnie wyłączone)</td><td>Grupowanie komunikatów o utrudnieniach</td><td>Klucze API pozostają wyłącznie na serwerze — nigdy nie trafiają do przeglądarki ani aplikacji</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="rights">
+        <h2><span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 12h6M9 16h6M9 8h6" stroke="currentColor" stroke-width="2" fill="none"/><rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="2" fill="none"/></svg></span>Twoje prawa</h2>
+        <p>
+          Ponieważ nie zbieramy Twoich danych osobowych, nie ma nic do wymazania ani ograniczyć.
+          Możesz w każdej chwili:
+        </p>
+        <ul>
+          <li>Wyłączyć statystyki serwera, ustawiając <code>STATS_ENABLED=false</code> w konfiguracji serwera.</li>
+          <li>Wyczyścić dane przechowywane w localStorage w swojej przeglądarce — odświeżając stronę.</li>
+          <li>Nie używać przycisku lokalizacji — wtedy żadna pozycja nie jest proszona.</li>
+        </ul>
+      </section>
+
+      <section id="retention">
+        <h2><span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" fill="none"/><path d="M12 7v5l3 3" stroke="currentColor" stroke-width="2" fill="none"/></svg></span>Przechowywanie i retencja</h2>
+        <table class="data-table">
+          <thead>
+            <tr><th>Co</th><th>Gdzie</th><th>Ile długo</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Statystyki serwera</td><td>Plik JSON na serwerze</td><td>31 dni (konfigurowalne przez <code>STATS_DAYS_TO_KEEP</code>)</td></tr>
+            <tr><td>Dane GTFS (rozklady)</td><td>Bufor na dysku serwera</td><td>Aktualizowane codziennie, starsze wersje nadpisywane</td></tr>
+            <tr><td>Pozycje pojazdów</td><td>Pamięć RAM serwera</td><td>Na żywo — nie są przechowywane ani nie są zapisywane</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="changes">
+        <h2><span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2l4 4v4l-4 4-4-4V6l4-4zM5 12h14v2H5zm0 6h14v2H5z" fill="currentColor"/></svg></span>Zmiany w polityce</h2>
+        <p>
+          Jeśli coś się zmieni w tym, jakie dane są zbierane, zawsze najpierw
+          zaktualizujemy tę stronę. Historia zmian jest dostępna w
+          <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map/commits/main/landing/privacy.html">repozytorium na GitHubie</a>.
+        </p>
+      </section>
+
+      <section id="contact">
+        <h2><span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 2l-8 5-8-5h16zM4 18V8l8 5 8-5v10H4z" fill="currentColor"/></svg></span>Kontakt</h2>
+        <p>
+          Masz pytania? Otwórz
+          <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map/issues">issue na GitHubie</a>
+          albo napisz do <a href="https://github.com/real-kijmoshi">real-kijmoshi</a>.
+        </p>
+      </section>
+    </div>
+  </main>
+
+  <footer class="container">
+    <div class="links">
+      <a href="index.html">Strona główna</a>
+      <a href="terms.html">Warunki korzystania</a>
+      <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Licencja</a>
+    </div>
+    <p class="disclaimer">Projekt niezależny od MPK Wrocław. wroclive czyta otwarte dane publikowane przez miasto. © 2026 wroclive. Licencja MIT.</p>
+  </footer>
+
+  <script>
+    // Highlight the active TOC link on scroll
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const id = entry.target.id;
+          const link = document.querySelector(`nav.toc a[href="#${id}"]`);
+          if (link) link.classList.toggle('active', entry.isIntersecting);
+        }
+      },
+      { rootMargin: '-40% 0px -40% 0px' }
+    );
+    document.querySelectorAll('.prose section').forEach((section) => observer.observe(section));
+  </script>
+</body>
+</html>

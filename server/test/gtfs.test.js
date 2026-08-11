@@ -132,6 +132,22 @@ describe('GtfsStore', () => {
     assert.deepEqual(store.findStopsNear(Number.NaN, 17.032), []);
   });
 
+  it('carries the calling lines on every nearby stop', () => {
+    // Without these the app can only draw an anonymous dot and list a name
+    // twice — one row per platform, with nothing to tell them apart.
+    const near = store.findStopsNear(51.11, 17.032, { radiusMeters: 800 });
+    assert.ok(near.length > 0);
+    assert.ok(
+      near.every((stop) => Array.isArray(stop.lines)),
+      'every nearby stop carries a lines array',
+    );
+    assert.deepEqual(near.find((stop) => stop.name === 'Rynek').lines, store.getLinesForStop('1'));
+
+    // The index and the walk it replaced must agree, including for a stop no
+    // variant calls at.
+    assert.deepEqual(store.getLinesForStop('nope'), []);
+  });
+
   it('honours calendar days when listing departures', () => {
     // 2026-06-15 is a Monday, so WEEKDAY services run.
     const monday = new Date('2026-06-15T05:00:00Z');

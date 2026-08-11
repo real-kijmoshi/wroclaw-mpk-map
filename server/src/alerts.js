@@ -3,6 +3,8 @@
 const { XMLParser } = require('fast-xml-parser');
 
 const config = require('./config');
+const { buildIncidentsFromAlerts, createFallbackIncidents } = require('./ai-incidents');
+const { createAiProvider } = require('./ai-provider');
 const logger = require('./logger');
 const { fetchWithTimeout, requestText } = require('./http');
 const { lineToType } = require('./lines');
@@ -420,14 +422,28 @@ class NitterProvider {
  * `/health` says which it is.
  */
 class AlertsService {
-  constructor(getKnownLines, providers = null) {
+  constructor(getKnownLines, providers = null, options = {}) {
     this.getKnownLines = getKnownLines ?? (() => new Set());
     this.alerts = [];
+    this.incidents = [];
     this.timer = null;
     this.started = false;
     /** True after stop() so an in-flight refresh never re-arms its timer. */
     this._stopped = false;
     this.providers = providers ?? this.#defaultProviders();
+    this.aiProvider = options.aiProvider ?? createAiProvider(config.aiAlerts, logger);
+    this.aiModel = options.aiModel ?? config.aiAlerts[config.aiAlerts.requestedProvider]?.model ?? null;
+    this.aiCacheTtlMs = options.aiCacheTtlMs ?? config.aiAlerts.cacheTtlMs;
+    this.aiIncidentCache = new Map();
+
+    this.incidentStatus = {
+      enabled: Boolean(this.aiProvider.enabled),
+      provider: this.aiProvider.name ?? null,
+      model: this.aiModel,
+      lastSuccessAt: null,
+      lastError: this.aiProvider.enabled ? null : (this.aiProvider.status?.reason ?? 'AI disabled'),
+      incidentCount: 0,
+    };
 
     this.status = {
       providers: this.providers.map((provider) => ({
@@ -439,6 +455,7 @@ class AlertsService {
       lastRefreshAt: null,
       lastError: null,
       count: 0,
+      aiIncidents: this.incidentStatus,
     };
   }
 
@@ -543,6 +560,36 @@ class AlertsService {
       }));
     this.status.count = this.alerts.length;
 
+    // Publish deterministic incidents immediately. Raw /alerts has already
+    // been updated at this point, so a slow provider cannot hold it hostage;
+    // these fallback timelines also remain usable while AI is in flight.
+    this.incidents = createFallbackIncidents(this.alerts);
+    this.incidentStatus.incidentCount = this.incidents.length;
+
+    try {
+      // Caching is per incident cluster (inside buildIncidentsFromAlerts), not
+      // per refresh: an unrelated new alert elsewhere in the city must not
+      // force every already-settled incident's narrative to regenerate.
+      const incidents = await buildIncidentsFromAlerts(this.alerts, {
+        provider: this.aiProvider,
+        model: this.aiModel,
+        maxInputAlerts: config.aiAlerts.maxInputAlerts,
+        cache: this.aiIncidentCache,
+        cacheTtlMs: this.aiCacheTtlMs,
+      });
+      this.incidents = incidents;
+      this.incidentStatus.incidentCount = incidents.length;
+      const generated = incidents.some((incident) => incident.ai.generated);
+      const failed = incidents.find((incident) => !incident.ai.generated && incident.ai.error);
+      if (generated) this.incidentStatus.lastSuccessAt = new Date().toISOString();
+      this.incidentStatus.lastError = failed?.ai.error ?? null;
+    } catch (error) {
+      // buildIncidentsFromAlerts is fail-soft itself. This final guard keeps a
+      // future regression there from escaping the public refresh/route path.
+      this.incidentStatus.lastError = error?.message || 'AI incident generation failed';
+      logger.debug(`AI incident generation failed: ${this.incidentStatus.lastError}`);
+    }
+
     return this.alerts;
   }
 
@@ -554,6 +601,19 @@ class AlertsService {
       (alert) =>
         alert.timestamp >= since &&
         (!line || alert.affected.includes(String(line).toUpperCase())),
+    );
+  }
+
+  /**
+   * @param {{ since?: number, line?: string, status?: string|null }} options
+   */
+  getIncidents({ since = 0, line = null, status = null } = {}) {
+    const wantedLine = line ? String(line).toUpperCase() : null;
+    return this.incidents.filter(
+      (incident) =>
+        incident.lastUpdatedAt >= since &&
+        (!wantedLine || incident.affected.includes(wantedLine)) &&
+        (!status || incident.status === status),
     );
   }
 

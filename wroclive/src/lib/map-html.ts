@@ -380,7 +380,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
    */
   .stop {
     position: relative;
-    width: 104px; height: 42px;
+    width: 104px; height: 56px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -404,7 +404,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     max-width: 104px;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    text-align: center;
     font-size: 11px;
     line-height: 14px;
     font-weight: 600;
@@ -416,7 +416,15 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     pointer-events: auto;
     cursor: pointer;
   }
-  .stop--named .stop__name { display: block; }
+  /* Two lines, not one: "Dembowskiego (Chełmońskiego)" truncated to
+     "Dembowskiego (…" is a stop nobody can look for. The box is the two-line
+     height either way, so the icon's anchor does not move when a name wraps. */
+  .stop--named .stop__name {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
   .stop--selected .stop__dot { transform: scale(1.25); border-width: 4px; }
   .stop--selected .stop__name { font-weight: 800; }
   .leaflet-marker-icon.stop-marker { z-index: 400 !important; }
@@ -1208,7 +1216,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
 
   /** The box the stop marker occupies, and where its dot sits inside it. */
   var STOP_BOX_W = 104;
-  var STOP_BOX_H = 42;
+  var STOP_BOX_H = 56;
   var STOP_DOT_CENTRE_Y = 12;
   /** A stop name needs more room than a two-digit line badge. */
   var STOP_LABEL_CELL = 78;

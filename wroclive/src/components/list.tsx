@@ -21,26 +21,49 @@ import { tapped } from '@/lib/haptics';
 /** A titled group of rows on a card. */
 export function Section({
   title,
+  icon,
   footer,
   children,
   style,
+  plain,
 }: {
   title?: string;
+  /** Optional leading icon for the section title. */
+  icon?: keyof typeof Ionicons.glyphMap;
   /** Quiet explanatory text under the card. */
   footer?: string;
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
+  /**
+   * Skip the enclosing card surface and let the children draw their own —
+   * for a group of picker cards, which are already elevated and would
+   * otherwise sit inside a second, redundant card.
+   */
+  plain?: boolean;
 }) {
   const theme = useTheme();
 
   return (
     <View style={[styles.section, style]}>
       {!!title && (
-        <ThemedText type="footnote" weight="semibold" themeColor="textSecondary" style={styles.sectionTitle}>
-          {title.toLocaleUpperCase('pl')}
-        </ThemedText>
+        icon ? (
+          <View style={[styles.sectionHeader, { paddingHorizontal: Space.lg }]}>
+            <Ionicons name={icon} size={14} color={theme.textTertiary} />
+            <ThemedText type="footnote" weight="semibold" themeColor="textSecondary" style={styles.sectionTitleText}>
+              {title.toLocaleUpperCase('pl')}
+            </ThemedText>
+          </View>
+        ) : (
+          <ThemedText type="footnote" weight="semibold" themeColor="textSecondary" style={styles.sectionTitle}>
+            {title.toLocaleUpperCase('pl')}
+          </ThemedText>
+        )
       )}
-      <View style={[styles.card, { backgroundColor: theme.backgroundCard }]}>{children}</View>
+      {plain ? (
+        children
+      ) : (
+        <View style={[styles.card, { backgroundColor: theme.backgroundCard }]}>{children}</View>
+      )}
       {!!footer && (
         <ThemedText type="footnote" themeColor="textSecondary" style={styles.sectionFooter}>
           {footer}
@@ -83,6 +106,7 @@ export function Row({ label, hint, accessory, leading }: RowProps) {
 export function Choice({
   label,
   hint,
+  leading,
   selected,
   onPress,
 }: RowProps & { selected: boolean; onPress: () => void }) {
@@ -100,6 +124,7 @@ export function Choice({
       <Row
         label={label}
         hint={hint}
+        leading={leading}
         accessory={
           selected ? (
             <Ionicons name="checkmark" size={20} color={theme.accent} />
@@ -189,7 +214,9 @@ export function RowIcon({
 
 const styles = StyleSheet.create({
   section: { gap: Space.sm },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: Space.xs },
   sectionTitle: { letterSpacing: 0.5, paddingHorizontal: Space.lg },
+  sectionTitleText: { letterSpacing: 0.5 },
   sectionFooter: { paddingHorizontal: Space.lg },
   card: { borderRadius: Radius.lg, overflow: 'hidden' },
   row: {

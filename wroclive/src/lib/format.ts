@@ -66,6 +66,23 @@ export function formatDistance(meters: number | null | undefined): string | null
   return `${(meters / 1000).toFixed(1).replace('.', ',')} km`;
 }
 
+/**
+ * How long the server has been running.
+ *
+ * Precision beyond the hour isn't worth claiming — a deploy restarts the
+ * clock and the cold-start page load happens in minutes. `null` means the
+ * health payload didn't include it, not that the server is down.
+ */
+export function formatUptime(seconds: number | null | undefined): string | null {
+  if (seconds == null || !Number.isFinite(seconds)) return null;
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days} d ${hours} godz.`;
+  if (hours > 0) return `${hours} godz. ${minutes} min`;
+  return `${minutes} min`;
+}
+
 /** Relative age of an alert or a fleet snapshot. */
 export function formatAge(timestamp: number | string | null | undefined): string {
   if (timestamp === null || timestamp === undefined) return '';

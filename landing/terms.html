@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Warunki korzystania z wroclive — otwartej mapy komunikacji miejskiej we Wrocławiu.">
+  <link rel="canonical" href="https://wroclive.kijmoshi.xyz/terms.html">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#0B5FBF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#05070C" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b5fbf'/%3E%3Cg fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='7' width='14' height='13' rx='2'/%3E%3Cpath d='M9 13h14M13 7v6M19 7v6M12 25l2-4M20 25l-2-4'/%3E%3C/g%3E%3C/svg%3E">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Spline+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      color-scheme: light dark;
+      --rail: #0B5FBF;
+      --ink: #0E141B;
+      --ink-2: #0B1F38;
+      --bg: #F2F2F7;
+      --surface: #FFFFFF;
+      --text: #0F172A;
+      --muted: #64748B;
+      --separator: rgba(60, 60, 67, 0.18);
+      --fill: rgba(120, 120, 128, 0.12);
+      --shadow-float: 0 8px 30px rgba(15, 23, 42, 0.18);
+      --shadow-chip: 0 2px 10px rgba(15, 23, 42, 0.14);
+      --radius-card: 18px;
+      --radius-control: 12px;
+      --font-display: 'Spline Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #000000;
+        --surface: #1C1C1E;
+        --text: #F5F5F7;
+        --muted: #98989F;
+        --separator: rgba(255, 255, 255, 0.14);
+        --fill: rgba(120, 120, 128, 0.24);
+        --shadow-float: 0 8px 30px rgba(0, 0, 0, 0.6);
+        --shadow-chip: 0 2px 10px rgba(0, 0, 0, 0.5);
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--font-display);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--rail); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .container { width: min(840px, 100% - 48px); margin: 0 auto; }
+    header {
+      padding: 3.5rem 0 2rem;
+      text-align: center;
+    }
+    .logo {
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 1.25rem;
+      border-radius: 14px;
+      background: var(--rail);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: var(--shadow-chip);
+    }
+    .logo svg { width: 32px; height: 32px; fill: #fff; }
+    h1 {
+      margin: 0 0 0.5rem;
+      font-size: clamp(1.8rem, 4vw, 2.4rem);
+      letter-spacing: -0.02em;
+    }
+    .subtitle {
+      margin: 0 auto;
+      max-width: 560px;
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+    main { padding: 0 0 4rem; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--separator);
+      border-radius: var(--radius-card);
+      box-shadow: var(--shadow-float);
+      padding: 1.5rem 1.75rem;
+      margin: 0 auto 1.5rem;
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+    }
+    .eyebrow {
+      margin: 0 0 0.5rem;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--rail);
+    }
+    h2 {
+      margin: 0 0 0.75rem;
+      font-size: 1.35rem;
+      letter-spacing: -0.01em;
+    }
+    p { margin: 0.9rem 0; }
+    ul { margin: 0.75rem 0; padding-left: 1.25rem; }
+    li { margin: 0.4rem 0; }
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.9em;
+      background: var(--fill);
+      padding: 0.15em 0.4em;
+      border-radius: 4px;
+      font-weight: 500;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .item {
+      background: color-mix(in srgb, var(--rail) 6%, transparent);
+      border: 1px solid var(--separator);
+      border-radius: 14px;
+      padding: 1rem;
+    }
+    .item strong { display: block; margin-bottom: 0.3rem; }
+    footer {
+      padding: 1.5rem 0 3rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    footer .links { display: flex; gap: 1.25rem; flex-wrap: wrap; justify-content: center; margin-bottom: 1rem; }
+    footer .links a { color: var(--muted); font-weight: 500; }
+    footer .links a:hover { color: var(--text); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 32 32">
+        <rect width="32" height="32" rx="7" fill="#0B5FBF"/>
+        <g fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="7" width="14" height="13" rx="2"/>
+          <path d="M9 13h14M13 7v6M19 7v6M12 25l2-4M20 25l-2-4"/>
+        </g>
+      </svg>
+    </div>
+    <h1>Warunki korzystania</h1>
+    <p class="subtitle">Zasady korzystania z wroclive, otwartej mapy komunikacji miejskiej we Wrocławiu.</p>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <p class="eyebrow">W skrócie</p>
+      <p>wroclive jest darmowym, niezależnym projektem informacyjnym. Mapa i dane są udostępniane w stanie, w jakim są, bez gwarancji ciągłej dostępności.</p>
+      <div class="grid">
+        <div class="item">
+          <strong>Cel</strong>
+          Pokazanie pozycji pojazdów, tras i odjazdów na podstawie publicznych danych.
+        </div>
+        <div class="item">
+          <strong>Odpowiedzialność</strong>
+          Projekt nie odpowiada za opóźnienia, przerwy w działaniu źródeł ani decyzje operacyjne przewoźnika.
+        </div>
+        <div class="item">
+          <strong>Dostępność</strong>
+          Serwis może czasowo nie działać, gdy źródła danych są w trakcie odświeżania lub niedostępne.
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Dozwolone użycie</h2>
+      <ul>
+        <li>Korzystanie z aplikacji i strony w celach prywatnych i informacyjnych.</li>
+        <li>Udostępnianie linków do strony głównej, polityki prywatności i kodu źródłowego.</li>
+        <li>Przeglądanie i korzystanie z otwartego kodu na zasadach licencji MIT.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Ograniczenia</h2>
+      <ul>
+        <li>Nie wolno obciążać serwera sztucznym ruchem ani próbować obejść ograniczeń technicznych.</li>
+        <li>Nie wolno przedstawiać danych z aplikacji jako oficjalnego źródła MPK lub miasta.</li>
+        <li>Nie wolno usuwać informacji o autorstwie, licencji ani odnośników wymaganych przez źródła danych.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Źródła zewnętrzne</h2>
+      <p>
+        Aplikacja czyta publiczne dane miasta Wrocławia i MPK Wrocław, a także publiczne
+        komunikaty o utrudnieniach. Treść zewnętrzna może się zmieniać bez uprzedzenia.
+      </p>
+      <p>
+        Aktualna polityka prywatności: <a href="privacy.html">privacy.html</a> ·
+        repozytorium: <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map" target="_blank" rel="noopener noreferrer">GitHub</a>.
+      </p>
+    </section>
+  </main>
+
+  <footer class="container">
+    <div class="links">
+      <a href="index.html">Strona główna</a>
+      <a href="privacy.html">Polityka prywatności</a>
+      <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Licencja</a>
+    </div>
+    <p>Projekt niezależny od MPK Wrocław. © 2026 wroclive.</p>
+  </footer>
+</body>
+</html>
