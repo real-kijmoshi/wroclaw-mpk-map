@@ -15,7 +15,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { apiGet } from '@/lib/api';
 import { API_URL } from '@/lib/config';
 import { formatAge } from '@/lib/format';
-import { preferencesStore, usePreferences, type AppleMapType, type ColorScheme, type MapProvider } from '@/lib/preferences';
+import { preferencesStore, usePreferences, type AppleMapType, type ColorScheme, type LayoutMode, type MapProvider } from '@/lib/preferences';
 
 type Health = {
   status: string;
@@ -62,6 +62,26 @@ export default function SettingsScreen() {
           showsVerticalScrollIndicator={false}
           onScroll={scroll.onScroll}
           scrollEventThrottle={scroll.scrollEventThrottle}>
+          {/* First, because it is the one setting that changes what every other
+              screen in the app looks like. */}
+          <Section
+            title="Układ"
+            footer="Klasyczny to układ sprzed przebudowy: pasek u góry, przyciski przy krawędzi, panel tylko dla wybranego pojazdu lub przystanku.">
+            <Choice
+              label="Panel"
+              hint="Wyszukiwarka i przystanki w pobliżu zawsze pod ręką"
+              selected={preferences.layout === 'sheet'}
+              onPress={() => preferencesStore.set('layout', 'sheet' satisfies LayoutMode)}
+            />
+            <Divider />
+            <Choice
+              label="Klasyczny"
+              hint="Więcej widocznej mapy"
+              selected={preferences.layout === 'classic'}
+              onPress={() => preferencesStore.set('layout', 'classic' satisfies LayoutMode)}
+            />
+          </Section>
+
           {platformMapAvailable && (
             <Section title="Mapa">
               <Choice

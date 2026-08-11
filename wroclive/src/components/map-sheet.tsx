@@ -55,6 +55,17 @@ export type MapSheetProps = {
    * selected vehicle or stop away and gets the home content back.
    */
   onDismiss?: () => void;
+  /**
+   * Whether the sheet is on screen at all.
+   *
+   * `true` for the sheet layout, always — that layout's whole point is a
+   * surface the map is never left without. The classic layout passes `false`
+   * while nothing is selected, because there it is the selection's sheet and
+   * the top bar carries what the header would. It slides off rather than
+   * unmounting, so a vehicle tapped straight after one was put away travels
+   * back up instead of appearing mid-screen.
+   */
+  presented?: boolean;
   /** Always on screen: the search field and status, or a selection's summary. */
   header: ReactNode;
   /** Revealed from the middle detent up. */
@@ -86,6 +97,7 @@ export function MapSheet({
   detent,
   onDetentChange,
   onDismiss,
+  presented = true,
   header,
   children,
   visibleHeight,
@@ -118,14 +130,16 @@ export function MapSheet({
   );
   const mediumPeek = Math.min(Math.max(height * MEDIUM_FRACTION, peek), sheetHeight);
 
-  // Offsets from the top of the sheet box: 0 is fully open.
+  // Offsets from the top of the sheet box: 0 is fully open, `sheetHeight` is
+  // entirely below the screen.
   const offsets = {
     full: 0,
     medium: sheetHeight - mediumPeek,
     collapsed: sheetHeight - peek,
   };
+  const resting = presented ? offsets[detent] : sheetHeight;
 
-  const translateY = useSharedValue(offsets.collapsed);
+  const translateY = useSharedValue(resting);
   const startY = useSharedValue(0);
 
   const settle = useCallback(
@@ -151,11 +165,11 @@ export function MapSheet({
   };
 
   useEffect(() => {
-    translateY.value = glide(offsets[detent]);
+    translateY.value = glide(resting);
     // `translateY` is deliberately not a dependency: a shared value is a stable
     // handle, and listing one that the gesture callbacks also write to is what
     // the immutability rule objects to.
-  }, [detent, reducedMotion, offsets.full, offsets.medium, offsets.collapsed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [resting, reducedMotion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* The immutability rule does not model Reanimated: writing `.value` is the
      whole API of a shared value, and it objects only because the effect above
@@ -177,6 +191,9 @@ export function MapSheet({
   }, [sheetHeight]);
 
   const pan = Gesture.Pan()
+    // A sheet that is off screen has nothing to drag, and the classic layout
+    // leaves it there for most of a session.
+    .enabled(presented)
     .onStart(() => {
       startY.value = translateY.value;
     })
@@ -221,7 +238,15 @@ export function MapSheet({
         const next = Math.round(event.nativeEvent.layout.height);
         if (next > 0) setMeasured((current) => (current === next ? current : next));
       }}>
-      <Animated.View pointerEvents="box-none" style={[styles.container, sheetStyle]}>
+      {/* A sheet parked below the screen is still in the tree, and a screen
+          reader would happily read the departure board on it. Hidden from the
+          accessibility tree as well as from touch, or the classic layout has an
+          invisible sheet VoiceOver can walk into. */}
+      <Animated.View
+        pointerEvents={presented ? 'box-none' : 'none'}
+        accessibilityElementsHidden={!presented}
+        importantForAccessibility={presented ? 'auto' : 'no-hide-descendants'}
+        style={[styles.container, sheetStyle]}>
         <SheetSurface>
           <GestureDetector gesture={pan}>
             <View

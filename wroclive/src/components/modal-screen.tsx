@@ -161,21 +161,32 @@ export function ModalScreen({ title, subtitle, children, action }: ModalScreenPr
 const styles = StyleSheet.create({
   container: { flex: 1 },
   toolbar: {
-    minHeight: 44,
+    /*
+     * The close button's own height, not the 44pt hit minimum.
+     *
+     * A 44pt row around a 32pt button centres it with 6pt of slack top and
+     * bottom, and that slack lands directly above the large title — where it
+     * reads as a gap someone forgot to close rather than as breathing room.
+     * The target stays 44pt-plus regardless: the button carries `hitSlop`.
+     */
+    minHeight: 32,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
     gap: Space.sm,
     paddingHorizontal: Space.lg,
-    paddingBottom: Space.sm,
+    // The title below brings its own leading; a full step here doubles it.
+    paddingBottom: Space.xs,
   },
   /* Centred behind the actions so the title lands where the platform puts it,
-     and truncates against the toolbar's own padding rather than the button. */
+     and truncates against the toolbar's own padding rather than the button.
+     Anchored to the same bottom padding, so it stays on the button's baseline
+     as the row's height changes. */
   compactTitle: {
     position: 'absolute',
     left: 56,
     right: 56,
-    bottom: Space.sm,
+    bottom: Space.xs,
     alignItems: 'center',
   },
   toolbarActions: { flexDirection: 'row', alignItems: 'center', gap: Space.sm },

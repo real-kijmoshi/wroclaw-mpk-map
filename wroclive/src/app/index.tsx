@@ -1,9 +1,11 @@
 import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ClassicControls, ClassicTopBar } from '@/components/classic-chrome';
 import { MapControls } from '@/components/map-controls';
 import { MapLayers } from '@/components/map-layers';
 import { MapSheet, MEDIUM_FRACTION, type Detent } from '@/components/map-sheet';
@@ -24,7 +26,7 @@ import { colorFor } from '@/lib/lines';
 import { mapIntentStore, useMapIntent } from '@/lib/map-intent';
 import { usePreferences } from '@/lib/preferences';
 import { failed, tapped } from '@/lib/haptics';
-import { useSelectedLines } from '@/lib/selection';
+import { selectionStore, useSelectedLines } from '@/lib/selection';
 import { groupStopAreas } from '@/lib/stops-api';
 
 type Selection =
@@ -43,11 +45,18 @@ export default function MapScreen() {
   const dark = scheme === 'dark';
   const theme = useTheme();
   const screen = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
 
   const mapRef = useRef<MapSurfaceHandle>(null);
   const selectedLines = useSelectedLines();
-  const { showNearbyStops, followSelectedVehicle } = usePreferences();
+  const { showNearbyStops, followSelectedVehicle, layout } = usePreferences();
+  /**
+   * The classic layout: top bar, button tower, and a sheet that only exists
+   * while something is selected. Everything above this line is shared — the
+   * two layouts are the same screen wearing different chrome.
+   */
+  const classic = layout === 'classic';
   const [selection, setSelection] = useState<Selection>(null);
   // Stored with the vehicle it belongs to, so switching selection drops the
   // old route by derivation instead of by a second render that clears it.
@@ -77,6 +86,16 @@ export default function MapScreen() {
    */
   const sheetHeight = useSharedValue(0);
 
+  /**
+   * How far off the bottom edge the controls sit when no sheet is lifting them.
+   *
+   * Zero in the sheet layout, where the collapsed sheet already covers the home
+   * indicator. The classic layout's sheet spends most of its time off screen,
+   * so there the controls have to clear that inset themselves — the original
+   * pinned them to `insets.bottom` and never moved them at all.
+   */
+  const controlsFloor = classic ? insets.bottom + Space.md : 0;
+
   const controlsStyle = useAnimatedStyle(() => {
     // Full visibility right through the medium detent — that is the detent a
     // rider spends most of their time at, and a locate button that has already
@@ -85,7 +104,9 @@ export default function MapScreen() {
     // control, do they get out of the way instead of being pushed off the top.
     const fadeStart = screen.height * (MEDIUM_FRACTION + 0.02);
     const fadeEnd = fadeStart + 100;
-    const rise = Math.min(sheetHeight.value + CONTROLS_GAP, fadeEnd);
+    // The greater of "above the sheet" and "clear of the bottom edge", so one
+    // animated value serves a sheet that is always there and one that is not.
+    const rise = Math.min(Math.max(sheetHeight.value + CONTROLS_GAP, controlsFloor), fadeEnd);
     const fade = Math.max(0, Math.min(1, (fadeEnd - sheetHeight.value) / (fadeEnd - fadeStart)));
     return { transform: [{ translateY: -rise }], opacity: fade };
   });
@@ -148,6 +169,28 @@ export default function MapScreen() {
 
   const vehicleId = selection?.kind === 'vehicle' ? selection.id : null;
   const stopId = selection?.kind === 'stop' ? selection.stop.id : null;
+
+  /**
+   * What the sheet draws, which outlives the selection by one animation.
+   *
+   * The classic layout takes its sheet off screen when nothing is selected, and
+   * a sheet whose contents were cleared the moment the selection was would
+   * slide an empty panel down the screen. This keeps the last selection so it
+   * travels away still showing what it held. It is never behind: the value is
+   * only ever read on a render where `selection` has just become null, and it
+   * was written on the render that set it.
+   */
+  const [lingering, setLingering] = useState<Selection>(null);
+  useEffect(() => {
+    // Deliberate: this mirrors a value for the frames *after* it is gone, which
+    // is not something derivation during render can do.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (selection) setLingering(selection);
+  }, [selection]);
+
+  const shown = selection ?? (classic ? lingering : null);
+  const shownVehicleId = shown?.kind === 'vehicle' ? shown.id : null;
+  const shownStop = shown?.kind === 'stop' ? shown.stop : null;
 
   const detail = usePoll(
     (signal) => getVehicle(vehicleId as string, { signal }),
@@ -386,6 +429,24 @@ export default function MapScreen() {
     };
   })();
 
+  /**
+   * The two controls that belong to the map itself, shared by both layouts.
+   *
+   * Declared once rather than per layout so "what is on the map" never drifts
+   * between them — only where the buttons sit and what else keeps them company.
+   */
+  const layersControl = {
+    icon: 'layers-outline' as const,
+    label: 'Warstwy mapy',
+    onPress: () => setLayersOpen((open) => !open),
+  };
+  const locateControl = {
+    icon: locating ? ('ellipsis-horizontal' as const) : ('locate' as const),
+    label: 'Pokaż moją lokalizację',
+    onPress: locate,
+    disabled: locating,
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <MapView
@@ -404,6 +465,25 @@ export default function MapScreen() {
         onBackground={handleBackground}
         onViewportChange={setViewport}
       />
+
+      {/* The classic layout's top bar carries what the sheet header carries in
+          the other one: the live count, the line filter, and search. */}
+      {classic && (
+        <ClassicTopBar
+          status={status}
+          selectedLineCount={selectedLines.length}
+          onClearFilter={() => selectionStore.clear()}
+          onSearch={() => router.push('/search')}
+          onRetry={fleet.refresh}
+          locateProblem={locateProblem}
+          onLocateProblem={() => {
+            // Nothing the app can do about a permanent denial lives inside the
+            // app, so it stops pretending and points at the place that can.
+            if (locateProblem === 'denied') Linking.openSettings();
+            else locate();
+          }}
+        />
+      )}
 
       {/* Dismisses the layer picker without also clearing the selection, which
           a press on the map itself would. Below the controls in the tree so it
@@ -427,42 +507,56 @@ export default function MapScreen() {
             <MapLayers onClose={() => setLayersOpen(false)} />
           </View>
         )}
-        <MapControls
-          controls={[
-            ...(platformMapAvailable
-              ? [
-                  {
-                    icon: 'layers-outline' as const,
-                    label: 'Warstwy mapy',
-                    onPress: () => setLayersOpen((open) => !open),
-                  },
-                ]
-              : []),
-            {
-              icon: locating ? 'ellipsis-horizontal' : 'locate',
-              label: 'Pokaż moją lokalizację',
-              onPress: locate,
-              disabled: locating,
-            },
-          ]}
-        />
+        {/* Same rail, two shapes. The classic layout's tower also has to reach
+            lines, alerts and settings, because it has no sheet standing by to
+            hold them. */}
+        {classic ? (
+          <ClassicControls
+            controls={[
+              ...(platformMapAvailable ? [layersControl] : []),
+              {
+                icon: 'git-branch' as const,
+                label: 'Linie',
+                onPress: () => router.push('/lines'),
+                badge: selectedLines.length,
+              },
+              {
+                icon: 'warning-outline' as const,
+                label: 'Utrudnienia',
+                onPress: () => router.push('/alerts'),
+                badge: incidentCount.data ?? undefined,
+              },
+              {
+                icon: 'settings-outline' as const,
+                label: 'Ustawienia',
+                onPress: () => router.push('/settings'),
+              },
+              locateControl,
+            ]}
+          />
+        ) : (
+          <MapControls controls={[...(platformMapAvailable ? [layersControl] : []), locateControl]} />
+        )}
       </Animated.View>
 
       <MapSheet
         detent={detent}
         onDetentChange={setDetent}
         onDismiss={closeSelection}
+        // In the classic layout the sheet belongs to the selection: no
+        // selection, no sheet, and the map keeps its bottom two thirds.
+        presented={classic ? selection !== null : true}
         visibleHeight={sheetHeight}
         header={
-          vehicleId ? (
+          shownVehicleId ? (
             <VehicleSummary detail={detail.data} onClose={closeSelection} />
-          ) : stopId && selectedStop ? (
+          ) : shownStop ? (
             <StopSummary
-              stop={selectedStop}
+              stop={shownStop}
               userPosition={userPosition}
               onClose={closeSelection}
             />
-          ) : (
+          ) : classic ? null : (
             <MapSheetHeader
               status={status}
               onSearch={() => router.push('/search')}
@@ -472,7 +566,7 @@ export default function MapScreen() {
         }>
         {/* Keyed off what is actually selected, so a dismissed sheet is not
             left rendering a departure board for a stop nobody picked. */}
-        {vehicleId ? (
+        {shownVehicleId ? (
           <VehicleDetails
             detail={detail.data}
             loading={detail.loading}
@@ -482,9 +576,9 @@ export default function MapScreen() {
               if (vehicle) mapRef.current?.centerOn(vehicle.lat, vehicle.lon, 14);
             }}
           />
-        ) : stopId ? (
+        ) : shownStop ? (
           <StopDetails data={departures.data} loading={departures.loading} error={departures.error} />
-        ) : (
+        ) : classic ? null : (
           <MapSheetHome
             selectedLineCount={selectedLines.length}
             alertCount={incidentCount.data}

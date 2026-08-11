@@ -8,6 +8,22 @@ export type IncidentSection = {
 const newestFirst = (left: Incident, right: Incident) =>
   right.lastUpdatedAt - left.lastUpdatedAt;
 
+const SEVERITY_RANK: Record<Incident['severity'], number> = {
+  major: 3,
+  moderate: 2,
+  minor: 1,
+  unknown: 0,
+};
+
+/**
+ * Major outranks recency: a two-line detour reported a minute ago must not
+ * bury a four-line "brak przejazdu" reported ten minutes ago. Severity is
+ * only meaningful while an incident is still open — once resolved it is
+ * history, so the resolved section stays plain newest-first.
+ */
+const bySeverityThenNewest = (left: Incident, right: Incident) =>
+  SEVERITY_RANK[right.severity] - SEVERITY_RANK[left.severity] || newestFirst(left, right);
+
 /**
  * Active service impact always outranks history. Within active incidents the
  * rider's selected lines come first; resolved incidents form the final,
@@ -17,7 +33,7 @@ export function orderIncidentsForSelectedLines(
   incidents: Incident[],
   selectedLines: readonly string[],
 ): IncidentSection[] {
-  const active = incidents.filter((incident) => incident.status !== 'resolved').sort(newestFirst);
+  const active = incidents.filter((incident) => incident.status !== 'resolved').sort(bySeverityThenNewest);
   const resolved = incidents.filter((incident) => incident.status === 'resolved').sort(newestFirst);
   const sections: IncidentSection[] = [];
 
