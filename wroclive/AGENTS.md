@@ -87,11 +87,29 @@ their own copy of the same `Platform.select` shadow.
 
 `src/app/index.tsx` is a map, a two-button control rail, and one sheet.
 
-- **The sheet is never dismissed** (`src/components/map-sheet.tsx`). Three
-  detents — collapsed (search + live status), medium, full — and dragging below
-  the collapsed one puts the selection away rather than taking the sheet off
-  screen. It replaced a top HUD card, a four-button tower and a separate
+- **The sheet is never dismissed — in the sheet layout** (`map-sheet.tsx`).
+  Three detents — collapsed (search + live status), medium, full — and dragging
+  below the collapsed one puts the selection away rather than taking the sheet
+  off screen. It replaced a top HUD card, a four-button tower and a separate
   selection sheet, all competing for the same map.
+- **There are two layouts, and only the chrome differs**
+  (`preferences.layout`, chosen in Settings). `sheet` is the above. `classic`
+  is the arrangement that preceded it, kept because some riders want the bottom
+  two thirds of the map back: `src/components/classic-chrome.tsx` draws the
+  status pill, filter chip and search across the top and the button tower
+  (layers, lines, alerts, settings, locate) down the right edge, and `MapSheet`
+  takes its `presented={false}` — the one case where it does leave the screen,
+  because there it belongs to the selection rather than to the app. Everything
+  above the render in `index.tsx` is shared: same polls, same selection, same
+  map surface. Do not fork the screen to add to one of them.
+  - The classic chrome is rebuilt, not restored. The original hardcoded
+    `theme.text` onto glass floating over the map, which is precisely the
+    combination `useMapChrome()` exists to prevent — black icons on satellite
+    imagery. Anything added to that file asks `useMapChrome()`, the same as
+    `map-controls.tsx` does.
+  - The sheet keeps drawing the *last* selection while it slides away
+    (`lingering` in `index.tsx`). Cleared with the selection, it slid an empty
+    glass panel down the screen.
 - **It publishes `visibleHeight` through `useDerivedValue`, every frame.** The
   map controls ride on it instead of the hardcoded "188 for a vehicle, 262 for a
   stop" offsets. Writing that value from the pan handler alone is not enough:
@@ -208,6 +226,7 @@ their own copy of the same `Platform.select` shadow.
 | `src/app/` | expo-router screens: `index` (the map), `lines`, `alerts`, `settings`, `search` |
 | `src/constants/design.ts` | Type ramp, spacing, radii, elevation, motion |
 | `src/components/map-sheet*.tsx` | The persistent sheet and its home content |
+| `src/components/classic-chrome.tsx` | The classic layout's top bar and button tower |
 | `src/components/list.tsx` | Section/Row/Choice/Divider, shared by every modal |
 | `src/lib/api.ts` | The only way to the server, plus all payload validation |
 | `src/lib/map-html.ts` | The Leaflet page: generated HTML, message bridge, marker logic |

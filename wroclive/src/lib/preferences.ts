@@ -27,6 +27,20 @@ export type AppleMapType = 'standard' | 'satellite' | 'hybrid';
 /** The app's colour scheme: light, dark, or follow the system. */
 export type ColorScheme = 'light' | 'dark' | 'system';
 
+/**
+ * Which arrangement of chrome the map screen wears.
+ *
+ * `sheet` is the current one: one persistent sheet carrying search, status,
+ * the home list and whatever is selected. `classic` is the layout that
+ * preceded it — a status pill and search button along the top, a tower of
+ * round buttons down the right edge, and a sheet that only exists while
+ * something is selected. It is kept as a choice because some riders read the
+ * map faster with the bottom two thirds of it uncovered.
+ *
+ * Both drive the same screen and the same data; only the chrome differs.
+ */
+export type LayoutMode = 'sheet' | 'classic';
+
 export type Preferences = {
   mapProvider: MapProvider;
   /** Base map style for the system (MapKit) surface on iOS. */
@@ -43,6 +57,8 @@ export type Preferences = {
   followSelectedVehicle: boolean;
   /** Light, dark, or follow the system colour scheme. */
   colorScheme: ColorScheme;
+  /** Persistent sheet, or the classic top bar and button tower. */
+  layout: LayoutMode;
 };
 
 const DEFAULTS: Preferences = {
@@ -51,6 +67,7 @@ const DEFAULTS: Preferences = {
   showNearbyStops: true,
   followSelectedVehicle: false,
   colorScheme: 'system',
+  layout: 'sheet',
 };
 
 let preferences: Preferences = DEFAULTS;

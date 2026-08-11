@@ -1,2 +1,3 @@
 - Prefers simple, standard light/dark/system color scheme over custom accent themes. Confidence: 0.9
 - Dislikes "weird themes" — favors straightforward, conventional theming approaches. Confidence: 0.85
+- Wants substantial, high-quality improvements — "make 10000 times better" signals a preference for thorough rewrites and elevated polish over minimal tweaks. Confidence: 0.9

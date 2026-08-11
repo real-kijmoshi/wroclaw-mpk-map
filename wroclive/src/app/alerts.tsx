@@ -171,6 +171,14 @@ function IncidentCard({ incident, onPress }: { incident: Incident; onPress: () =
         style={[styles.card, resolved && styles.resolvedCard, { backgroundColor: theme.backgroundCard }]}>
         <View style={styles.cardTopline}>
           <StatusChip status={incident.status} />
+          {!resolved && incident.severity === 'major' && (
+            <Ionicons
+              name="warning"
+              size={14}
+              color={theme.danger}
+              accessibilityLabel="Poważne utrudnienie"
+            />
+          )}
           <ThemedText type="footnote" themeColor="textSecondary" style={styles.age}>
             {formatAge(latest)}
           </ThemedText>
@@ -218,7 +226,17 @@ function IncidentDetail({ incident, onShowMap }: { incident: Incident; onShowMap
             <ThemedText type="subhead" themeColor="textSecondary">{clean(incident.title)}</ThemedText>
           )}
         </View>
-        <StatusChip status={incident.status} />
+        <View style={styles.detailStatus}>
+          {incident.status !== 'resolved' && incident.severity === 'major' && (
+            <Ionicons
+              name="warning"
+              size={14}
+              color={theme.danger}
+              accessibilityLabel="Poważne utrudnienie"
+            />
+          )}
+          <StatusChip status={incident.status} />
+        </View>
       </View>
 
       {incident.affected.length > 0 && (
@@ -560,6 +578,7 @@ const styles = StyleSheet.create({
   detail: { gap: Space.xl },
   detailHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: Space.md },
   detailHeading: { flex: 1, gap: Space.xs, minWidth: 0 },
+  detailStatus: { flexDirection: 'row', alignItems: 'center', gap: Space.xs },
   affectedBlock: { gap: Space.sm },
   summary: { paddingHorizontal: Space.lg, paddingVertical: Space.md },
   timelineRow: {
