@@ -4,6 +4,7 @@ import { LiveMap } from './live-map';
 import type { LiveMapHandle } from './live-map.types';
 import type { MapSurfaceHandle, MapSurfaceProps } from './map-surface.types';
 import type { MapMessage } from '@/lib/map-html';
+import { usePreferences } from '@/lib/preferences';
 
 /**
  * The OpenStreetMap surface: the Leaflet page, given the same declarative
@@ -33,6 +34,7 @@ export const OsmMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function Osm
   ref,
 ) {
   const mapRef = useRef<LiveMapHandle>(null);
+  const { markerStyle } = usePreferences();
 
   useImperativeHandle(
     ref,
@@ -51,6 +53,12 @@ export const OsmMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function Osm
   useEffect(() => {
     mapRef.current?.send({ type: 'theme', dark });
   }, [dark]);
+
+  // Read here rather than taken as a prop, the same as the native surface does:
+  // it is a setting the map draws with, not something the screen above decides.
+  useEffect(() => {
+    mapRef.current?.send({ type: 'markerStyle', style: markerStyle });
+  }, [markerStyle]);
 
   useEffect(() => {
     // Drawing a selected vehicle's route must not take over the viewport.

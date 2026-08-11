@@ -41,6 +41,21 @@ export type ColorScheme = 'light' | 'dark' | 'system';
  */
 export type LayoutMode = 'sheet' | 'classic';
 
+/**
+ * Which vehicle marker the map draws.
+ *
+ * `modern` is the current one: a badge with a directional tail growing out of
+ * its own outline, one shape, solved per heading. `classic` is the tile that
+ * preceded it — a larger glossy badge with a chevron orbiting it — kept as a
+ * choice for the same reason the classic layout is. `src/lib/vehicle-marker.ts`
+ * holds both geometries, and both wear the app's line colours.
+ *
+ * It also decides whether a zoomed-out vehicle may become a dot: the classic
+ * tile is a tile at every scale, so the thinning still says which vehicles are
+ * drawn and each survivor keeps its badge.
+ */
+export type MarkerStyle = 'modern' | 'classic';
+
 export type Preferences = {
   mapProvider: MapProvider;
   /** Base map style for the system (MapKit) surface on iOS. */
@@ -59,6 +74,8 @@ export type Preferences = {
   colorScheme: ColorScheme;
   /** Persistent sheet, or the classic top bar and button tower. */
   layout: LayoutMode;
+  /** The fused badge-and-tail marker, or the classic badge and chevron. */
+  markerStyle: MarkerStyle;
 };
 
 const DEFAULTS: Preferences = {
@@ -68,6 +85,7 @@ const DEFAULTS: Preferences = {
   followSelectedVehicle: false,
   colorScheme: 'system',
   layout: 'sheet',
+  markerStyle: 'modern',
 };
 
 let preferences: Preferences = DEFAULTS;

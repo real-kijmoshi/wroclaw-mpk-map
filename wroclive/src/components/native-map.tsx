@@ -15,11 +15,25 @@ import { Elevation, HitTarget, Radius, Weight } from '@/constants/design';
 import { useMapChrome } from '@/hooks/use-map-chrome';
 import { useReducedMotion } from '@/hooks/use-reduced-motion';
 import type { FleetVehicle, Stop } from '@/lib/api';
-import { colorFor, isTram } from '@/lib/lines';
+import { classicBorderColorFor, colorFor, isTram } from '@/lib/lines';
 import { BACKWARD_TOLERANCE_METERS, projectProgress, splitRoute, type RouteProgress, type RouteSplit } from '@/lib/route-progress';
 import { WROCLAW_CENTER } from '@/lib/map-html';
-import { usePreferences } from '@/lib/preferences';
+import { usePreferences, type MarkerStyle } from '@/lib/preferences';
 import {
+  CLASSIC_ARROW_HALF_BASE,
+  CLASSIC_ARROW_LENGTH,
+  CLASSIC_ARROW_OUTLINE_HALF_BASE,
+  CLASSIC_ARROW_OUTLINE_LENGTH,
+  CLASSIC_ARROW_OUTLINE_RISE,
+  CLASSIC_ARROW_RISE,
+  CLASSIC_BADGE,
+  CLASSIC_BADGE_BORDER,
+  CLASSIC_BADGE_BORDER_SELECTED,
+  CLASSIC_BADGE_RADIUS,
+  CLASSIC_BOX,
+  CLASSIC_LABEL_SIZE,
+  CLASSIC_LABEL_SIZE_LONG,
+  CLASSIC_SHEEN_HEIGHT,
   DOT_SIZE,
   DOT_TAIL_HALF_BASE,
   DOT_TAIL_LENGTH,
@@ -201,6 +215,8 @@ type VehicleMarkerProps = {
   dotTail: boolean;
   /** Travel to the new fix, rather than appear at it. */
   glide: boolean;
+  /** The fused badge-and-tail marker, or the classic badge and chevron. */
+  markerStyle: MarkerStyle;
   onPress: (id: string) => void;
 };
 
@@ -213,6 +229,7 @@ const VehicleMarker = memo(
     dotSize,
     dotTail,
     glide,
+    markerStyle,
     onPress,
   }: VehicleMarkerProps) {
     // Heading is bucketed to 15°: redrawing for every degree of GPS jitter is
@@ -221,11 +238,17 @@ const VehicleMarker = memo(
     // a rotation the key does not notice is never captured to the screen.
     const bucket = headingBucket(vehicle.heading);
     const tracking = useMarkerRedraw(
-      `${vehicle.line}|${vehicle.type}|${dimmed}|${selected}|${labelled}|${dotSize}|${dotTail}|${bucket}`,
+      `${vehicle.line}|${vehicle.type}|${dimmed}|${selected}|${labelled}|${dotSize}|${dotTail}|${bucket}|${markerStyle}`,
     );
 
     const towards = vehicle.trip?.towards ?? vehicle.trip?.headsign ?? null;
+    // The classic marker brings back the tile, not the palette it shipped with:
+    // white numbers on that pastel blue came to about 2.9:1, and it gave every
+    // night line the same colour. The line colour is the app's, and the badge's
+    // keyline is that colour a quarter of the way to black.
     const tint = colorFor(vehicle.type);
+    const edge = classicBorderColorFor(vehicle.type);
+    const classic = markerStyle === 'classic';
     const tram = isTram(vehicle.type);
 
     // The marker and its tail are one shape, so where the tail meets the
@@ -306,78 +329,126 @@ const VehicleMarker = memo(
         <View
           style={[
             // Every box is only as big as the shape drawn in it — the labelled
-            // one floored at one finger's width, the dot deliberately not.
-            {
-              width: geometry.boxWidth,
-              height: geometry.boxHeight,
-              alignItems: 'center',
-              justifyContent: 'center',
-            },
+            // one floored at one finger's width, the dot deliberately not. The
+            // classic tile has one box at every heading, because its chevron
+            // orbits at one radius: that is what it costs in map it claims.
+            classic
+              ? styles.classicBox
+              : {
+                  width: geometry.boxWidth,
+                  height: geometry.boxHeight,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                },
             dimmed && styles.vehicleDimmed,
           ]}>
-          {/*
-           * The tail. It is drawn first, so the badge or dot covers the few
-           * points of it that sink inside the outline, and the two read as one
-           * shape. The layer fills the box and rotates about that shape's
-           * centre — the shape itself never turns, so the line number is always
-           * the right way up.
-           */}
-          {geometry.tailTop !== null && (
-            <View
-              style={[styles.tailLayer, { transform: [{ rotate: `${geometry.angle}deg` }] }]}>
-              <View
-                style={[
-                  labelled ? styles.tailOutline : styles.dotTailOutline,
-                  { top: geometry.outlineTop as number },
-                ]}
-              />
-              <View
-                style={[
-                  labelled ? styles.tail : styles.dotTail,
-                  { top: geometry.tailTop, borderBottomColor: tint },
-                ]}
-              />
-            </View>
-          )}
-
-          {labelled ? (
+          {classic ? (
+            /*
+             * The classic marker: badge and chevron rotated together, the line
+             * number turned back upright inside them. It is two objects the eye
+             * has to associate rather than one shape — which is why the modern
+             * marker replaced it — and it is here because some riders read the
+             * bigger tile faster.
+             */
             <View
               style={[
-                styles.badge,
-                {
-                  backgroundColor: tint,
-                  width: badge.badgeWidth,
-                  height: badge.badgeHeight,
-                  borderRadius: badge.badgeRadius,
-                  borderWidth: selected ? 2.5 : 1.5,
-                },
-                selected && styles.badgeSelected,
+                styles.classicBearing,
+                bucket !== null && { transform: [{ rotate: `${bucket * 15}deg` }] },
               ]}>
-              <Text
-                numberOfLines={1}
-                allowFontScaling={false}
-                adjustsFontSizeToFit
-                minimumFontScale={0.7}
-                style={[styles.label, vehicle.line.length > 3 && styles.labelLong]}>
-                {vehicle.line}
-              </Text>
+              {bucket !== null && (
+                <View pointerEvents="none" style={styles.classicOrbit}>
+                  <View style={[styles.classicArrowOutline, { borderBottomColor: edge }]} />
+                  <View style={[styles.classicArrow, { borderBottomColor: tint }]} />
+                </View>
+              )}
+              <View
+                style={[
+                  styles.classicBadge,
+                  { backgroundColor: tint, borderColor: edge },
+                  selected && styles.classicBadgeSelected,
+                ]}>
+                <View pointerEvents="none" style={styles.classicSheen} />
+                <Text
+                  numberOfLines={1}
+                  allowFontScaling={false}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                  style={[
+                    styles.classicLabel,
+                    vehicle.line.length > 3 && styles.classicLabelLong,
+                    bucket !== null && { transform: [{ rotate: `${-bucket * 15}deg` }] },
+                  ]}>
+                  {vehicle.line}
+                </Text>
+              </View>
             </View>
           ) : (
-            <View
-              style={[
-                styles.dot,
-                {
-                  backgroundColor: tint,
-                  width: dot.dotSize,
-                  height: dot.dotSize,
-                  // Shape carries the mode as well as colour: a red dot and a
-                  // blue dot are the same dot to anyone who cannot separate the
-                  // two hues, and this map is read in sunlight.
-                  borderRadius: dot.dotRadius,
-                  borderWidth: dotBorderFor(dot.dotSize),
-                },
-              ]}
-            />
+            <>
+              {/*
+               * The tail. It is drawn first, so the badge or dot covers the few
+               * points of it that sink inside the outline, and the two read as
+               * one shape. The layer fills the box and rotates about that
+               * shape's centre — the shape itself never turns, so the line
+               * number is always the right way up.
+               */}
+              {geometry.tailTop !== null && (
+                <View
+                  style={[styles.tailLayer, { transform: [{ rotate: `${geometry.angle}deg` }] }]}>
+                  <View
+                    style={[
+                      labelled ? styles.tailOutline : styles.dotTailOutline,
+                      { top: geometry.outlineTop as number },
+                    ]}
+                  />
+                  <View
+                    style={[
+                      labelled ? styles.tail : styles.dotTail,
+                      { top: geometry.tailTop, borderBottomColor: tint },
+                    ]}
+                  />
+                </View>
+              )}
+
+              {labelled ? (
+                <View
+                  style={[
+                    styles.badge,
+                    {
+                      backgroundColor: tint,
+                      width: badge.badgeWidth,
+                      height: badge.badgeHeight,
+                      borderRadius: badge.badgeRadius,
+                      borderWidth: selected ? 2.5 : 1.5,
+                    },
+                    selected && styles.badgeSelected,
+                  ]}>
+                  <Text
+                    numberOfLines={1}
+                    allowFontScaling={false}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
+                    style={[styles.label, vehicle.line.length > 3 && styles.labelLong]}>
+                    {vehicle.line}
+                  </Text>
+                </View>
+              ) : (
+                <View
+                  style={[
+                    styles.dot,
+                    {
+                      backgroundColor: tint,
+                      width: dot.dotSize,
+                      height: dot.dotSize,
+                      // Shape carries the mode as well as colour: a red dot and
+                      // a blue dot are the same dot to anyone who cannot
+                      // separate the two hues, and this map is read in sunlight.
+                      borderRadius: dot.dotRadius,
+                      borderWidth: dotBorderFor(dot.dotSize),
+                    },
+                  ]}
+                />
+              )}
+            </>
           )}
         </View>
       </Marker>
@@ -398,6 +469,7 @@ const VehicleMarker = memo(
     previous.dotSize === next.dotSize &&
     previous.dotTail === next.dotTail &&
     previous.glide === next.glide &&
+    previous.markerStyle === next.markerStyle &&
     previous.onPress === next.onPress,
 );
 
@@ -489,7 +561,7 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
 ) {
   const mapRef = useRef<Maps>(null);
   const viewport = useWindowDimensions();
-  const { mapProvider, appleMapType } = usePreferences();
+  const { mapProvider, appleMapType, markerStyle } = usePreferences();
   const { scheme } = useMapChrome();
   const reducedMotion = useReducedMotion();
   const [visibleRegion, setVisibleRegion] = useState(INITIAL_REGION);
@@ -598,7 +670,15 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
    * that wins a cell is the same one from poll to poll. Ordering by whatever
    * the payload happened to list first made the survivor change every ten
    * seconds, and the map twinkled.
+   *
+   * The classic marker is a tile at every scale (`alwaysLabelled`). The dot
+   * tiers are the modern marker's answer to a crowded city and a bare dot is a
+   * shape the classic look does not have, so under that setting the thinning
+   * still decides *which* vehicles are drawn and every survivor is drawn as
+   * its badge.
    */
+  const alwaysLabelled = markerStyle === 'classic';
+
   const placements = useMemo(() => {
     const latitudeRadius = visibleRegion.latitudeDelta * (0.5 + MARKER_OVERSCAN_RATIO);
     const longitudeRadius = visibleRegion.longitudeDelta * (0.5 + MARKER_OVERSCAN_RATIO);
@@ -627,7 +707,7 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
       // district zoom is where the flow of the network reads.
       return ordered.map((vehicle) => ({
         vehicle,
-        labelled: vehicle.id === selectedVehicleId,
+        labelled: alwaysLabelled || vehicle.id === selectedVehicleId,
         dotSize: DOT_SIZE,
         dotTail: true,
       }));
@@ -668,7 +748,9 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
         if (free) {
           result.push({
             vehicle,
-            labelled: false,
+            // A badge cannot say how many vehicles it stands for, so the
+            // classic tile trades the density step for its own shape.
+            labelled: alwaysLabelled,
             dotSize: dotSizeForDensity(counts.get(key) ?? 1),
             dotTail: false,
           });
@@ -678,14 +760,14 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
 
       result.push({
         vehicle,
-        labelled: free || vehicle.id === selectedVehicleId,
+        labelled: alwaysLabelled || free || vehicle.id === selectedVehicleId,
         dotSize: DOT_SIZE,
         dotTail: true,
       });
     }
 
     return result;
-  }, [selected, selectedVehicleId, tier, validVehicles, viewport.height, viewport.width, visibleRegion]);
+  }, [alwaysLabelled, selected, selectedVehicleId, tier, validVehicles, viewport.height, viewport.width, visibleRegion]);
 
   useEffect(() => {
     if (!follow || !selected) return;
@@ -876,6 +958,7 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
           dotSize={dotSize}
           dotTail={dotTail}
           glide={!reducedMotion}
+          markerStyle={markerStyle}
           onPress={onSelectVehicle}
         />
       ))}
@@ -1029,6 +1112,112 @@ const styles = StyleSheet.create({
     borderColor: '#ffffff',
     ...Elevation.marker,
   },
+
+  /*
+   * The classic marker, from commit a86981d.
+   *
+   * A square canvas symmetric about the coordinate, large enough for the tile
+   * to turn diagonally without its bounds — and so its anchor — shifting. The
+   * badge and the chevron rotate together inside it and only the line number
+   * is turned back upright, which is what makes the whole thing two objects
+   * rather than one shape.
+   */
+  classicBox: {
+    width: CLASSIC_BOX,
+    height: CLASSIC_BOX,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  classicBearing: {
+    width: CLASSIC_BOX,
+    height: CLASSIC_BOX,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  classicOrbit: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: 'center',
+  },
+  classicArrow: {
+    position: 'absolute',
+    top: CLASSIC_BOX / 2 - CLASSIC_ARROW_RISE,
+    width: 0,
+    height: 0,
+    borderLeftWidth: CLASSIC_ARROW_HALF_BASE,
+    borderRightWidth: CLASSIC_ARROW_HALF_BASE,
+    borderBottomWidth: CLASSIC_ARROW_LENGTH,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    backgroundColor: 'transparent',
+  },
+  /** The badge's own darker keyline, continued around the chevron. */
+  classicArrowOutline: {
+    position: 'absolute',
+    top: CLASSIC_BOX / 2 - CLASSIC_ARROW_OUTLINE_RISE,
+    width: 0,
+    height: 0,
+    borderLeftWidth: CLASSIC_ARROW_OUTLINE_HALF_BASE,
+    borderRightWidth: CLASSIC_ARROW_OUTLINE_HALF_BASE,
+    borderBottomWidth: CLASSIC_ARROW_OUTLINE_LENGTH,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    backgroundColor: 'transparent',
+  },
+  classicBadge: {
+    width: CLASSIC_BADGE,
+    height: CLASSIC_BADGE,
+    borderWidth: CLASSIC_BADGE_BORDER,
+    borderRadius: CLASSIC_BADGE_RADIUS,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Elevation.marker,
+  },
+  classicSheen: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: CLASSIC_SHEEN_HEIGHT,
+    borderTopLeftRadius: CLASSIC_BADGE_RADIUS - CLASSIC_BADGE_BORDER,
+    borderTopRightRadius: CLASSIC_BADGE_RADIUS - CLASSIC_BADGE_BORDER,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  classicLabel: {
+    maxWidth: CLASSIC_BADGE - 3,
+    color: '#ffffff',
+    fontSize: CLASSIC_LABEL_SIZE,
+    fontWeight: Weight.regular,
+    lineHeight: 22,
+    letterSpacing: -0.4,
+    fontVariant: ['tabular-nums'],
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.10)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 1,
+  },
+  classicLabelLong: { fontSize: CLASSIC_LABEL_SIZE_LONG, letterSpacing: -0.7 },
+  classicBadgeSelected: Platform.select({
+    ios: {
+      borderColor: '#ffffff',
+      borderWidth: CLASSIC_BADGE_BORDER_SELECTED,
+      shadowOpacity: 0.32,
+      shadowRadius: 5,
+    },
+    android: {
+      borderColor: '#ffffff',
+      borderWidth: CLASSIC_BADGE_BORDER_SELECTED,
+      elevation: 7,
+    },
+    default: {
+      borderColor: '#ffffff',
+      borderWidth: CLASSIC_BADGE_BORDER_SELECTED,
+      boxShadow: '0 1px 5px rgba(0,0,0,0.32)',
+    },
+  }) as object,
 
   // Keep the measured marker bounds fixed. The label is allowed to extend
   // beyond this compact coordinate box without changing the map anchor.

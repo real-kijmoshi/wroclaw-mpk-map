@@ -1,8 +1,21 @@
-import { LINE_COLOR } from './lines';
+import { CLASSIC_BORDER_COLOR, LINE_COLOR } from './lines';
 import {
   BADGE_GROW_SELECTED,
   BADGE_HEIGHT,
   BADGE_RADIUS_TRAM,
+  CLASSIC_ARROW_HALF_BASE,
+  CLASSIC_ARROW_LENGTH,
+  CLASSIC_ARROW_OUTLINE_HALF_BASE,
+  CLASSIC_ARROW_OUTLINE_LENGTH,
+  CLASSIC_ARROW_OUTLINE_RISE,
+  CLASSIC_ARROW_RISE,
+  CLASSIC_BADGE,
+  CLASSIC_BADGE_BORDER,
+  CLASSIC_BADGE_BORDER_SELECTED,
+  CLASSIC_BADGE_RADIUS,
+  CLASSIC_LABEL_SIZE,
+  CLASSIC_LABEL_SIZE_LONG,
+  CLASSIC_SHEEN_HEIGHT,
   DENSITY_SIZES,
   DOT_SIZE,
   DOT_TAIL_HALF_BASE,
@@ -40,6 +53,7 @@ export type MapMessage =
   | { type: 'viewport'; lat: number; lon: number; radiusMeters: number; zoom: number };
 
 const PALETTE = JSON.stringify(LINE_COLOR);
+const CLASSIC_EDGE_PALETTE = JSON.stringify(CLASSIC_BORDER_COLOR);
 
 export const WROCLAW_CENTER = { lat: 51.1079, lon: 17.0385, zoom: 13 };
 
@@ -241,6 +255,83 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     box-shadow: 0 2px 8px rgba(0,0,0,0.42), 0 0 0 3px rgba(255,255,255,0.28);
   }
 
+  /*
+   * The classic marker (preferences.markerStyle), from commit a86981d: a
+   * larger glossy badge with a chevron orbiting it at one fixed radius, the
+   * pair rotated together while the line number is turned back upright.
+   *
+   * It is one class on the vehicles pane and nothing else — every marker
+   * already carries its keyline colour and its bearing as custom properties,
+   * so switching the setting is a classList toggle and not several hundred
+   * rebuilt icons, the same way the tier and the focus are. The chevron is
+   * placed from the box's centre rather than its top edge, because this page's
+   * box is 64px where the native surface's is 58 and the marker has to be the
+   * same one either way.
+   *
+   * The colour is the app's line palette, not the pastels this tile shipped
+   * with — see CLASSIC_BORDER_COLOR in src/lib/lines.ts.
+   */
+  .leaflet-vehicles-pane.is-classic .vehicle__body {
+    width: ${CLASSIC_BADGE}px; height: ${CLASSIC_BADGE}px;
+    margin: -${CLASSIC_BADGE / 2}px 0 0 -${CLASSIC_BADGE / 2}px;
+    border-radius: ${CLASSIC_BADGE_RADIUS}px;
+    border-width: ${CLASSIC_BADGE_BORDER}px;
+    border-color: var(--classic-edge, #354050);
+    background-color: var(--vehicle-color, #475569);
+    overflow: hidden;
+    transform: rotate(var(--bearing, 0deg));
+  }
+  /* The highlight across the top half, drawn as a layer rather than a gradient
+     so it keeps the badge's own corners. */
+  .leaflet-vehicles-pane.is-classic .vehicle__body::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: ${CLASSIC_SHEEN_HEIGHT}px;
+    background: rgba(255,255,255,0.08);
+    pointer-events: none;
+  }
+  .leaflet-vehicles-pane.is-classic .vehicle__label {
+    font-size: ${CLASSIC_LABEL_SIZE}px;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    text-shadow: 0 1px 1px rgba(0,0,0,0.10);
+    /* Bearing belongs to the tile; the number is read, so it is turned back. */
+    transform: rotate(calc(-1 * var(--bearing, 0deg)));
+  }
+  .leaflet-vehicles-pane.is-classic .vehicle__label--long {
+    font-size: ${CLASSIC_LABEL_SIZE_LONG}px;
+    letter-spacing: -0.04em;
+  }
+  .leaflet-vehicles-pane.is-classic .vehicle__tail {
+    top: calc(50% - ${CLASSIC_ARROW_RISE}px);
+    margin-left: -${CLASSIC_ARROW_HALF_BASE}px;
+    border-width: 0 ${CLASSIC_ARROW_HALF_BASE}px ${CLASSIC_ARROW_LENGTH}px;
+    border-bottom-color: var(--vehicle-color, #475569);
+  }
+  .leaflet-vehicles-pane.is-classic .vehicle__tail-edge {
+    top: calc(50% - ${CLASSIC_ARROW_OUTLINE_RISE}px);
+    margin-left: -${CLASSIC_ARROW_OUTLINE_HALF_BASE}px;
+    border-width: 0 ${CLASSIC_ARROW_OUTLINE_HALF_BASE}px ${CLASSIC_ARROW_OUTLINE_LENGTH}px;
+    border-bottom-color: var(--classic-edge, #354050);
+  }
+  /*
+   * The classic tile is a tile at every scale.
+   *
+   * The dot tiers are the modern marker's answer to a crowded city, and a
+   * bare dot is a shape this look does not have. So the tier keeps deciding
+   * *which* vehicles are drawn — thinned markers stay hidden — and every
+   * survivor is drawn as its badge, chevron and all.
+   */
+  .leaflet-vehicles-pane.is-classic .vehicle--dot .vehicle__body { display: flex; }
+  .leaflet-vehicles-pane.is-classic .vehicle--dot .vehicle__dot { display: none; }
+  .leaflet-vehicles-pane.is-classic .vehicle--small .vehicle__bearing { display: block; }
+  .leaflet-vehicles-pane.is-classic .vehicle--selected .vehicle__body {
+    border-width: ${CLASSIC_BADGE_BORDER_SELECTED}px;
+    border-color: #ffffff;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.32);
+  }
+
   /* With one vehicle chosen the rest step back, so the eye lands on it and its
      route. It is one class on the pane — not a single marker is rebuilt for it,
      which is the whole reason it can be done on every selection. */
@@ -369,6 +460,11 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
   }
 
   function colorFor(type) { return LINE_COLOR[type] || LINE_COLOR.unknown; }
+
+  /* The classic badge's keyline: the line's own colour, a quarter of the way
+     to black. See CLASSIC_BORDER_COLOR in src/lib/lines.ts. */
+  var CLASSIC_EDGE = ${CLASSIC_EDGE_PALETTE};
+  function classicEdgeFor(type) { return CLASSIC_EDGE[type] || CLASSIC_EDGE.unknown; }
 
   /* --- the map ---------------------------------------------------------- */
 
@@ -502,6 +598,11 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     var vars = '--badge-w:' + w + 'px;--badge-h:' + h + 'px;--badge-r:' + r + 'px;';
     if (!Number.isFinite(heading)) return vars;
 
+    // The classic tile turns as a whole and turns its label back, so the angle
+    // has to be readable from inside the badge as well as from the bearing
+    // layer the modern tail rides on.
+    vars += '--bearing:' + heading + 'deg;';
+
     // Screen axes: x right, y down, heading 0 = north.
     var radians = (heading * Math.PI) / 180;
     var ux = Math.sin(radians), uy = -Math.cos(radians);
@@ -525,6 +626,9 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
    */
   function iconHtml(vehicle, selected) {
     var color = colorFor(vehicle.type);
+    // The classic keyline travels with every marker so the setting is a class
+    // on the pane rather than a rebuild of every icon on the map.
+    var classicEdge = classicEdgeFor(vehicle.type);
     var chosen = selected ? ' vehicle--selected' : '';
     var tram = Boolean(TRAM_TYPES[vehicle.type]);
     var mode = tram ? ' vehicle--tram' : ' vehicle--bus';
@@ -538,6 +642,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
       : '<div class="vehicle__bearing" style="transform:rotate(' + angle + 'deg)">'
         + '<div class="vehicle__tail-edge"></div><div class="vehicle__tail"></div></div>';
     return '<div class="vehicle' + chosen + mode + '" style="--vehicle-color:' + color + ';'
+      + '--classic-edge:' + classicEdge + ';'
       + markerVars(label, tram, selected, angle) + '">'
       + bearing
       + '<div class="vehicle__body">'
@@ -1200,6 +1305,23 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     ).addTo(map);
   }
 
+  /**
+   * The marker style, as one class on the vehicles pane.
+   *
+   * Every marker already carries both palettes and its own bearing, so this
+   * repaints the whole fleet without rebuilding a single icon — the same way
+   * the tier and the focused state are applied. A rider switching the setting
+   * would otherwise watch several hundred markers blink, which is the exact
+   * failure "move markers, don't rebuild them" exists to prevent.
+   */
+  var markerStyle = 'modern';
+
+  function setMarkerStyle(next) {
+    markerStyle = next === 'classic' ? 'classic' : 'modern';
+    var pane = map.getPane('vehicles');
+    if (pane) pane.classList.toggle('is-classic', markerStyle === 'classic');
+  }
+
   /* --- commands from the app --------------------------------------------- */
 
   function handle(raw) {
@@ -1217,6 +1339,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
       case 'selectStop': setSelectedStop(message.id || null); break;
       case 'user': setUser(message.position); break;
       case 'theme': setTheme(Boolean(message.dark)); break;
+      case 'markerStyle': setMarkerStyle(message.style); break;
       case 'select':
         selectVehicle(message.id || null);
         followId = message.follow ? message.id : null;

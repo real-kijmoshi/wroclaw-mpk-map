@@ -15,7 +15,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { apiGet } from '@/lib/api';
 import { API_URL } from '@/lib/config';
 import { formatAge } from '@/lib/format';
-import { preferencesStore, usePreferences, type AppleMapType, type ColorScheme, type LayoutMode, type MapProvider } from '@/lib/preferences';
+import { preferencesStore, usePreferences, type AppleMapType, type ColorScheme, type LayoutMode, type MapProvider, type MarkerStyle } from '@/lib/preferences';
 
 type Health = {
   status: string;
@@ -79,6 +79,26 @@ export default function SettingsScreen() {
               hint="Więcej widocznej mapy"
               selected={preferences.layout === 'classic'}
               onPress={() => preferencesStore.set('layout', 'classic' satisfies LayoutMode)}
+            />
+          </Section>
+
+          {/* Next to the layout, because it is the same kind of choice: the
+              same map and the same data, drawn the way it used to be. */}
+          <Section
+            title="Znaczniki pojazdów"
+            footer="Klasyczne to kafelki sprzed przebudowy: większe, z osobną strzałką kierunku, i pozostają kafelkami także po oddaleniu mapy. Nowe zamieniają się wtedy w kropki, dzięki czemu widać, gdzie jest gęsto.">
+            <Choice
+              label="Nowe"
+              hint="Numer linii ze strzałką w jednym kształcie"
+              selected={preferences.markerStyle === 'modern'}
+              onPress={() => preferencesStore.set('markerStyle', 'modern' satisfies MarkerStyle)}
+            />
+            <Divider />
+            <Choice
+              label="Klasyczne"
+              hint="Większy kafelek i strzałka obok niego, na każdym przybliżeniu"
+              selected={preferences.markerStyle === 'classic'}
+              onPress={() => preferencesStore.set('markerStyle', 'classic' satisfies MarkerStyle)}
             />
           </Section>
 

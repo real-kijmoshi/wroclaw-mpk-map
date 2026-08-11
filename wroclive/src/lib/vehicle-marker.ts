@@ -24,6 +24,11 @@
  * generates, and `server/views/map.html` — which has no build step and cannot
  * import anything — carries a copy that names this file. Change a number here
  * and change it there.
+ *
+ * The marker described above is what `markerStyle: 'modern'` draws. The badge
+ * and chevron it replaced are still selectable — see the classic block at the
+ * bottom of this file — so both looks are geometry stated here rather than
+ * numbers spread across the surfaces that draw them.
  */
 
 /** Height of the badge body. The line number sets only its width. */
@@ -338,3 +343,58 @@ export function dotMarkerGeometry(
     dotRadius,
   };
 }
+
+/* --- the classic marker ---------------------------------------------------
+ *
+ * The marker this file's geometry replaced, kept as a choice rather than as
+ * history: `preferences.markerStyle` picks between them, and everything above
+ * is what `'modern'` draws.
+ *
+ * `'classic'` is the tile from commit a86981d — a 40pt glossy badge with a
+ * chevron orbiting it at a fixed radius, the pair rotated together inside a
+ * 58pt box while the line number is counter-rotated back upright. There is
+ * nothing to solve here: the orbit is one distance at every heading, which is
+ * exactly what the modern marker exists to fix and also exactly what makes
+ * this one a handful of constants.
+ *
+ * Two things about it are not faithful, on purpose. Its palette is the app's
+ * (`LINE_COLOR`) rather than the pastels it shipped with — white numbers on
+ * those came to about 2.9:1 and every night line was the same blue — and it
+ * is a tile at *every* zoom, so the thinning still decides which vehicles are
+ * drawn but never turns one into a dot: a bare dot is a shape this look does
+ * not have. The cost is real and is what the setting trades: 58pt is bigger
+ * than anything drawn in it, and on the native surface that box is also the
+ * hit target, so a classic vehicle claims more map than a modern one.
+ */
+
+/** The square canvas the badge and its orbiting chevron turn inside. */
+export const CLASSIC_BOX = 58;
+
+/** The badge is one size for every line number; the label shrinks instead. */
+export const CLASSIC_BADGE = 40;
+export const CLASSIC_BADGE_RADIUS = 10.5;
+export const CLASSIC_BADGE_BORDER = 2.5;
+export const CLASSIC_BADGE_BORDER_SELECTED = 3;
+
+/** The tinted chevron, and the darker one drawn a point behind it. */
+export const CLASSIC_ARROW_HALF_BASE = 7;
+export const CLASSIC_ARROW_LENGTH = 14;
+export const CLASSIC_ARROW_OUTLINE_HALF_BASE = 8;
+export const CLASSIC_ARROW_OUTLINE_LENGTH = 16;
+
+/**
+ * How far the chevron's top edge sits from the box's centre.
+ *
+ * Stated as a distance rather than as a `top` inside a 58pt box, because the
+ * Leaflet page draws the same marker inside a 64pt one and would otherwise
+ * have to know this box's size to place it.
+ */
+export const CLASSIC_ARROW_RISE = CLASSIC_BOX / 2 - 2;
+export const CLASSIC_ARROW_OUTLINE_RISE = CLASSIC_BOX / 2 - 1;
+
+/** The highlight across the top half of the badge. */
+export const CLASSIC_SHEEN_HEIGHT = 19;
+
+/** The line number: one size, and a smaller one once it runs past three glyphs. */
+export const CLASSIC_LABEL_SIZE = 19;
+export const CLASSIC_LABEL_SIZE_LONG = 15;
