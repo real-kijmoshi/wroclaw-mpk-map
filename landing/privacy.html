@@ -396,11 +396,11 @@
     <!-- TL;DR -->
     <div class="tldr">
       <p style="margin:0; font-size:0.85rem; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; color:var(--muted);">Na szybko</p>
-      <p style="margin:0.5rem 0 0; font-size:1.1rem; font-weight:600;">wroclive nie sprzedaje Twoich danych, nie tworzy kont, nie śledzi Cię i nie wyświetla reklam.</p>
+      <p style="margin:0.5rem 0 0; font-size:1.1rem; font-weight:600;">wroclive nie sprzedaje danych, nie tworzy kont, nie profiluje użytkowników i nie wyświetla reklam.</p>
       <div class="tldr__grid">
         <div class="tldr__item">
           <span class="label">Dane osobowe</span>
-          <span class="value ok">Zero</span>
+          <span class="value ok">Brak</span>
         </div>
         <div class="tldr__item">
           <span class="label">Lokalizacja</span>
@@ -412,7 +412,7 @@
         </div>
         <div class="tldr__item">
           <span class="label">Statystyki</span>
-          <span class="value warn">IP → DAU</span>
+          <span class="value ok">Tylko sumy</span>
         </div>
       </div>
     </div>
@@ -440,22 +440,28 @@
         jedynie to, co serwer i Twoja przeglądarka muszą zrobić, aby mapa działała.
       </p>
 
+      <div class="callout">
+        <strong>Administrator danych:</strong> operator projektu wroclive (kontakt: <a href="mailto:wroclive@kijmoshi.xyz">wroclive@kijmoshi.xyz</a>).<br>
+        <strong>Ostatnia aktualizacja:</strong> 15 sierpnia 2026 r.
+      </div>
+
       <section id="collected">
         <h2><span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2C7.58 2 4 5.58 4 10c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z"/><path d="M11 7h2v6h-2zM11 15h2v2h-2z"/></svg></span>Co jest zbierane</h2>
 
         <h3>Statystyki serwera (domyślnie włączone)</h3>
         <p>
-          Serwer rejestruje żądania, aby administratorzy mogli monitorować, jak aplikacja
-          jest używana. Dla każdego żądania (z wyjątkiem zapytań o status mapy) zapisuje:
+          Serwer zlicza żądania, aby administrator mógł monitorować obciążenie aplikacji.
+          Nie zapisuje pojedynczych żądań. Przechowuje wyłącznie dzienne, godzinowe i
+          endpointowe sumy:
         </p>
         <div class="definition">
           <dl>
-            <dt>Adres IP klienta</dt>
-            <dd>Używany wyłącznie jako klucz do pola unikalnych użytkowników dziennie (DAU). Nie jest łączony z żadną inną informacją ani żadną sesją.</dd>
+            <dt>Liczba żądań</dt>
+            <dd>Zagregowana liczba ukończonych żądań, bez adresów IP, identyfikatorów urządzenia, plików cookie ani nagłówków klienta.</dd>
           </dl>
           <dl>
-            <dt>Numer żądań i ich liczba</dt>
-            <dd>Agregowane jako liczby, nie jako lista indywidualnych żądań.</dd>
+            <dt>Aktywne klientogodziny</dt>
+            <dd>Szacunek czasu używania mapy: liczba odświeżeń pozycji pojazdów pomnożona przez dziesięciosekundowy interwał. To nie jest liczba osób ani urządzeń.</dd>
           </dl>
           <dl>
             <dt>Endpoint</dt>
@@ -468,10 +474,10 @@
         </div>
 
         <div class="note">
-          Statystyki są przechowywane jako agregowane liczby w pliku JSON na serwerze.
-          Adresy IP są przechowywane jako część dzienneego zestawu unikalnych adresów
-          i nie są łączone z żadną aktywnością ani danymi osobowymi. Możesz je wyłączyć
-          ustawiając <code>STATS_ENABLED=false</code> w konfiguracji serwera.
+          Adres IP jest technicznie przekazywany serwerowi na czas obsługi połączenia HTTP,
+          ale kod wroclive go nie odczytuje ani nie zachowuje. W pliku statystyk znajdują się
+          wyłącznie zagregowane liczniki. Statystyki można wyłączyć ustawiając
+          <code>STATS_ENABLED=false</code> w konfiguracji serwera.
         </div>
 
         <h3>Dane lokalizacji</h3>
@@ -514,8 +520,8 @@
           <div class="timeline-item">
             <div class="dot"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 3" stroke="currentColor" stroke-width="2" fill="none"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
             <div class="content">
-              <h4>Brak danych osobowych</h4>
-              <p>Nie zbieramy imion, adresów e-mail, numerów telefonów ani żadnych danych identyfikujących.</p>
+              <h4>Brak identyfikatorów</h4>
+              <p>Nie prosimy o imię, e-mail ani numer telefonu i nie zapisujemy adresu IP, identyfikatora użytkownika lub urządzenia.</p>
             </div>
           </div>
           <div class="timeline-item">
@@ -578,8 +584,9 @@
             <tr><th>Usługa</th><th>Cel</th><th>Dane przesyłane</th></tr>
           </thead>
           <tbody>
-            <tr><td>Tiles mapy OpenStreetMap (przez CARTO)</td><td>Warstwa bazowa mapy</td><td>Żadne — tylko standardowe nagłówki HTTP od przeglądarki</td></tr>
-            <tr><td>Leaflet.js</td><td>Biblioteka mapowa w przeglądarce</td><td>Żadne — skrypt działa lokalnie</td></tr>
+            <tr><td>Tile mapy OpenStreetMap (przez CARTO)</td><td>Warstwa bazowa mapy</td><td>Adres IP, adres żądanego kafelka i standardowe nagłówki HTTP</td></tr>
+            <tr><td>Leaflet.js (cdnjs)</td><td>Biblioteka mapowa w przeglądarce</td><td>Adres IP i standardowe dane żądania przy pobieraniu biblioteki</td></tr>
+            <tr><td>Google Fonts</td><td>Fonty strony informacyjnej</td><td>Adres IP i standardowe dane żądania; usługa nie jest używana w aplikacji mapowej</td></tr>
             <tr><td>AI (opcjonalnie, domyślnie wyłączone)</td><td>Grupowanie komunikatów o utrudnieniach</td><td>Klucze API pozostają wyłącznie na serwerze — nigdy nie trafiają do przeglądarki ani aplikacji</td></tr>
           </tbody>
         </table>
@@ -588,8 +595,8 @@
       <section id="rights">
         <h2><span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 12h6M9 16h6M9 8h6" stroke="currentColor" stroke-width="2" fill="none"/><rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="2" fill="none"/></svg></span>Twoje prawa</h2>
         <p>
-          Ponieważ nie zbieramy Twoich danych osobowych, nie ma nic do wymazania ani ograniczyć.
-          Możesz w każdej chwili:
+          Nie tworzymy kont, profili ani zapisów, które można przypisać konkretnej osobie
+          lub urządzeniu. Możesz w każdej chwili:
         </p>
         <ul>
           <li>Wyłączyć statystyki serwera, ustawiając <code>STATS_ENABLED=false</code> w konfiguracji serwera.</li>
@@ -605,7 +612,7 @@
             <tr><th>Co</th><th>Gdzie</th><th>Ile długo</th></tr>
           </thead>
           <tbody>
-            <tr><td>Statystyki serwera</td><td>Plik JSON na serwerze</td><td>31 dni (konfigurowalne przez <code>STATS_DAYS_TO_KEEP</code>)</td></tr>
+            <tr><td>Zagregowane liczniki serwera</td><td>Plik JSON na serwerze</td><td>31 dni (konfigurowalne przez <code>STATS_DAYS_TO_KEEP</code>)</td></tr>
             <tr><td>Dane GTFS (rozklady)</td><td>Bufor na dysku serwera</td><td>Aktualizowane codziennie, starsze wersje nadpisywane</td></tr>
             <tr><td>Pozycje pojazdów</td><td>Pamięć RAM serwera</td><td>Na żywo — nie są przechowywane ani nie są zapisywane</td></tr>
           </tbody>
@@ -624,9 +631,10 @@
       <section id="contact">
         <h2><span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 2l-8 5-8-5h16zM4 18V8l8 5 8-5v10H4z" fill="currentColor"/></svg></span>Kontakt</h2>
         <p>
-          Masz pytania? Otwórz
-          <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map/issues">issue na GitHubie</a>
-          albo napisz do <a href="https://github.com/real-kijmoshi">real-kijmoshi</a>.
+          Masz pytania dotyczące prywatności? Napisz do
+          <a href="mailto:wroclive@kijmoshi.xyz">wroclive@kijmoshi.xyz</a>.
+          Kod projektu znajdziesz na
+          <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map">GitHubie</a>.
         </p>
       </section>
     </div>
@@ -636,6 +644,7 @@
     <div class="links">
       <a href="index.html">Strona główna</a>
       <a href="terms.html">Warunki korzystania</a>
+      <a href="support.html">Pomoc i kontakt</a>
       <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map" target="_blank" rel="noopener noreferrer">GitHub</a>
       <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Licencja</a>
     </div>

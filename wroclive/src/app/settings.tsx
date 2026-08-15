@@ -497,11 +497,19 @@ export default function SettingsScreen() {
 
           <Section title="Prawne" icon="document-text-outline" footer="Otwiera pełny tekst w przeglądarce.">
             <LinkRow
+              label="Pomoc i kontakt"
+              hint="Najczęstsze problemy i kontakt z zespołem"
+              leading={<RowIcon name="help-circle-outline" color={theme.textTertiary} />}
+              value="Pomoc"
+              onPress={() => Linking.openURL(`${LEGAL_BASE_URL}/support.html`)}
+            />
+            <Divider />
+            <LinkRow
               label="Polityka prywatności"
               hint="Jakie dane są zbierane, gdzie trafiają i na jak długo"
               leading={<RowIcon name="shield-checkmark-outline" color={theme.textTertiary} />}
               value="/privacy"
-              onPress={() => Linking.openURL(`${LEGAL_BASE_URL}/privacy`)}
+              onPress={() => Linking.openURL(`${LEGAL_BASE_URL}/privacy.html`)}
             />
             <Divider />
             <LinkRow
@@ -509,7 +517,7 @@ export default function SettingsScreen() {
               hint="Zasady używania aplikacji i odpowiedzialność"
               leading={<RowIcon name="document-outline" color={theme.textTertiary} />}
               value="/terms"
-              onPress={() => Linking.openURL(`${LEGAL_BASE_URL}/terms`)}
+              onPress={() => Linking.openURL(`${LEGAL_BASE_URL}/terms.html`)}
             />
             <Divider />
             <LinkRow

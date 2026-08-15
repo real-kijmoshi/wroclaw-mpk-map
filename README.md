@@ -101,6 +101,12 @@ Base URL: your deployment, or `http://localhost:3000`.
 `/shapes/:line` returns the verbose legacy payload by default so app builds already on
 people's phones keep working; `?format=compact` is what the current app requests.
 
+The server's optional admin statistics are identifier-free. They retain aggregate request
+counts and estimate active client-hours from the app's ten-second `/locations?format=map`
+polls; they never read or store client IPs, cookies, user agents, or device identifiers.
+That estimate is usage time, not DAU. Use App Store Connect's opt-in Active Devices metric
+when an iOS device count is needed. `STATS_ENABLED=false` disables the aggregate counters.
+
 ## AI incident timelines
 
 Raw `@AlertMPK` posts are grouped into incident timelines at backend alert-refresh time;
@@ -200,7 +206,7 @@ again in interactive mode.` See
 Before the first submission you still need to, outside this repo:
 
 - create the Play Console and App Store Connect listings,
-- provide a privacy policy URL (the app collects nothing; location stays on the device),
+- provide a privacy policy URL (the app retains no personal data; location stays on the device),
 - upload screenshots and a feature graphic,
 - point `EXPO_PUBLIC_API_URL` in `eas.json` at your deployed API.
 - on Android, register a Google Maps SDK key and wire the `react-native-maps` config

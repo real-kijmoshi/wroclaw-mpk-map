@@ -6,8 +6,10 @@ const path = require('node:path');
 const logger = require('./logger');
 
 const DEFAULT_TIMEZONE = 'Europe/Warsaw';
+const SCHEMA_VERSION = 2;
+const HOUR_MS = 60 * 60 * 1000;
 
-// Browser and admin traffic must not count as active users: /health is polled
+// Browser and admin traffic must not count as app activity: /health is polled
 // every 10 s by the status page, /map is a second client, and an admin
 // refreshing their own dashboard should not register as a rider.
 const EXCLUDED_PATTERNS = new Set(['/', '/health', '/status', '/map', '/admin']);
@@ -23,13 +25,15 @@ const dayKey = (date, formatters) => formatters.day.format(date);
 const hourOf = (date, formatters) => Number.parseInt(formatters.hour.format(date), 10);
 
 /**
- * Usage stats for the admin dashboard.
+ * Identifier-free usage stats for the admin dashboard.
  *
- * There are no accounts on this API, so an "active user" is approximated as a
- * unique client IP (req.ip, which honours TRUST_PROXY) seen in a day. Counting
- * is per calendar day in the configured time zone (Europe/Warsaw by default,
- * matching the GTFS refresh cron). The last `daysToKeep` days are held in
- * memory and snapshotted to a JSON file so a restart does not reset the counts.
+ * The tracker deliberately never reads an IP address, cookie, user agent or
+ * other client identifier. App activity is approximated from completed
+ * `/locations?format=map` polls: each poll represents one configured polling
+ * interval of foreground use. This produces active client-hours, not a count
+ * of people or devices. Counting is per calendar day in the configured time
+ * zone (Europe/Warsaw by default, matching the GTFS refresh cron). The last
+ * `daysToKeep` days are held in memory and snapshotted to a JSON file.
  *
  * Persistence is deliberately synchronous: `stop()` saves during shutdown and
  * the process may exit right after, so a queued async write could be lost.
@@ -40,11 +44,13 @@ class StatsTracker {
     daysToKeep = 31,
     saveIntervalMs = 300_000,
     timeZone = DEFAULT_TIMEZONE,
+    clientPollIntervalMs = 10_000,
     now = () => new Date(),
   } = {}) {
     this.file = file;
     this.daysToKeep = Math.max(1, daysToKeep);
     this.saveIntervalMs = saveIntervalMs;
+    this.clientPollIntervalMs = Math.max(1, clientPollIntervalMs);
     this.now = now;
     this.formatters = makeFormatters(timeZone);
     this.days = new Map();
@@ -53,7 +59,7 @@ class StatsTracker {
   }
 
   emptyDay() {
-    return { users: new Set(), requests: 0, endpoints: new Map(), hours: new Map() };
+    return { requests: 0, mapPolls: 0, endpoints: new Map(), hours: new Map() };
   }
 
   prune() {
@@ -98,7 +104,7 @@ class StatsTracker {
     day.endpoints.set(pattern, (day.endpoints.get(pattern) ?? 0) + 1);
     const hour = hourOf(this.now(), this.formatters);
     day.hours.set(hour, (day.hours.get(hour) ?? 0) + 1);
-    day.users.add(req.ip ?? 'unknown');
+    if (pattern === '/locations' && req.query?.format === 'map') day.mapPolls += 1;
   }
 
   snapshot() {
@@ -106,14 +112,9 @@ class StatsTracker {
     const todayKey = dayKey(this.now(), this.formatters);
     const todayDay = this.days.get(todayKey);
 
-    const uniqueIn = (keys) => {
-      const users = new Set();
-      for (const key of keys) {
-        for (const ip of this.days.get(key).users) users.add(ip);
-      }
-      return users.size;
-    };
     const requestsIn = (keys) => keys.reduce((sum, key) => sum + this.days.get(key).requests, 0);
+    const mapPollsIn = (keys) => keys.reduce((sum, key) => sum + this.days.get(key).mapPolls, 0);
+    const activeClientHours = (polls) => (polls * this.clientPollIntervalMs) / HOUR_MS;
     const lastDays = (n) => recent.slice(-n);
 
     const topEndpointsToday = [...(todayDay?.endpoints ?? [])]
@@ -124,9 +125,9 @@ class StatsTracker {
     return {
       today: todayKey,
       generatedAt: this.now().toISOString(),
-      dau: todayDay?.users.size ?? 0,
-      wau: uniqueIn(lastDays(7)),
-      mau: uniqueIn(lastDays(30)),
+      activeClientHoursToday: activeClientHours(todayDay?.mapPolls ?? 0),
+      activeClientHours7d: activeClientHours(mapPollsIn(lastDays(7))),
+      activeClientHours30d: activeClientHours(mapPollsIn(lastDays(30))),
       requestsToday: todayDay?.requests ?? 0,
       requests7d: requestsIn(lastDays(7)),
       requests30d: requestsIn(lastDays(30)),
@@ -135,7 +136,8 @@ class StatsTracker {
       daily: recent.slice(-14).map((key) => ({
         date: key,
         requests: this.days.get(key).requests,
-        users: this.days.get(key).users.size,
+        mapPolls: this.days.get(key).mapPolls,
+        activeClientHours: activeClientHours(this.days.get(key).mapPolls),
       })),
       hourly: Array.from({ length: 24 }, (_, hour) => ({
         hour,
@@ -150,15 +152,26 @@ class StatsTracker {
     try {
       raw = fs.readFileSync(this.file, 'utf8');
     } catch (error) {
-      if (error.code !== 'ENOENT') logger.warn(`Stats cache unreadable: ${error.message}`);
+      if (error.code !== 'ENOENT') throw error;
+      return;
+    }
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch (error) {
+      logger.warn(`Stats cache is invalid and will be discarded: ${error.message}`);
+      this.purgeLegacySnapshot();
+      return;
+    }
+    if (data?.schemaVersion !== SCHEMA_VERSION) {
+      this.purgeLegacySnapshot();
       return;
     }
     try {
-      const data = JSON.parse(raw);
       for (const [key, value] of Object.entries(data.days ?? {})) {
         const day = this.emptyDay();
         day.requests = value.requests ?? 0;
-        for (const ip of value.users ?? []) day.users.add(ip);
+        day.mapPolls = value.mapPolls ?? 0;
         for (const [endpoint, count] of Object.entries(value.endpoints ?? {})) {
           day.endpoints.set(endpoint, count);
         }
@@ -169,21 +182,34 @@ class StatsTracker {
       }
       this.prune();
     } catch (error) {
-      logger.warn(`Stats cache corrupted, starting fresh: ${error.message}`);
-      this.days.clear();
+      logger.warn(`Stats cache is invalid and will be discarded: ${error.message}`);
+      this.purgeLegacySnapshot();
     }
   }
 
-  save() {
+  /** Remove an old snapshot in full so no previously stored IP set survives. */
+  purgeLegacySnapshot() {
+    this.days.clear();
+    logger.warn('Discarding legacy stats history to remove stored client identifiers');
+    try {
+      fs.unlinkSync(this.file);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    this.save({ throwOnError: true });
+  }
+
+  save({ throwOnError = false } = {}) {
     if (!this.file) return;
     const payload = {
+      schemaVersion: SCHEMA_VERSION,
       savedAt: this.now().toISOString(),
       days: Object.fromEntries(
         [...this.days].map(([key, day]) => [
           key,
           {
             requests: day.requests,
-            users: [...day.users],
+            mapPolls: day.mapPolls,
             endpoints: Object.fromEntries(day.endpoints),
             hours: Object.fromEntries([...day.hours].sort((a, b) => a[0] - b[0])),
           },
@@ -194,10 +220,11 @@ class StatsTracker {
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
       // Atomic: rename over the real file so a crash mid-write cannot leave a
-      // truncated snapshot that reads as "no users at all".
+      // truncated snapshot that reads as "no activity at all".
       fs.writeFileSync(tmp, JSON.stringify(payload));
       fs.renameSync(tmp, this.file);
     } catch (error) {
+      if (throwOnError) throw error;
       logger.warn(`Stats cache save failed: ${error.message}`);
     }
   }

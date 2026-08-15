@@ -45,6 +45,7 @@ const stats = config.stats.enabled
       daysToKeep: config.stats.daysToKeep,
       saveIntervalMs: config.stats.saveIntervalMs,
       timeZone: config.stats.timeZone,
+      clientPollIntervalMs: config.stats.clientPollIntervalMs,
     })
   : null;
 

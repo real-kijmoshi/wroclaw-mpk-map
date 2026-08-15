@@ -104,6 +104,7 @@
     "cacheDir": "data",
     "saveIntervalMs": 300000,
     "daysToKeep": 31,
+    "clientPollIntervalMs": 10000,
     "timeZone": "Europe/Warsaw"
   },
 
