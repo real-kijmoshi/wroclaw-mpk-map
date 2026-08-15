@@ -12,27 +12,29 @@ const { StatsTracker, dayKey, hourOf } = require('../src/stats');
 // (2026-08-0N) because Warsaw is UTC+2 in August.
 const atDay = (day, hour = 12) => new Date(`2026-08-0${day}T${String(hour).padStart(2, '0')}:00:00Z`);
 
-const fakeReq = (routePath, ip = '10.0.0.1') => ({ route: { path: routePath }, ip });
+const fakeReq = (routePath, query = {}) => ({ route: { path: routePath }, query });
 
 const tempFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'stats-test-')), 'stats.json');
 
 describe('StatsTracker', () => {
-  it('counts requests, unique users and endpoint buckets for today', () => {
+  it('counts requests, map polls and endpoint buckets without identifiers', () => {
     const now = () => atDay(7);
     const stats = new StatsTracker({ now });
 
-    stats.record(fakeReq('/locations', '10.0.0.1'));
-    stats.record(fakeReq('/locations', '10.0.0.2'));
-    stats.record(fakeReq('/vehicle/4-1', '10.0.0.1'));
+    for (let poll = 0; poll < 6; poll += 1) {
+      stats.record({ ...fakeReq('/locations', { format: 'map' }), ip: `10.0.0.${poll}` });
+    }
+    stats.record(fakeReq('/vehicle/4-1'));
 
     const snapshot = stats.snapshot();
-    assert.equal(snapshot.dau, 2);
-    assert.equal(snapshot.requestsToday, 3);
+    assert.equal(snapshot.activeClientHoursToday, 1 / 60);
+    assert.equal(snapshot.requestsToday, 7);
     assert.deepEqual(snapshot.topEndpointsToday, [
-      { endpoint: '/locations', count: 2 },
+      { endpoint: '/locations', count: 6 },
       { endpoint: '/vehicle/4-1', count: 1 },
     ]);
     assert.equal(snapshot.today, '2026-08-07');
+    assert.equal('dau' in snapshot, false);
   });
 
   it('groups requests that share a route pattern into one bucket', () => {
@@ -44,28 +46,32 @@ describe('StatsTracker', () => {
     assert.deepEqual(snapshot.topEndpointsToday, [{ endpoint: '/vehicle/:id', count: 2 }]);
   });
 
-  it('computes DAU, WAU and MAU across calendar days', () => {
+  it('does not treat a plain browser fleet request as app activity', () => {
+    const stats = new StatsTracker({ now: () => atDay(7) });
+    stats.record(fakeReq('/locations'));
+    assert.equal(stats.snapshot().activeClientHoursToday, 0);
+    assert.equal(stats.snapshot().requestsToday, 1);
+  });
+
+  it('computes active client-hours across calendar days', () => {
     let current;
     const now = () => current;
     const stats = new StatsTracker({ now });
 
-    // Day 1: 10.0.0.1 + 10.0.0.2. Day 2: 10.0.0.2 + 10.0.0.3.
     current = atDay(1);
-    stats.record(fakeReq('/locations', '10.0.0.1'));
-    stats.record(fakeReq('/locations', '10.0.0.2'));
+    for (let poll = 0; poll < 6; poll += 1) stats.record(fakeReq('/locations', { format: 'map' }));
 
     current = atDay(2);
-    stats.record(fakeReq('/locations', '10.0.0.2'));
-    stats.record(fakeReq('/locations', '10.0.0.3'));
+    for (let poll = 0; poll < 12; poll += 1) stats.record(fakeReq('/locations', { format: 'map' }));
 
     const snapshot = stats.snapshot();
     assert.equal(snapshot.today, '2026-08-02');
-    assert.equal(snapshot.dau, 2, 'users seen only today');
-    assert.equal(snapshot.wau, 3, 'union of the last 7 days');
-    assert.equal(snapshot.mau, 3, 'union of the last 30 days');
-    assert.equal(snapshot.requestsToday, 2);
-    assert.equal(snapshot.requests7d, 4);
-    assert.equal(snapshot.requests30d, 4);
+    assert.equal(snapshot.activeClientHoursToday, 1 / 30);
+    assert.equal(snapshot.activeClientHours7d, 1 / 20);
+    assert.equal(snapshot.activeClientHours30d, 1 / 20);
+    assert.equal(snapshot.requestsToday, 12);
+    assert.equal(snapshot.requests7d, 18);
+    assert.equal(snapshot.requests30d, 18);
   });
 
   it('keeps only the configured number of days', () => {
@@ -75,13 +81,13 @@ describe('StatsTracker', () => {
 
     for (let day = 1; day <= 5; day += 1) {
       current = atDay(day);
-      stats.record(fakeReq('/locations', `10.0.0.${day}`));
+      stats.record(fakeReq('/locations', { format: 'map' }));
     }
 
     const snapshot = stats.snapshot();
     assert.equal(stats.days.size, 3);
-    assert.equal(snapshot.dau, 1, 'only day 5 is today');
-    assert.equal(snapshot.mau, 3, 'the two pruned days no longer count');
+    assert.equal(snapshot.activeClientHoursToday, 1 / 360, 'only day 5 is today');
+    assert.equal(snapshot.activeClientHours30d, 3 / 360, 'the two pruned days no longer count');
     assert.equal(snapshot.daily.length, 3);
     assert.deepEqual(snapshot.daily[0].date, '2026-08-03');
   });
@@ -96,13 +102,13 @@ describe('StatsTracker', () => {
     stats.record(fakeReq('/admin/api/stats'));
 
     const snapshot = stats.snapshot();
-    assert.equal(snapshot.dau, 0);
+    assert.equal(snapshot.activeClientHoursToday, 0);
     assert.equal(snapshot.requestsToday, 0);
   });
 
   it('ignores unmatched requests (404s)', () => {
     const stats = new StatsTracker({ now: () => atDay(7) });
-    stats.record({ route: undefined, ip: '10.0.0.1' });
+    stats.record({ route: undefined });
     assert.equal(stats.snapshot().requestsToday, 0);
   });
 
@@ -124,24 +130,48 @@ describe('StatsTracker', () => {
 
     current = atDay(1);
     const first = new StatsTracker({ file, now });
-    first.record(fakeReq('/locations', '10.0.0.1'));
-    first.record(fakeReq('/vehicle/4-1', '10.0.0.2'));
+    first.record(fakeReq('/locations', { format: 'map' }));
+    first.record(fakeReq('/vehicle/4-1'));
     first.save();
 
     current = atDay(2);
     const second = new StatsTracker({ file, now });
-    assert.equal(second.snapshot().mau, 2, 'loaded from disk');
+    assert.equal(second.snapshot().activeClientHours30d, 1 / 360, 'loaded from disk');
     assert.equal(second.snapshot().requests30d, 2);
     assert.equal(second.snapshot().requestsToday, 0, 'the requests were on day 1, not today');
-    assert.deepEqual(second.snapshot().daily[0], { date: '2026-08-01', requests: 2, users: 2 });
+    assert.deepEqual(second.snapshot().daily[0], {
+      date: '2026-08-01',
+      requests: 2,
+      mapPolls: 1,
+      activeClientHours: 1 / 360,
+    });
+    const persisted = fs.readFileSync(file, 'utf8');
+    assert.equal(persisted.includes('10.0.0.'), false);
+    assert.equal(persisted.includes('users'), false);
   });
 
-  it('recovers from a corrupted snapshot instead of dying', () => {
+  it('deletes all legacy IP-bearing history on startup', () => {
+    const file = tempFile();
+    fs.writeFileSync(file, JSON.stringify({
+      days: { '2026-08-06': { requests: 4, users: ['10.0.0.1', '10.0.0.2'] } },
+    }));
+
+    const stats = new StatsTracker({ file, now: () => atDay(7) });
+    assert.equal(stats.snapshot().requests30d, 0);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), {
+      schemaVersion: 2,
+      savedAt: atDay(7).toISOString(),
+      days: {},
+    });
+  });
+
+  it('discards a corrupted snapshot instead of retaining unknown data', () => {
     const file = tempFile();
     fs.writeFileSync(file, '{ not json');
     const stats = new StatsTracker({ file, now: () => atDay(7) });
-    stats.record(fakeReq('/locations'));
-    assert.equal(stats.snapshot().dau, 1);
+    stats.record(fakeReq('/locations', { format: 'map' }));
+    assert.equal(stats.snapshot().activeClientHoursToday, 1 / 360);
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).schemaVersion, 2);
   });
 
   it('exposes the day key and hour helpers', () => {

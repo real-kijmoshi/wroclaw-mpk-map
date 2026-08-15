@@ -286,8 +286,14 @@ module.exports = {
     cacheDir: process.env.STATS_CACHE_DIR || cachePath(DEFAULTS.stats.cacheDir),
     // How often the in-memory counts are persisted to disk.
     saveIntervalMs: num(process.env.STATS_SAVE_INTERVAL_MS, DEFAULTS.stats.saveIntervalMs),
-    // Calendar days kept for WAU/MAU and the daily history.
+    // Calendar days kept for rolling activity totals and daily history.
     daysToKeep: num(process.env.STATS_DAYS_TO_KEEP, DEFAULTS.stats.daysToKeep),
+    // One map poll represents this much foreground client time in the
+    // identifier-free active-hours estimate.
+    clientPollIntervalMs: num(
+      process.env.STATS_CLIENT_POLL_INTERVAL_MS,
+      DEFAULTS.stats.clientPollIntervalMs,
+    ),
     // Days and hours are bucketed in this time zone (Wrocław, matching the
     // GTFS refresh cron).
     timeZone: process.env.STATS_TIMEZONE || DEFAULTS.stats.timeZone,

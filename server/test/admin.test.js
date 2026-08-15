@@ -90,6 +90,8 @@ describe('Admin dashboard', () => {
     assert.equal(status, 200);
     assert.ok(headers.get('content-type').includes('text/html'));
     assert.ok(body.includes('statystyki'));
+    assert.ok(body.includes('Aktywne klientogodziny'));
+    assert.equal(body.includes("card('DAU'"), false);
   });
 
   it('rejects stats requests without a token', async () => {
@@ -106,21 +108,22 @@ describe('Admin dashboard', () => {
   it('serves a fresh snapshot to an authenticated caller', async () => {
     const { status, body } = await get('/admin/api/stats', { token: 'test-admin-secret' });
     assert.equal(status, 200);
-    assert.equal(body.dau, 0);
+    assert.equal(body.activeClientHoursToday, 0);
+    assert.equal('dau' in body, false);
     assert.equal(body.requestsToday, 0);
     assert.ok(Array.isArray(body.daily));
     assert.equal(body.hourly.length, 24);
   });
 
   it('counts API traffic but not the admin or health endpoints', async () => {
-    await get('/locations');
+    await get('/locations?format=map');
     await get('/vehicle/4-1');
     await get('/vehicle/128-7');
     await get('/health');
 
     const { status, body } = await get('/admin/api/stats', { token: 'test-admin-secret' });
     assert.equal(status, 200);
-    assert.equal(body.dau, 1, 'the test client is one active user');
+    assert.equal(body.activeClientHoursToday, 1 / 360, 'one poll represents ten active seconds');
     assert.equal(body.requestsToday, 3, '/health and /admin itself are not counted');
     // Different vehicle ids land in the same /vehicle/:id bucket.
     assert.deepEqual(body.topEndpointsToday, [

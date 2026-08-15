@@ -103,17 +103,21 @@
     String(value ?? '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
 
   const formatCount = (value) => (value ?? 0).toLocaleString('pl-PL');
+  const formatHours = (value) => (value ?? 0).toLocaleString('pl-PL', {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 2,
+  }) + ' godz.';
 
   const card = (title, value, note) =>
     '<div class="card"><h2>' + escapeHtml(title) + '</h2><div class="value">' + value + '</div>' +
     (note ? '<div class="sub">' + note + '</div>' : '') + '</div>';
 
-  const bars = (items, valueKey) => {
+  const bars = (items, valueKey, formatter = formatCount) => {
     const values = items.map((item) => item[valueKey]);
     const max = Math.max(1, ...values);
     const barsHtml = items.map((item) =>
       '<div class="bar" style="height:' + Math.round((item[valueKey] / max) * 100) + '%" title="' +
-      escapeHtml(item.label) + ': ' + formatCount(item[valueKey]) + '"></div>').join('');
+      escapeHtml(item.label) + ': ' + formatter(item[valueKey]) + '"></div>').join('');
     return '<div class="chart"><div class="bars">' + barsHtml + '</div><div class="axis">' +
       '<span>' + escapeHtml(items[0]?.label ?? '') + '</span>' +
       '<span>' + escapeHtml(items[items.length - 1]?.label ?? '') + '</span></div></div>';
@@ -124,18 +128,20 @@
       'Dzień ' + stats.today + ' · ' + stats.daysTracked + ' dni w pamięci · zliczono ' +
       formatCount(stats.requestsToday) + ' żądań dziś';
 
-    const daily = stats.daily.map((day) => ({ label: day.date.slice(5), value: day.requests }));
+    const daily = stats.daily.map((day) => ({ label: day.date.slice(5), value: day.activeClientHours }));
     const hourly = stats.hourly.map((hour) => ({ label: hour.hour + ':00', value: hour.requests }));
 
     document.getElementById('content').innerHTML =
       '<div class="grid">' +
-        card('DAU', formatCount(stats.dau), 'aktywnych dziś') +
-        card('WAU', formatCount(stats.wau), 'ostatnie 7 dni') +
-        card('MAU', formatCount(stats.mau), 'ostatnie 30 dni') +
+        card('Aktywność dziś', formatHours(stats.activeClientHoursToday), 'szacowany czas użycia') +
+        card('Aktywność 7 dni', formatHours(stats.activeClientHours7d), 'łączny szacowany czas') +
+        card('Aktywność 30 dni', formatHours(stats.activeClientHours30d), 'łączny szacowany czas') +
         card('Żądania dziś', formatCount(stats.requestsToday), formatCount(stats.requests7d) + ' w 7 dni') +
       '</div>' +
 
-      '<section><h2>Aktywność dzienna (14 dni)</h2>' + bars(daily, 'value') + '</section>' +
+      '<section><h2>Aktywne klientogodziny (14 dni)</h2>' + bars(daily, 'value', formatHours) +
+        '<div class="sub">Szacunek: jedno żądanie mapy odpowiada jednemu interwałowi odświeżania. ' +
+        'Nie jest to liczba użytkowników ani urządzeń.</div></section>' +
 
       '<section><h2>Żądania wg godziny (dziś)</h2>' + bars(hourly, 'value') + '</section>' +
 
