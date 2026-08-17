@@ -12,6 +12,7 @@ import { ACCENT } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { hydrateRecentStops } from '@/lib/recent-stops';
 import { hydrateSelection, selectionStore } from '@/lib/selection';
+import { syncUpdates, watchForUpdatesOnResume } from '@/lib/updates';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -115,6 +116,17 @@ export default function RootLayout() {
       }
     };
     init();
+  }, []);
+
+  /**
+   * Updates run beside the app, never in front of it: the boot check is fired
+   * and forgotten so it cannot delay the first paint, and a downloaded bundle
+   * only takes over after the user has been away long enough for a reload to
+   * cost them nothing. Inert outside release builds — see `@/lib/updates`.
+   */
+  useEffect(() => {
+    syncUpdates();
+    return watchForUpdatesOnResume();
   }, []);
 
   return (
