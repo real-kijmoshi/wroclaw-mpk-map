@@ -20,6 +20,10 @@ npx expo export --platform web --output-dir dist   # compile check + working pre
 npx expo start
 npx expo-doctor              # run after any dependency change
 npx expo install --fix       # pins expo-* to the SDK
+
+eas update --branch preview --message "…"     # ship JS to the preview channel
+eas update:list --branch production           # what has been published
+eas update:rollback                           # undo a bad publish
 ```
 
 CI runs lint, typecheck and the web export (see `.github/workflows/ci.yml`).
@@ -270,6 +274,51 @@ their own copy of the same `Platform.select` shadow.
   run is inferred; when it cannot be identified there is no delay, only remaining
   running time — the sheet shows "Brak rozkładu", not a plausible-looking number.
 
+## Shipping updates (OTA)
+
+An update carries JS and assets. Everything in `src/` goes this way; SDK bumps,
+`react-native-maps`, `expo-maps` and anything touching permissions do not — see
+invariant 16 in the root `AGENTS.md` for why the `fingerprint` runtime policy is
+what enforces that rather than discipline.
+
+**A binary only receives updates if it was built after `expo-updates` was
+added.** Builds predating it never see the first publish, which reads as "OTA
+does not work" and is really "there is nothing listening".
+
+```bash
+eas build --profile preview --platform ios    # once; installs the listener
+eas update --branch preview --message "…"     # every publish after that
+```
+
+`eas update` prints the `runtimeVersion` it published for. If that does not
+match the installed binary's, the phone ignores the bundle — that is the
+interlock doing its job, not a failure to debug.
+
+The channel lives on the build profile in `eas.json` (`development`, `preview`,
+`production`); the branch is the argument to `eas update`. Same-named channel
+and branch link themselves on first use.
+
+**Verifying on a device.** A downloaded bundle does not take over the running
+session — `src/lib/updates.ts` applies it on the next cold start, or on return
+from a 5-minute-plus absence. So: publish, open the app (fetches, still shows
+the old bundle), then fully quit and reopen. Settings → *O aplikacji* →
+*Aktualizacje* checks on demand and names the running bundle as
+`channel · updateId`; that pair, not `version`, is what identifies what someone
+is actually on once bundles ship independently of the store.
+
+Two ways to ship a broken bundle to everyone:
+
+- **Publishing from a dirty tree.** `eas update` packages the working
+  directory, not `HEAD`. Commit first.
+- **`EXPO_PUBLIC_API_URL` exported in your shell.** It is inlined at publish
+  time. `src/lib/config.ts` falls back to the production host when it is unset,
+  so the danger is not forgetting it — it is having it set to a dev machine and
+  baking `localhost` into a production bundle. Check before publishing.
+
+Server-affecting changes keep their order: the server changes first and
+backwards-compatibly, the app after. Users sit on whatever bundle they last
+picked up, so both must work at once — that is what invariant 9 buys.
+
 ## Layout
 
 | Path | |
@@ -284,6 +333,7 @@ their own copy of the same `Platform.select` shadow.
 | `src/lib/lines.ts` | Line colours and category labels |
 | `src/lib/selection.ts` / `preferences.ts` | Line filter and settings, persisted |
 | `src/lib/config.ts` | API URL (`EXPO_PUBLIC_API_URL` wins) and poll intervals |
+| `src/lib/updates.ts` | The only module touching `expo-updates`; inert off release builds |
 | `src/components/map-view*.tsx` | Platform pick for `MapView` |
 | `src/components/native-map.tsx` | `react-native-maps` surface |
 | `src/components/apple-map*.tsx` | `expo-maps` MapKit surface (unused, keep guarded) |
