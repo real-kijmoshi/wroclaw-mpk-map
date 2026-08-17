@@ -208,10 +208,13 @@ Before the first submission you still need to, outside this repo:
 - create the Play Console and App Store Connect listings,
 - provide a privacy policy URL (the app retains no personal data; location stays on the device),
 - upload screenshots and a feature graphic,
-- point `EXPO_PUBLIC_API_URL` in `eas.json` at your deployed API.
-- on Android, register a Google Maps SDK key and wire the `react-native-maps` config
-  plugin (`wroclive/app.json`), since a store build cannot use the API key Expo Go
-  carries.
+- point `EXPO_PUBLIC_API_URL` in `eas.json` at your deployed API,
+- fill in `submit.production` in `eas.json` (App Store Connect app id and Apple team,
+  Play service-account key) — `eas submit` cannot run without it.
+
+No Google Maps SDK key is needed. Android draws OpenStreetMap through the Leaflet page
+rather than `react-native-maps`, and iOS uses MapKit; neither takes an API key. See
+invariant 14 in [`AGENTS.md`](AGENTS.md) before changing a map surface.
 
 ## Data sources
 
@@ -220,13 +223,21 @@ Before the first submission you still need to, outside this repo:
 - Vehicle positions: `POST https://mpk.wroc.pl/bus_position`, supplemented by
   `GET https://open-data.cui.wroclaw.pl/hdb/db/14?download=json` (the city's own live
   vehicle table — merged onto the MPK fleet, see `.env.example` for the matching rules)
-- Disruptions: `@AlertMPK` on X, since the timeline API needs a paid tier —
-  the default and, out of the box, only source (`TWITTER_SCRAPE_ENABLED`).
-  Reads a plain HTTP endpoint by default (`TWITTER_SCRAPE_MODE=http`, no
-  browser needed) or a headless Chromium (`TWITTER_SCRAPE_MODE=browser`,
-  needs a Chromium on disk) — see `server/.env.example`
+- Disruptions: `@AlertMPK` on X, since the timeline API needs a paid tier — the
+  default and, out of the box, only source (`NITTER_ENABLED`, on by default).
+  It is read as plain RSS through a Nitter mirror (`NITTER_INSTANCE_URLS`, a
+  list tried in order), not by scraping X — see `server/.env.example`
 - Disruptions (optional, extra source): `wroclaw.pl/komunikacja/zmiany-w-komunikacji`,
-  scraped (configurable via `ALERT_PAGE_URLS`, empty by default)
+  scraped (configurable via `ALERT_PAGE_URLS`, empty by default and left empty —
+  `@AlertMPK` is the intended source)
+
+**Keep `NITTER_INSTANCE_URLS` stocked.** It is the only redundancy the alerts
+path has. Mirrors are tried in order, a mirror serving an empty page counts as a
+failure and falls through to the next, and when every one of them fails the
+previous list stays in place rather than emptying. But a deployment down to one
+working mirror is one outage away from stale alerts, and the only symptom is
+`alerts.providers[].lastError` in `/health` — nothing crashes. `npm run doctor`
+checks every configured instance against the real feed.
 
 Check the terms of use of each source before deploying publicly.
 
