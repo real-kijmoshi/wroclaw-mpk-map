@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Linking, Platform, Pressable, StyleSheet, Switch, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -28,6 +28,12 @@ import {
   type MarkerStyle,
 } from '@/lib/preferences';
 import { withAlpha } from '@/constants/theme';
+import {
+  checkForUpdate,
+  describeRunningUpdate,
+  updatesEnabled,
+  type UpdateCheckOutcome,
+} from '@/lib/updates';
 
 type Health = {
   status: string;
@@ -44,6 +50,17 @@ type Health = {
  */
 const APP_VERSION = Constants.expoConfig?.version ?? '—';
 const APP_BUILD = `${Constants.expoConfig?.slug ?? 'wroclive'} · ${Platform.OS}`;
+
+type UpdateStatus = 'idle' | 'checking' | UpdateCheckOutcome;
+
+const UPDATE_LABEL: Record<UpdateStatus, string> = {
+  idle: 'Sprawdź',
+  checking: 'Sprawdzanie…',
+  current: 'Aktualna',
+  downloaded: 'Gotowa przy restarcie',
+  failed: 'Nie udało się',
+  unavailable: '—',
+};
 
 type IconName = keyof typeof Ionicons.glyphMap;
 
@@ -269,6 +286,8 @@ export default function SettingsScreen() {
   // without leaving the app.
   const health = usePoll((signal) => apiGet<Health>('/health', { signal }), 30_000);
 
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
+
   const serverState = health.error
     ? { text: 'Brak połączenia', color: theme.danger }
     : health.data?.status === 'ok'
@@ -493,6 +512,39 @@ export default function SettingsScreen() {
                 </ThemedText>
               }
             />
+            {/*
+             * Only in a release build: `expo-updates` is inert in Expo Go and
+             * dev clients, so the row would sit there doing nothing. The hint
+             * names the running bundle — once updates ship independently of the
+             * store, the version above no longer identifies what someone has.
+             */}
+            {updatesEnabled && (
+              <>
+                <Divider />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Sprawdź aktualizacje"
+                  onPress={() => {
+                    if (updateStatus === 'checking') return;
+                    tapped();
+                    setUpdateStatus('checking');
+                    checkForUpdate().then(setUpdateStatus);
+                  }}>
+                  <Row
+                    label="Aktualizacje"
+                    hint={describeRunningUpdate()}
+                    leading={
+                      <RowIcon name="cloud-download-outline" color={theme.textTertiary} />
+                    }
+                    accessory={
+                      <ThemedText type="footnote" themeColor="textSecondary">
+                        {UPDATE_LABEL[updateStatus]}
+                      </ThemedText>
+                    }
+                  />
+                </Pressable>
+              </>
+            )}
           </Section>
 
           <Section title="Prawne" icon="document-text-outline" footer="Otwiera pełny tekst w przeglądarce.">
