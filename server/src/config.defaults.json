@@ -6,6 +6,12 @@
     "origins": ["*"]
   },
 
+  "rateLimit": {
+    "enabled": true,
+    "windowMs": 60000,
+    "max": 600
+  },
+
   "vehicleSources": ["https://mpk.wroc.pl/bus_position"],
   "alertPages": [],
 
