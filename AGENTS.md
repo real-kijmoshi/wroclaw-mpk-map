@@ -164,13 +164,39 @@ string and no code behind it. An unused permission is an App Review question you
 cannot answer. Still true today: every permission in `wroclive/app.json` maps to
 real code (`expo-location` for the locate button and nearby stops).
 
-**16. `expo-updates` and `expo-dev-client` — historical, not applicable.**
-The old app wired both through config (an `eas.json` channel, `app.config.js`
-`updates.url`) rather than imports, so a grep found no imports and they looked
-removable; removing them broke `eas build`. The `wroclive/` app has neither
-dependency. The lesson that survives: a dependency wired through config rather
-than imports is not dead weight — check `app.json` plugins and `eas.json`
-before deleting one.
+**16. Config-wired dependencies are live dependencies — and OTA is one.**
+The old app wired `expo-updates` and `expo-dev-client` through config (an
+`eas.json` channel, `app.config.js` `updates.url`) rather than imports, so a
+grep found no imports and they looked removable; removing them broke
+`eas build`. Both are live in `wroclive/` today: `expo-dev-client` through
+`eas.json`'s development profile, and `expo-updates` through `updates.url` in
+`app.json` plus a `channel` on every build profile. Check `app.json` plugins
+and `eas.json` before deleting a dependency you cannot find an import for.
+
+Over-the-air updates carry **JS and assets only**. `runtimeVersion` uses the
+`fingerprint` policy precisely so that is enforced rather than remembered:
+change a native dependency and the fingerprint changes, so binaries already on
+phones stop matching new bundles instead of loading JS that calls a native API
+they do not have — which crashes on launch, before the app can fetch a fix.
+Never switch that policy to `appVersion` to "unblock" a release. All of
+`wroclive/src` is shippable this way, which is what makes the JS-side bugs on
+this list (7, 8, 11) fixable in hours rather than in an App Review cycle; SDK
+upgrades, `react-native-maps`, and anything touching permissions still need a
+store build.
+
+That cuts both ways: users sit on whatever bundle they last picked up, so the
+server must change **first and compatibly**, and the app after — invariant 9 is
+what makes that possible. `EXPO_PUBLIC_API_URL` is baked into the bundle, so
+the backend address is now an update, not a rebuild.
+
+`wroclive/src/lib/updates.ts` is the only module that touches `expo-updates`.
+It is inert in Expo Go and dev clients (`Updates.isEnabled` is false there and
+every call throws — hence the single `updatesEnabled` guard), the boot check is
+never awaited so it cannot sit between the user and the map, and a downloaded
+bundle is only applied after the app has been backgrounded long enough that a
+reload costs nothing. Reloading mid-session throws away the camera, the
+followed vehicle and the open sheet, which is invariant 20's complaint in a
+different costume.
 
 **17. A vehicle's direction cannot be decided by distance alone.**
 Both directions of a line run down the same street, and a tram line runs on

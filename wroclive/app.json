@@ -7,6 +7,13 @@
     "icon": "./assets/images/icon.png",
     "scheme": "wroclive",
     "userInterfaceStyle": "automatic",
+    "updates": {
+      "url": "https://u.expo.dev/30a32c44-ef2b-4751-8f7b-f3fc2aa58dd2",
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#FDFDFD",
