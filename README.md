@@ -208,10 +208,11 @@ Before the first submission you still need to, outside this repo:
 - create the Play Console and App Store Connect listings,
 - provide a privacy policy URL (the app retains no personal data; location stays on the device),
 - upload screenshots and a feature graphic,
-- point `EXPO_PUBLIC_API_URL` in `eas.json` at your deployed API.
-- on Android, register a Google Maps SDK key and wire the `react-native-maps` config
-  plugin (`wroclive/app.json`), since a store build cannot use the API key Expo Go
-  carries.
+- point `EXPO_PUBLIC_API_URL` in `eas.json` at your deployed API,
+- fill in `submit.production` in `eas.json` with the store credentials.
+
+Android uses OpenStreetMap through the Leaflet page, and iOS uses MapKit. Neither
+surface needs a Google Maps SDK key.
 
 ## Data sources
 

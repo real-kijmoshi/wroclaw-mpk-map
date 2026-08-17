@@ -6,6 +6,7 @@ const express = require('express');
 
 const config = require('./config');
 const logger = require('./logger');
+const { createRateLimit } = require('./rate-limit');
 const { createRouter } = require('./routes');
 
 const corsOptions = config.cors.origins.includes('*')
@@ -25,6 +26,10 @@ const createApp = (services) => {
   // their size, which matters a lot on mobile data.
   app.use(compression());
   app.use(cors(corsOptions));
+
+  // After CORS so a browser can actually read the 429 it gets, and before the
+  // router so a rejected request never reaches the timetable index.
+  app.use(createRateLimit(config.rateLimit));
 
   app.use(createRouter({ startedAt: new Date(), ...services }));
 
