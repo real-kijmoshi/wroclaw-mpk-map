@@ -37,6 +37,7 @@ npx expo export --platform web --output-dir dist   # real compile + preview buil
 npx expo start
 npx expo-doctor              # run after any dependency change
 npx expo install --fix       # pins expo-* to the SDK
+eas update --branch preview --message "…"   # OTA; runbook in wroclive/AGENTS.md
 ```
 
 Tests must pass before you commit. They are fast and need no network — there is
