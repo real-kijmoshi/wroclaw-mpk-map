@@ -23,6 +23,23 @@ services:
       # instance runs out of memory.
       - key: GTFS_BUILD_STOP_INDEX
         value: 'true'
+      # Render terminates TLS at its own router, so without this every request
+      # arrives with the router's address: the rate limit would see the whole
+      # internet as one client and the usage stats would count one visitor.
+      - key: TRUST_PROXY
+        value: 'true'
+      # @AlertMPK through Nitter is the only alerts source by design. Public
+      # mirrors refuse requests without notice (nitter.net answers 429 under a
+      # five-minute poll), and a mirror that is down reads as zero posts rather
+      # than a crash — so keep more than one here as they become available.
+      # `/health` reports the reason under alerts.providers[].lastError.
+      - key: NITTER_INSTANCE_URLS
+        sync: false
+      # Enables /admin. Without it the dashboard routes are not registered at
+      # all, which is why the deployed API answers 404 there. Set in the Render
+      # dashboard — `sync: false` keeps the value out of this file.
+      - key: ADMIN_TOKEN
+        sync: false
     disk:
       name: gtfs-cache
       mountPath: /opt/render/project/src/server/data

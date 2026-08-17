@@ -34,24 +34,35 @@ Three surfaces, all behind one declarative `MapSurfaceProps` contract
 imports `MapView` from `src/components/map-view` and never knows which surface
 it got:
 
-- **`map-view.tsx` / `map-view.ios.tsx` → `native-map.tsx`** — the native
-  surface, `react-native-maps`, on both Android and iOS. It is **included in
-  Expo Go** (SDK 57 docs), so this is the live screen everywhere native. Google
-  Maps on Android, MapKit on iOS, with an OSM `UrlTile` option in
+- **`map-view.ios.tsx` → `native-map.tsx`** — the native surface,
+  `react-native-maps`, on **iOS only**. It is **included in Expo Go** (SDK 57
+  docs), so this is the live screen on iPhone. The renderer there is MapKit —
+  Apple's map, no API key — with an OSM `UrlTile` option in
   `src/lib/preferences.ts`. Custom markers freeze `tracksViewChanges` and
   re-enable it only while an appearance change is re-captured — that is the
   native form of "move markers, don't rebuild them".
+- **`map-view.tsx` → `osm-map.tsx`** — Android. `react-native-maps` renders
+  through the **Google Maps SDK** on Android and offers no other provider (its
+  OSM setting is a tile layer over a Google map, so the SDK still initialises
+  and a store build still needs a Maps key). This project ships no Google Maps,
+  so Android gets the same Leaflet page as the web build and
+  `platformMapAvailable` is `false` — there is one surface, so Settings hides
+  the provider choice and the map hides its layers button. See invariant 14 in
+  the root `AGENTS.md`.
 - **`apple-map.ios.tsx` → `expo-maps`** — a MapKit surface via `expo-maps`
   (SDK 57, **alpha**, *not* in Expo Go). It is **not wired into the live
   screen**; it exists for a future switch. It must stay behind the
   `appleMapsAvailable` runtime check (`requireOptionalNativeModule('ExpoMaps')`)
   and a guarded `require('expo-maps')` — importing it at module scope crashes
   the bundle. `apple-map.tsx` is the non-iOS stub.
-- **`map-view.web.tsx` → `osm-map.tsx` → `live-map.web.tsx`** — the Leaflet
-  page (`src/lib/map-html.ts`), rendered in a browser `<iframe>`. On native the
-  same page is hosted in a `WebView` by `live-map.tsx` when the web fallback is
-  chosen. `map-html.ts` mirrors `server/views/map.html`'s `renderVehicles()`:
+- **`map-view.web.tsx` → `osm-map.tsx` → `live-map.web.tsx`** — the same Leaflet
+  page (`src/lib/map-html.ts`), rendered in a browser `<iframe>` instead of a
+  `WebView`. `map-html.ts` mirrors `server/views/map.html`'s `renderVehicles()`:
   a `Map` of id → marker that is moved between polls, never rebuilt.
+
+Note which of these ship: the Leaflet page is **not** a preview-only artefact.
+It is Android's live surface, so a regression in `map-html.ts` or in the
+`live-map.tsx` bridge is a regression on real phones, not just in `expo export`.
 
 Keep shared behaviour in the declarative contract. Native-specific marker and
 camera work belongs in `native-map.tsx`; Leaflet bridge changes belong in
@@ -285,6 +296,6 @@ their own copy of the same `Platform.select` shadow.
 | `src/lib/selection.ts` / `preferences.ts` | Line filter and settings, persisted |
 | `src/lib/config.ts` | API URL (`EXPO_PUBLIC_API_URL` wins) and poll intervals |
 | `src/components/map-view*.tsx` | Platform pick for `MapView` |
-| `src/components/native-map.tsx` | `react-native-maps` surface |
+| `src/components/native-map.tsx` | `react-native-maps` surface — iOS/MapKit only |
 | `src/components/apple-map*.tsx` | `expo-maps` MapKit surface (unused, keep guarded) |
-| `src/components/osm-map.tsx`, `live-map*.tsx` | Leaflet surface: prop→command bridge, WebView/iframe host |
+| `src/components/osm-map.tsx`, `live-map*.tsx` | Leaflet surface: prop→command bridge, WebView/iframe host — ships on Android and web |

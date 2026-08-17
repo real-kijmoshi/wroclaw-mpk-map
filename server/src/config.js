@@ -109,6 +109,18 @@ module.exports = {
     origins: list(process.env.CORS_ORIGINS, DEFAULTS.cors.origins),
   },
 
+  // Per-address request ceiling. The default is roughly two orders of magnitude
+  // above what a rider generates — the app polls /locations every ten seconds,
+  // so about six requests a minute plus whatever they tap — because whole
+  // districts share one address behind carrier NAT and the limit must never be
+  // the reason a real client sees an error. It exists to stop a script from
+  // hammering /shapes, not to meter usage. RATE_LIMIT_MAX=0 turns it off.
+  rateLimit: {
+    enabled: bool(process.env.RATE_LIMIT_ENABLED, DEFAULTS.rateLimit.enabled),
+    windowMs: num(process.env.RATE_LIMIT_WINDOW_MS, DEFAULTS.rateLimit.windowMs),
+    max: num(process.env.RATE_LIMIT_MAX, DEFAULTS.rateLimit.max),
+  },
+
   gtfs: {
     // The city's current data API. Dataset 6 is the public transport timetable
     // and returns the whole archive of dated snapshots, not one current file.

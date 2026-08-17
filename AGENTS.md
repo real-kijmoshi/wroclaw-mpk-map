@@ -143,20 +143,32 @@ anything older. Let the shell expand it.
 `stopBackgroundWork()` exists because the cron task keeps the event loop alive,
 so `test/boot.test.js` hung forever without it.
 
-**14. `react-native-maps` is the current native map — this invariant is history.**
-The old `app/` client avoided `react-native-maps` because its Expo Go build
-rendered no map, and the whole client was a Leaflet page in a WebView. That
-ruling does not carry over. Per the SDK 57 docs, `react-native-maps` is
-**included in Expo Go**, and `wroclive/` uses it as its native surface on both
-iOS and Android (`src/components/native-map.tsx`, picked by `map-view.tsx` and
-`map-view.ios.tsx`). `expo-maps` (SDK 57, alpha) is installed and provides the
-`apple-map.ios.tsx` MapKit surface, but that component is **not wired into the
-live screen** — it exists for a future switch and must stay behind its
+**14. This app ships no Google Maps, so Android is Leaflet and iOS is MapKit.**
+The old `app/` client avoided `react-native-maps` outright because its Expo Go
+build rendered no map; that blanket ruling is history — per the SDK 57 docs
+`react-native-maps` is **included in Expo Go**, and it is what
+`map-view.ios.tsx` resolves to (`src/components/native-map.tsx`). On iOS that
+renderer is MapKit: Apple's own map, no API key, no Google.
+
+On **Android** it is Google Maps and nothing else — `react-native-maps` has no
+other Android provider, and its OSM option is a `UrlTile` layer drawn *on top
+of* a Google map, so the Google Maps SDK still initialises and a store build
+still needs a Maps SDK key. Using Google Maps is a decision this project has
+declined, so `map-view.tsx` resolves to the Leaflet surface
+(`osm-map.tsx` → `live-map.tsx`) and exports `platformMapAvailable = false`:
+Android has one surface, so the provider choice is hidden the same way it is on
+web. Do not point `map-view.tsx` back at `native-map.tsx` and do not add
+`android.config.googleMaps.apiKey` to `app.json` — that is the whole of the
+decision, re-stated as config.
+
+`expo-maps` (SDK 57, alpha) was a prototype MapKit surface and is **not wired
+into the live screen**; if it is ever reintroduced it must stay behind an
 `appleMapsAvailable` runtime check (`requireOptionalNativeModule('ExpoMaps')`),
 because `expo-maps` is *not* in Expo Go and importing it unconditionally crashes
-the bundle at module scope. The Leaflet page (`wroclive/src/lib/map-html.ts`)
-now belongs to the web build and to nothing else. Do not reintroduce the old
-"react-native-maps must never be used" rule.
+the bundle at module scope. The Leaflet page (`wroclive/src/lib/map-html.ts`) is
+therefore a **live native surface again**, not a web-only artefact: it is what
+every Android rider sees, so the bridge rules in `wroclive/AGENTS.md` apply to
+shipped builds and not just to the preview.
 
 **15. Do not declare capabilities the app does not use.**
 *Historical:* `expo-notifications` was in the old app's config with an iOS usage
