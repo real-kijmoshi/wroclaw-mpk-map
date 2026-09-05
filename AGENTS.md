@@ -272,6 +272,35 @@ what each configured source actually yields, and the keyword lists in
 `parsePage()`. A configured page that serves RSS is auto-detected and parsed as
 a feed instead.
 
+A notice page that states its own data is read differently, and better.
+Some list, per notice, the affected lines and the window the change is in
+force:
+
+```
+linie: N 128 130 242 251
+obowiązuje: 03.09.2026 - 08.09.2026
+05.09.2026r. - przywrócenie do ruchu zatoki autobusowej Kromera (24146)
+```
+
+`parseStructuredNotices()` reads that form, and `NoticeProvider` prefers it —
+feed, then stated list, then anchor scrape. It is worth the extra parser
+because it retires two guesses rather than sharpening them. The line list is
+*stated*, so `extractAffectedLines()` never runs for these notices and the
+phantom-line bug below cannot occur on them; `AlertsService.refresh()` only
+derives lines for an item that arrives without them. And the window is stated,
+so a notice whose last day has passed is dropped rather than sitting at the top
+of `/alerts` describing a closure that has been lifted — expiry is compared as
+a Wrocław calendar date, not a UTC instant, or a notice expires up to two hours
+early on the evening people are actually reading it.
+
+It parses the page's *text*, not its markup, for the same reason
+`parseFileListing()` walks the GTFS payload shape-agnostic: those three fields
+are a publishing convention that outlives a redesign, and the class names
+carrying them are not. The soft spot is the last notice on a page — a notice's
+text runs until the next `linie:`, and the last one has nothing to stop at, so
+it is capped at `MAX_NOTICE_TITLE`. If page chrome starts appearing at the end
+of the final alert, that cap is why.
+
 A notice's body is the text between its headline link and the next link on the
 page. A fixed-size lookahead instead runs into the following notice and appends
 its body to this one, which reads as one alert describing two disruptions.
@@ -352,7 +381,9 @@ Wrocław has real lines numbered 1, 6, 11 and 21. A day-of-month next to those
 numbers ("Od **1** sierpnia", "**21**.07.2026", "od **6** lipca", "(**11** - 16
 lipca)") is not a reference to those lines, but matching against the
 known-lines set alone cannot tell the difference — the number really is a
-valid line, just not the one in that sentence. `extractAffectedLines()` strips
+valid line, just not the one in that sentence. This applies only to sources
+that do not state their lines — `parseStructuredNotices()` above sidesteps the
+whole problem. `extractAffectedLines()` strips
 recognized Polish date expressions (`POLISH_DATE`) before tokenizing,
 specifically because this produced phantom line badges on notices that were
 correctly about other lines. The date-range form has to be matched as one unit

@@ -17,7 +17,7 @@ const AdmZip = require('adm-zip');
 
 const config = require('../src/config');
 const { fetchWithTimeout, requestText } = require('../src/http');
-const { buildBridgeUrl, parseFeed, parsePage } = require('../src/alerts');
+const { buildBridgeUrl, parseFeed, parsePage, parseStructuredNotices } = require('../src/alerts');
 const { fetchKlosokFeed } = require('../src/klosok/fetch');
 const { parseRealtime: parseKlosokRealtime } = require('../src/klosok/realtime');
 const { resolveFeedCandidates } = require('../src/gtfs/catalogue');
@@ -238,7 +238,12 @@ const checkAlerts = async () => {
         if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
         const body = await response.text();
         const feed = parseFeed(body, url);
-        return feed.length ? { how: 'rss', items: feed } : { how: 'scraped', items: parsePage(body, url) };
+        if (feed.length) return { how: 'rss', items: feed };
+        // Same order the server itself reads a page in, so this reports on
+        // what it will actually get.
+        const structured = parseStructuredNotices(body, url);
+        if (structured.length) return { how: 'stated', items: structured };
+        return { how: 'scraped', items: parsePage(body, url) };
       });
 
       const { how, items } = value;
@@ -248,7 +253,8 @@ const checkAlerts = async () => {
       // Print a few headlines: the failure mode that matters here is a source
       // that answers happily with the wrong kind of content.
       for (const item of items.slice(0, 4)) {
-        console.log(DIM(`        · ${(item.title ?? item.content ?? '').slice(0, 90)}`));
+        const lines = item.affected?.length ? ` [${item.affected.join(' ')}]` : '';
+        console.log(DIM(`        · ${(item.title ?? item.content ?? '').slice(0, 90)}${lines}`));
       }
       console.log(DIM('        (these should read as disruptions, not announcements)'));
     } catch (error) {

@@ -13,6 +13,7 @@ const {
   normalizeText,
   parseFeed,
   parsePage,
+  parseStructuredNotices,
   stripHtml,
   toXPostUrl,
 } = require('../src/alerts');
@@ -305,6 +306,115 @@ describe('default alerts configuration', () => {
     // Pointing the stock deploy at someone else's public bridge is how this
     // broke the first time; a bridge is something an operator opts into.
     assert.deepEqual(config.alerts.xBridge.bridges, []);
+  });
+});
+
+describe('parseStructuredNotices', () => {
+  // Captured from the real notice list. Each notice states its lines and the
+  // dates it is in force, then its dated headline — the order matters, and
+  // the pairing here is the page's own: Kromera/Czajkowskiego and Brücknera
+  // are the same corridor (N, 128, 130, 242, 251), Partynice is 113/S7.
+  const NOTICES = `
+    <div class="notice">
+      <span>linie: N 128 130 242 251</span>
+      <span>obowiązuje: 03.09.2026 - 08.09.2026</span>
+      <p>05.09.2026r. - przywrócenie do ruchu zatoki autobusowej Kromera - Czajkowskiego (24146)</p>
+    </div>
+    <div class="notice">
+      <span>linie: N 128 130 242 251</span>
+      <span>obowiązuje: 03.09.2026 - 30.09.2026</span>
+      <p>05.09.2026r. - tymczasowa zmiana lokalizacji przystanku Brücknera (24105)</p>
+    </div>
+    <div class="notice">
+      <span>linie: 253</span>
+      <span>obowiązuje: 03.09.2026 - 04.10.2026</span>
+      <p>05.09.2026r. - przebudowa ul. Kamiennogórskiej</p>
+    </div>
+    <div class="notice">
+      <span>linie: 113 S7</span>
+      <span>obowiązuje: 06.09.2026 - 07.09.2026</span>
+      <p>06.09.2026r. - Wielka Wrocławska na Torze Wyścigów Konnych - Partynice.</p>
+    </div>
+    <div class="notice">
+      <span>linie: 6 7 12</span>
+      <span>obowiązuje: 05.09.2026 - 10.09.2026</span>
+      <p>05.09.2026r. - 61 Międzynarodowy Festiwal Wratislavia Cantans</p>
+    </div>`;
+
+  const PAGE = 'https://example.org/komunikaty';
+  // Inside every window above, so nothing is dropped as expired.
+  const DURING = Date.parse('2026-09-05T09:00:00Z');
+  const parse = (html = NOTICES, now = DURING) =>
+    parseStructuredNotices(html, PAGE, { now });
+
+  it('reads every notice on the page', () => {
+    assert.equal(parse().length, 5);
+  });
+
+  it('takes the affected lines from the page instead of guessing them', () => {
+    // This is the whole point of the format: extractAffectedLines() has to
+    // work out which numbers in a sentence are line numbers, and gets it
+    // wrong on dates. Here the page has already said.
+    assert.deepEqual(parse()[0].affected, ['N', '128', '130', '242', '251']);
+    assert.deepEqual(parse()[2].affected, ['253']);
+  });
+
+  it('keeps a letter line and a letter+digit line', () => {
+    assert.deepEqual(parse()[3].affected, ['113', 'S7']);
+  });
+
+  it('pairs each window with its own notice, not the next one', () => {
+    // A notice's text runs to the start of the next notice. Read greedily,
+    // Partynice's 06.09–07.09 window lands on the festival instead.
+    const [, , , partynice, festival] = parse();
+    assert.match(partynice.title, /Partynice/);
+    assert.deepEqual(partynice.affected, ['113', 'S7']);
+    assert.match(festival.title, /Wratislavia Cantans/);
+    assert.deepEqual(festival.affected, ['6', '7', '12']);
+  });
+
+  it('does not let the next notice bleed into this one', () => {
+    assert.doesNotMatch(parse()[0].title, /Brücknera|linie:/);
+  });
+
+  it('reads the publish date as the timestamp', () => {
+    assert.equal(new Date(parse()[0].timestamp).toISOString().slice(0, 10), '2026-09-05');
+  });
+
+  it('states the validity window in the text a rider reads', () => {
+    assert.match(parse()[0].content, /Obowiązuje 03\.09\.2026 – 08\.09\.2026\./);
+  });
+
+  it('drops a notice whose last day has passed', () => {
+    // The 03.09–08.09 and 06.09–07.09 windows are over on 2026-09-09; the
+    // three that run into October and the 05.09–10.09 festival are not. A
+    // finished closure at the top of /alerts sends people around a diversion
+    // that has been lifted.
+    const after = parseStructuredNotices(NOTICES, PAGE, { now: Date.parse('2026-09-09T09:00:00Z') });
+    assert.equal(after.length, 3);
+    assert.ok(!after.some((notice) => /Kromera|Partynice/.test(notice.title)));
+  });
+
+  it('keeps a notice on its final day', () => {
+    // Late evening in Wrocław is still 08.09 locally; comparing against a UTC
+    // instant would expire it early, on the evening people are reading it.
+    const lastEvening = Date.parse('2026-09-08T21:30:00Z');
+    const items = parseStructuredNotices(NOTICES, PAGE, { now: lastEvening });
+    assert.ok(items.some((notice) => /Kromera/.test(notice.title)));
+  });
+
+  it('gives each notice a stable id across refreshes', () => {
+    assert.deepEqual(
+      parse().map((notice) => notice.id),
+      parse().map((notice) => notice.id),
+    );
+    assert.equal(new Set(parse().map((notice) => notice.id)).size, 5);
+  });
+
+  it('returns nothing for a page that does not use the format', () => {
+    assert.deepEqual(parseStructuredNotices('<a href="/x">Objazd linii 4</a>', PAGE), []);
+    assert.deepEqual(parseStructuredNotices('', PAGE), []);
+    assert.deepEqual(parseStructuredNotices(null, PAGE), []);
   });
 });
 
@@ -681,6 +791,40 @@ describe('AlertsService dedup', () => {
     ]);
     const result = await service.refresh();
     assert.equal(result.length, 2, 'successful provider results used');
+  });
+});
+
+describe('AlertsService with a source that states its lines', () => {
+  it('believes the stated lines rather than re-deriving them', async () => {
+    // "Od 1 sierpnia" would have extractAffectedLines() reaching for line 1,
+    // and the known-line set cannot tell that day-of-month from the real
+    // line. A source that states its lines settles it.
+    const stated = {
+      id: 'n1',
+      title: 'Od 1 sierpnia zmiana tras tramwajów',
+      content: 'Od 1 sierpnia zmiana tras tramwajów. Obowiązuje 01.08.2026 – 30.09.2026.',
+      url: 'https://example.org/komunikaty',
+      timestamp: 1000,
+      source: 'https://example.org/komunikaty',
+      affected: ['4', '10'],
+    };
+    const service = new AlertsService(() => new Set(['1', '4', '10']), [
+      mockProvider('stated', [stated]),
+    ]);
+
+    const [alert] = await service.refresh();
+    assert.deepEqual(alert.affected, ['4', '10'], 'the page had already answered');
+    assert.deepEqual(alert.types, { 4: 'tram', 10: 'tram' }, 'types still derived centrally');
+  });
+
+  it('still extracts lines from a source that states none', async () => {
+    const service = new AlertsService(() => new Set(['4']), [
+      mockProvider('prose', [
+        mkItem({ id: 'p1', title: 'Linia 4 pojedzie objazdem od 25.07.2026', content: LONG_TEXT }),
+      ]),
+    ]);
+    const [alert] = await service.refresh();
+    assert.deepEqual(alert.affected, ['4']);
   });
 });
 
