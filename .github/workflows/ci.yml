@@ -51,6 +51,7 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      - run: npm test
 
       # Bundling for web exercises every import and the Expo config without
       # needing an Android or iOS toolchain.

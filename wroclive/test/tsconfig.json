@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+
+  // The tests are Node, the app is React Native, and the two type environments
+  // do not mix: `@types/node` globally would give the app Node's `setTimeout`
+  // (returning a `Timeout`, not a number) among other things. So the root
+  // config excludes `test/` and this one covers it, with `types` pinned to node
+  // so nothing else leaks in either direction.
+  //
+  // `allowImportingTsExtensions` is what lets a test import `../src/lib/x.ts`
+  // by its real name. Node resolves the extension literally — there is no
+  // bundler here — so the explicit `.ts` is the honest specifier, not a
+  // workaround.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"],
+  "exclude": []
+}
