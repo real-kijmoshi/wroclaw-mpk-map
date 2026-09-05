@@ -108,6 +108,19 @@ const start = () => {
         : `GTFS catalogue: ${config.gtfs.catalogueUrl}`,
     );
     logger.info(`Vehicle sources: ${config.vehicles.sources.join(', ')}`);
+    // Alerts are the one source that ships unconfigured, so this line is the
+    // difference between "nothing is happening" and "nothing is happening
+    // because you have not pointed it anywhere" — the boot log already names
+    // every other upstream, and this one was missing from it.
+    const alertSources = alerts.providers.map((provider) => provider.name);
+    if (alertSources.length) {
+      logger.info(`Alert sources: ${alertSources.join(', ')}`);
+    } else {
+      logger.warn(
+        'No alerts source configured — /alerts will stay empty. Set ALERT_X_BRIDGE_URLS ' +
+          'to an RSS bridge for @AlertMPK; see server/.env.example.',
+      );
+    }
   });
 
   loadGtfs();
