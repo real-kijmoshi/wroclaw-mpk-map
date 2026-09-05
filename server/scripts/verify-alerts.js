@@ -19,7 +19,7 @@
 
 const config = require('../src/config');
 const { fetchWithTimeout, requestText } = require('../src/http');
-const { buildBridgeUrl, parseFeed, parsePage } = require('../src/alerts');
+const { buildBridgeUrl, parseFeed, parsePage, parseStructuredNotices } = require('../src/alerts');
 
 const printItems = (items) => {
   for (const [index, item] of items.entries()) {
@@ -28,6 +28,7 @@ const printItems = (items) => {
       `Data: ${new Date(item.timestamp).toLocaleString('pl-PL', { timeZone: 'Europe/Warsaw' })}`,
     );
     if (item.title) console.log(item.title);
+    if (item.affected?.length) console.log(`Linie: ${item.affected.join(', ')}`);
     console.log(item.content);
     console.log(`Link: ${item.url ?? '(none)'}`);
     console.log();
@@ -53,9 +54,12 @@ const checkPages = async () => {
       if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
 
       const body = await response.text();
+      // Same order the server reads a page in: feed, then a stated
+      // linie:/obowiązuje: list, then headlines scraped out of anchors.
       const feed = parseFeed(body, url);
-      const how = feed.length ? 'feed' : 'scrape';
-      const items = feed.length ? feed : parsePage(body, url);
+      const structured = feed.length ? [] : parseStructuredNotices(body, url);
+      const items = feed.length ? feed : structured.length ? structured : parsePage(body, url);
+      const how = feed.length ? 'feed' : structured.length ? 'stated lines' : 'scrape';
 
       console.log(`\nGot ${items.length} notice(s) by ${how} in ${Date.now() - startedAt} ms.\n`);
       if (!items.length) {

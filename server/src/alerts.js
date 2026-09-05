@@ -208,9 +208,134 @@ const polishDate = (text) => {
   return Number.isFinite(ms) ? ms : null;
 };
 
+const MAX_NOTICE_TITLE = 200;
+
+const NOTICE_DATE = String.raw`\d{1,2}\.\d{1,2}\.\d{4}`;
+
+/**
+ * The `linie:` / `obowiązuje:` / dated-headline preamble of one notice.
+ *
+ * `[^:]{0,120}?` keeps the line list from running past a missing field into
+ * the next notice: it cannot cross the `:` of the following label.
+ */
+const STRUCTURED_NOTICE = new RegExp(
+  String.raw`linie:\s*(?<lines>[^:]{0,120}?)\s*` +
+    String.raw`obowi[ąa]zuje:\s*(?<from>${NOTICE_DATE})\s*[-–—]\s*(?<to>${NOTICE_DATE})\s+` +
+    String.raw`(?<published>${NOTICE_DATE})\s*r\.\s*[-–—]\s*`,
+  'giu',
+);
+
+/** A line as these pages write them: 128, 6, N, A, S7, 15A. */
+const LINE_TOKEN = /^(?:\d{1,3}[A-Z]?|[A-Z]\d{0,2}|[A-Z]{2})$/i;
+
+/** `DD.MM.YYYY` -> `YYYY-MM-DD`, so windows compare as plain strings. */
+const toIsoDate = (date) => {
+  const [day, month, year] = date.split('.');
+  return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+};
+
+/**
+ * Today in Wrocław, as `YYYY-MM-DD`.
+ *
+ * The window is day-granular, so comparing it against a UTC instant would
+ * expire a notice up to two hours early on its last evening — the one moment
+ * a rider is most likely to be reading it. Ask Intl for the local date and
+ * compare dates to dates.
+ */
+const warsawDate = (now) =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Warsaw',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+
+/**
+ * A notice list that states each notice's lines and validity window.
+ *
+ * Some of the city's notice pages publish, per notice, the affected lines and
+ * the dates the change is in force, not just a headline:
+ *
+ *   linie: N 128 130 242 251
+ *   obowiązuje: 03.09.2026 - 08.09.2026
+ *   05.09.2026r. - przywrócenie do ruchu zatoki autobusowej Kromera (24146)
+ *
+ * That is strictly better than what `parsePage()` below can recover, and it
+ * retires two guesses rather than improving them. The line list is *stated*,
+ * so `extractAffectedLines()` never runs for these notices — which is the real
+ * fix for the phantom-line class of bug (a day-of-month that happens to be a
+ * real line number), because there is nothing left to infer. And the validity
+ * window is stated, so a notice whose last day has passed is dropped instead
+ * of sitting at the top of `/alerts` describing a closure that ended.
+ *
+ * Parsed out of the page's *text* rather than its markup, deliberately, for
+ * the same reason `parseFileListing()` walks the GTFS payload shape-agnostic:
+ * these three fields are a publishing convention that survives a redesign,
+ * whereas the class names carrying them do not. `stripHtml()` collapses the
+ * document to a single line, so this reads a flat string.
+ *
+ * Known soft spot: a notice's text runs until the next `linie:`, so the last
+ * notice on the page has nothing to stop at and is capped at
+ * MAX_NOTICE_TITLE characters. If a page's footer starts leaking into the
+ * final alert, that cap is why.
+ *
+ * @param {string} html
+ * @param {string} pageUrl
+ * @param {{ now?: number }} options
+ */
+const parseStructuredNotices = (html, pageUrl, { now = Date.now() } = {}) => {
+  if (typeof html !== 'string' || !html) return [];
+
+  const text = stripHtml(html);
+  const today = warsawDate(now);
+  const matches = [...text.matchAll(STRUCTURED_NOTICE)];
+  const results = [];
+
+  for (const [index, match] of matches.entries()) {
+    const { lines, from, to, published } = match.groups;
+
+    // The notice's own text runs from the end of its preamble to the start of
+    // the next notice — the same rule parsePage() uses for a lead paragraph,
+    // and for the same reason: a fixed window runs into the following notice
+    // and appends its text to this one.
+    const bodyStart = match.index + match[0].length;
+    const bodyEnd = matches[index + 1]?.index ?? text.length;
+    const title = text.slice(bodyStart, bodyEnd).trim().slice(0, MAX_NOTICE_TITLE).trim();
+    if (title.length < 3) continue;
+
+    // Past its last day: the change is over. Publishing it anyway is the same
+    // failure as a fake disruption — it sends people around a closure that
+    // has been lifted.
+    if (toIsoDate(to) < today) continue;
+
+    const affected = lines
+      .split(/[\s,;]+/)
+      .filter(Boolean)
+      .filter((token) => LINE_TOKEN.test(token))
+      .map((token) => token.toUpperCase());
+
+    results.push({
+      id: `${pageUrl}#${toIsoDate(published)}-${title.slice(0, 60)}`,
+      title,
+      // The window is what a rider actually asks next ("do kiedy?"), and it
+      // is stated on the page, so it belongs in the text rather than only in
+      // a field no client reads yet.
+      content: `${title} Obowiązuje ${from} – ${to}.`,
+      url: pageUrl,
+      timestamp: polishDate(published) ?? now,
+      source: pageUrl,
+      // Stated by the page, so AlertsService.refresh() must not re-guess it.
+      affected,
+    });
+  }
+
+  return results;
+};
+
 /**
  * Scrape service notices out of an HTML page.
  *
+
  * MPK publishes disruptions as web pages and nothing else — there is no API,
  * and the X timeline the old code read has needed a paid tier since 2023, which
  * is why `/alerts` quietly returned `[]` for a year.
@@ -300,9 +425,10 @@ const parsePage = (html, pageUrl) => {
 /**
  * One upstream page of notices.
  *
- * Auto-detects the format: if the response parses as RSS or Atom with items it
- * is read as a feed, otherwise it is scraped as HTML. That means a site can add
- * or drop a feed without any change here.
+ * Auto-detects the format, cheapest and most trustworthy first: RSS/Atom if
+ * the response parses as a feed, then the stated `linie:` / `obowiązuje:`
+ * notice list, then headlines scraped out of anchors. That means a site can
+ * add or drop a feed, or start stating its lines, without any change here.
  */
 class NoticeProvider {
   constructor(url) {
@@ -322,6 +448,12 @@ class NoticeProvider {
     const body = await response.text();
     const feedItems = parseFeed(body, this.url);
     if (feedItems.length) return feedItems;
+
+    // Before falling back to reading headlines out of anchors, check whether
+    // this page states its lines and validity windows — that form carries
+    // strictly more than parsePage() can recover, so it wins where it parses.
+    const structured = parseStructuredNotices(body, this.url);
+    if (structured.length) return structured;
 
     const scraped = parsePage(body, this.url);
     if (!scraped.length) throw new Error('no notices found — page markup probably changed');
@@ -555,7 +687,12 @@ class AlertsService {
     const enriched = collected.map((item) => {
       const id = item.id || `${item.source}:${item.timestamp}:${item.title ?? item.content}`;
       const fp = fingerprint(item.title, item.content);
-      const affected = extractAffectedLines(`${item.title ?? ''} ${item.content ?? ''}`, knownLines);
+      // A source that states its affected lines is believed. Re-deriving them
+      // from prose could only lose: extractAffectedLines() has to guess which
+      // numbers are line numbers, and this page has already answered that.
+      const affected = item.affected?.length
+        ? item.affected
+        : extractAffectedLines(`${item.title ?? ''} ${item.content ?? ''}`, knownLines);
       // Clients colour line badges by type; without this they would all have to
       // re-implement the categorisation rules and drift out of sync with them.
       const types = {};
@@ -709,6 +846,7 @@ module.exports = {
   fingerprint,
   parseFeed,
   parsePage,
+  parseStructuredNotices,
   normalizeText,
   stripHtml,
 };
