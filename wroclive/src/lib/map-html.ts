@@ -57,6 +57,17 @@ const CLASSIC_EDGE_PALETTE = JSON.stringify(CLASSIC_BORDER_COLOR);
 
 export const WROCLAW_CENTER = { lat: 51.1079, lon: 17.0385, zoom: 13 };
 
+/**
+ * Dark mode for the basemap.
+ *
+ * OpenStreetMap publishes exactly one raster style and it is a light one, so
+ * unlike the CARTO pair this replaced there is no dark tile URL to switch to.
+ * Inverting and rotating the hue back gives dark roads under light labels; the
+ * brightness and contrast trims stop the result glaring under the markers.
+ * Applied to Leaflet's tile pane alone — see the rule in the page's CSS.
+ */
+const TILE_FILTER = 'invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.86) saturate(0.72)';
+
 export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -82,10 +93,17 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     --chrome-fg: ${dark ? '#8e8e93' : '#6b7280'};
     --tooltip-bg: ${dark ? 'rgba(28,28,30,0.94)' : 'rgba(255,255,255,0.96)'};
     --tooltip-fg: ${dark ? '#f2f2f7' : '#1c1c1e'};
+    /* OpenStreetMap publishes one raster style and it is a light one, so dark
+       mode is a filter over the tiles rather than a second source. */
+    --tile-filter: ${dark ? TILE_FILTER : 'none'};
   }
   html, body, #map { margin: 0; padding: 0; height: 100%; width: 100%; }
   body { background: var(--map-bg); -webkit-tap-highlight-color: transparent; }
   .leaflet-container { background: var(--map-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+
+  /* Only the basemap is filtered. Markers, routes and the user dot sit in their
+     own panes: inverting the whole map turns the line palette inside out. */
+  .leaflet-tile-pane { filter: var(--tile-filter); }
 
   /* Attribution has to stay, but it should not fight the UI for attention. */
   .leaflet-control-attribution {
@@ -487,9 +505,12 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
 
   map.attributionControl.setPrefix(false);
 
-  var tileUrl = 'https://{s}.basemaps.cartocdn.com/' + (dark ? 'dark_all' : 'light_all') + '/{z}/{x}/{y}{r}.png';
-  var tiles = L.tileLayer(tileUrl, {
-    attribution: '&copy; OpenStreetMap, &copy; CARTO',
+  // OpenStreetMap's own tiles. No {s} subdomains: the servers speak HTTP/2,
+  // where sharding costs a connection per host instead of saving one, and the
+  // tile usage policy asks for the single hostname. Built once — the theme is
+  // --tile-filter, so setTheme never rebuilds this layer.
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     maxZoom: 19,
   }).addTo(map);
 
@@ -1305,12 +1326,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     root.setProperty('--tooltip-bg', dark ? 'rgba(28,28,30,0.94)' : 'rgba(255,255,255,0.96)');
     root.setProperty('--tooltip-fg', dark ? '#f2f2f7' : '#1c1c1e');
     document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
-
-    map.removeLayer(tiles);
-    tiles = L.tileLayer(
-      'https://{s}.basemaps.cartocdn.com/' + (dark ? 'dark_all' : 'light_all') + '/{z}/{x}/{y}{r}.png',
-      { attribution: '&copy; OpenStreetMap, &copy; CARTO', maxZoom: 19 }
-    ).addTo(map);
+    root.setProperty('--tile-filter', dark ? '${TILE_FILTER}' : 'none');
   }
 
   /**

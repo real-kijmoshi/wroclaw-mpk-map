@@ -597,7 +597,6 @@ const StopMarker = memo(function StopMarker({
 
 export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function NativeMap(
   {
-    dark,
     vehicles,
     route,
     selectedVehicleId,
@@ -616,7 +615,11 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
   const mapRef = useRef<Maps>(null);
   const viewport = useWindowDimensions();
   const { mapProvider, appleMapType, markerStyle } = usePreferences();
+  // What the base map is drawing, which is not the same as the phone's scheme:
+  // OSM's raster tiles are light in both, and iOS imagery is dark in both. The
+  // `dark` prop is deliberately not read here for that reason.
   const { scheme } = useMapChrome();
+  const dark = scheme === 'dark';
   const reducedMotion = useReducedMotion();
   const [visibleRegion, setVisibleRegion] = useState(INITIAL_REGION);
 
@@ -936,8 +939,12 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
       mapType={mapType}>
       {osm && (
         <UrlTile
-          urlTemplate={`https://a.basemaps.cartocdn.com/${dark ? 'dark_all' : 'light_all'}/{z}/{x}/{y}@2x.png`}
-          maximumZ={20}
+          // OpenStreetMap's own tiles: one style, light, no retina endpoint and
+          // no dark variant to pair with the theme. The Leaflet page filters
+          // them for dark mode in CSS; a native tile layer takes no filter, so
+          // here the chrome adapts to the tiles instead (`useMapChrome`).
+          urlTemplate="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+          maximumZ={19}
           shouldReplaceMapContent
           zIndex={-1}
         />
@@ -996,7 +1003,7 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
           tint={route?.color ?? STOP_TINT}
           labelled={labelled}
           selected={stop.id === selectedStopId}
-          onDark={scheme === 'dark'}
+          onDark={dark}
           onPress={handleStop}
         />
       ))}
