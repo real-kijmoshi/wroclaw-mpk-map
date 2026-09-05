@@ -59,6 +59,8 @@
     "refreshIntervalMs": 300000,
     "timeoutMs": 15000,
     "maxItems": 100,
+    "archiveEnabled": true,
+    "archiveDaysToKeep": 31,
     "xBridge": {
       "enabled": true,
       "bridges": [],

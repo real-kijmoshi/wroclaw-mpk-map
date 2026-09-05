@@ -7,8 +7,10 @@ const config = require('./src/config');
 const logger = require('./src/logger');
 const { createApp } = require('./src/app');
 const { AlertsService } = require('./src/alerts');
+const { AlertArchive } = require('./src/alert-archive');
 const { GtfsStore } = require('./src/gtfs/store');
 const { KlosokService } = require('./src/klosok/service');
+const { RuntimeSettings } = require('./src/runtime-settings');
 const { StatsTracker } = require('./src/stats');
 const { VehicleTracker } = require('./src/vehicles');
 
@@ -26,7 +28,23 @@ const vehicles = new VehicleTracker(() => gtfs.lines, { gtfs });
 // timetable, so the matcher reads them from the store on every refresh.
 const alerts = new AlertsService(
   () => new Set([...gtfs.routesByLine.keys()].map((line) => line.toUpperCase())),
+  null,
+  {
+    archive: config.alerts.archiveEnabled
+      ? new AlertArchive({
+          file: path.join(config.stats.cacheDir, 'alert-archive.json'),
+          daysToKeep: config.alerts.archiveDaysToKeep,
+          logger,
+        })
+      : null,
+  },
 );
+
+// The one setting the dashboard may change while running. Loaded before the
+// first refresh so an override applies to the very first batch of incidents
+// rather than to the second, five minutes later.
+const runtimeSettings = new RuntimeSettings({ cacheDir: config.stats.cacheDir, logger });
+runtimeSettings.load();
 
 // PT KŁOSOK is a live-position source with no timetable of its own: its buses
 // are matched against the Wrocław GTFS above, and it is merged into the MPK +
@@ -93,8 +111,34 @@ const loadGtfs = async (attempt = 0) => {
 };
 
 const start = () => {
-  const app = createApp({ gtfs, vehicles, alerts, klosok, stats, startedAt: new Date() });
+  const app = createApp({
+    gtfs,
+    vehicles,
+    alerts,
+    klosok,
+    stats,
+    runtimeSettings,
+    startedAt: new Date(),
+  });
   stats?.start();
+
+  // A stored override that disagrees with .env is announced rather than
+  // applied quietly. A setting that silently contradicts the environment is
+  // the shape of failure this project keeps re-learning (invariant 1), so the
+  // boot log says which model is really in use and where it came from.
+  const storedModel = runtimeSettings.values.aiModel;
+  if (storedModel) {
+    const envModel = config.aiAlerts[config.aiAlerts.requestedProvider]?.model ?? null;
+    const applied = alerts.setAiModel(storedModel);
+    if (!applied.ok) {
+      logger.warn(`Stored AI model "${storedModel}" rejected (${applied.error}); using .env`);
+    } else if (storedModel !== envModel) {
+      logger.warn(
+        `AI model overridden from the dashboard: ${storedModel} (.env says ${envModel ?? 'nothing'}) ` +
+          `— delete ${runtimeSettings.file} to go back`,
+      );
+    }
+  }
 
   if (!config.admin.token) {
     logger.warn('ADMIN_TOKEN is not set — /admin is disabled. Set it to enable the stats dashboard.');
@@ -108,6 +152,19 @@ const start = () => {
         : `GTFS catalogue: ${config.gtfs.catalogueUrl}`,
     );
     logger.info(`Vehicle sources: ${config.vehicles.sources.join(', ')}`);
+    // Alerts are the one source that ships unconfigured, so this line is the
+    // difference between "nothing is happening" and "nothing is happening
+    // because you have not pointed it anywhere" — the boot log already names
+    // every other upstream, and this one was missing from it.
+    const alertSources = alerts.providers.map((provider) => provider.name);
+    if (alertSources.length) {
+      logger.info(`Alert sources: ${alertSources.join(', ')}`);
+    } else {
+      logger.warn(
+        'No alerts source configured — /alerts will stay empty. Set ALERT_X_BRIDGE_URLS ' +
+          'to an RSS bridge for @AlertMPK; see server/.env.example.',
+      );
+    }
   });
 
   loadGtfs();
