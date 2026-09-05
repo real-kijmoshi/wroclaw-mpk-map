@@ -190,7 +190,15 @@ const parseHeading = (value) => {
 /**
  * @param {{ gtfs: import('./gtfs/store').GtfsStore, vehicles: any, alerts: any, stats?: any, klosok?: any, startedAt: Date }} services
  */
-const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt }) => {
+const createRouter = ({
+  gtfs,
+  vehicles,
+  alerts,
+  stats,
+  klosok = null,
+  runtimeSettings = null,
+  startedAt,
+}) => {
   const router = express.Router();
 
   // Count finished requests for the admin dashboard. Runs first, but reads
@@ -598,7 +606,9 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt 
     });
   });
 
-  router.get('/health', noStore, (req, res) => {
+  // Built once and shared by /health and the dashboard's /admin/api/health, so
+  // the two can never drift into disagreeing about the same server.
+  const healthPayload = () => {
     const healthy = gtfs.isReady;
     // Keep the payload compact: the rolling metrics are latest / EWMA / max
     // with no history, and the GTFS block is only the last successful build.
@@ -609,7 +619,7 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt 
         : {},
       gtfs: gtfs.performance ?? null,
     };
-   res.status(healthy ? 200 : 503).json({
+    return {
       status: healthy ? 'ok' : 'starting',
       uptimeSeconds: Math.round((Date.now() - startedAt.getTime()) / 1000),
       memoryMb: Math.round(process.memoryUsage().heapUsed / 1e6),
@@ -630,7 +640,12 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt 
       },
       shapeCacheEntries: shapeCache.size,
       vehicleDetailCacheEntries: vehicleDetailCache.size,
-    });
+    };
+  };
+
+  router.get('/health', noStore, (req, res) => {
+    const payload = healthPayload();
+    res.status(payload.status === 'ok' ? 200 : 503).json(payload);
   });
 
   router.get('/status', (req, res) => {
@@ -650,6 +665,56 @@ const createRouter = ({ gtfs, vehicles, alerts, stats, klosok = null, startedAt 
 
     router.get('/admin/api/stats', requireAdmin, noStore, (req, res) => {
       res.json(stats ? stats.snapshot() : { enabled: false });
+    });
+
+    // The same payload /health serves, behind the token. /health stays public
+    // and unchanged; this exists so the dashboard has one thing to poll and so
+    // a future field that is too detailed to expose publicly has somewhere to
+    // go.
+    router.get('/admin/api/health', requireAdmin, noStore, (req, res) => {
+      res.json(healthPayload());
+    });
+
+    // What the AI is set to, and what it is failing at. The key is never in
+    // here — only whether one is present, which is the part an operator
+    // actually needs to check.
+    router.get('/admin/api/ai', requireAdmin, noStore, (req, res) => {
+      const provider = config.aiAlerts.requestedProvider;
+      res.json({
+        ...alerts.incidentStatus,
+        envModel: config.aiAlerts[provider]?.model ?? null,
+        overrideModel: runtimeSettings?.values.aiModel ?? null,
+        hasApiKey: Boolean(config.aiAlerts[provider]?.apiKey),
+        baseUrl: config.aiAlerts[provider]?.baseUrl ?? null,
+        timeoutMs: config.aiAlerts.timeoutMs,
+      });
+    });
+
+    // Only the model is settable. A settable base URL would let anyone holding
+    // the token point the provider — and the API key it sends — at a server of
+    // their own, so it stays in the environment where it was configured.
+    router.put('/admin/api/ai/model', requireAdmin, noStore, express.json(), (req, res) => {
+      const model = req.body?.model;
+
+      // An explicit null drops back to whatever the environment says.
+      if (model === null) {
+        const saved = runtimeSettings?.setAiModel(null) ?? { ok: false, error: 'not available' };
+        if (!saved.ok) return res.status(500).json({ error: saved.error });
+        const envModel = config.aiAlerts[config.aiAlerts.requestedProvider]?.model;
+        const applied = envModel ? alerts.setAiModel(envModel) : { ok: true };
+        if (!applied.ok) return res.status(400).json({ error: applied.error });
+        return res.json({ model: envModel ?? null, source: 'env' });
+      }
+
+      // Apply before persisting: a model the service rejects must not be left
+      // in the file to be loaded again at the next boot.
+      const applied = alerts.setAiModel(model);
+      if (!applied.ok) return res.status(400).json({ error: applied.error });
+
+      const saved = runtimeSettings?.setAiModel(model) ?? { ok: false, error: 'not available' };
+      if (!saved.ok) return res.status(500).json({ error: saved.error });
+
+      return res.json({ model: alerts.aiModel, source: 'override' });
     });
   }
 

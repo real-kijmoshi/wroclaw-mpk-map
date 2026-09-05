@@ -63,6 +63,16 @@
   }
   button:disabled { opacity: .6; cursor: default; }
   .err { background: rgba(232,93,117,.12); color: var(--bad); padding: 10px 14px; border-radius: 10px; margin-top: 12px; }
+  td.ok { color: var(--ok); }
+  td.bad, .bad { color: var(--bad); }
+  .modelRow { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+  .modelRow input {
+    flex: 1 1 260px; min-width: 0; padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--surface-2); background: var(--surface-2); color: var(--text);
+    font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .modelRow button { width: auto; flex: 0 0 auto; }
+  .modelRow button.secondary { background: var(--surface-2); color: var(--text); }
   footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
   a { color: var(--accent); }
   .hidden { display: none; }
@@ -82,6 +92,23 @@
   <div id="dashboard" class="hidden">
     <header><h1>Wrocław MPK API — statystyki</h1></header>
     <div class="sub" id="subtitle"></div>
+
+    <div id="health"></div>
+
+    <section>
+      <h2>Model AI</h2>
+      <div class="sub" id="aiMeta"></div>
+      <div class="modelRow">
+        <input type="text" id="aiModel" spellcheck="false" autocapitalize="off"
+               placeholder="np. openai/gpt-4o-mini">
+        <button id="aiSave">Zapisz</button>
+        <button id="aiReset" class="secondary">Przywróć z .env</button>
+      </div>
+      <div class="sub" id="aiNote">
+        Zmiana działa od razu i przetrwa restart. Adres API i klucz pozostają w .env.
+      </div>
+    </section>
+
     <div id="content"></div>
     <footer>
       Odświeżanie co 30 s ·
@@ -123,6 +150,91 @@
       '<span>' + escapeHtml(items[items.length - 1]?.label ?? '') + '</span></div></div>';
   };
 
+  const ago = (iso) => {
+    if (!iso) return 'nigdy';
+    const seconds = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+    if (seconds < 90) return seconds + ' s temu';
+    if (seconds < 5400) return Math.round(seconds / 60) + ' min temu';
+    return Math.round(seconds / 3600) + ' godz. temu';
+  };
+
+  // A source is either working or it is saying why not. Both go on screen: an
+  // empty /alerts with nothing next to it is what sent us reading logs by hand.
+  const sourceRow = (name, ok, detail) =>
+    '<tr><td>' + escapeHtml(name) + '</td>' +
+    '<td class="' + (ok ? 'ok' : 'bad') + '">' + (ok ? 'działa' : 'błąd') + '</td>' +
+    '<td>' + escapeHtml(detail ?? '') + '</td></tr>';
+
+  const renderHealth = (health) => {
+    const alerts = health.alerts ?? {};
+    const providers = alerts.providers ?? [];
+    const ai = alerts.aiIncidents ?? {};
+
+    const providerRows = providers.length
+      ? providers.map((provider) =>
+          sourceRow(
+            provider.name,
+            !provider.lastError,
+            provider.lastError ?? (provider.items + ' pozycji · ' + ago(provider.lastSuccessAt)),
+          )).join('')
+      : '<tr><td colspan="3" class="bad">Brak skonfigurowanego źródła alertów — ustaw ALERT_X_BRIDGE_URLS.</td></tr>';
+
+    document.getElementById('health').innerHTML =
+      '<div class="grid">' +
+        card('Stan', health.status === 'ok' ? 'ok' : escapeHtml(health.status),
+          'uptime ' + Math.round((health.uptimeSeconds ?? 0) / 60) + ' min · ' + (health.memoryMb ?? 0) + ' MB') +
+        card('Pojazdy', formatCount(health.vehicles?.tracked ?? 0), 'śledzonych teraz') +
+        card('Linie', formatCount(health.lines?.total ?? 0),
+          (health.lines?.trams ?? 0) + ' tram · ' + (health.lines?.buses ?? 0) + ' bus') +
+        card('Alerty', formatCount(alerts.count ?? 0), 'odświeżono ' + ago(alerts.lastRefreshAt)) +
+      '</div>' +
+
+      '<section><h2>Źródła alertów</h2><div class="scroll"><table>' +
+        '<tr><th>Źródło</th><th>Stan</th><th>Szczegóły</th></tr>' + providerRows +
+      '</table></div></section>' +
+
+      '<section><h2>Incydenty AI</h2><div class="scroll"><table>' +
+        '<tr><th>Pole</th><th>Wartość</th></tr>' +
+        '<tr><td>Włączone</td><td>' + (ai.enabled ? 'tak' : 'nie') + '</td></tr>' +
+        '<tr><td>Dostawca</td><td>' + escapeHtml(ai.provider ?? '—') + '</td></tr>' +
+        '<tr><td>Ostatni sukces</td><td>' + ago(ai.lastSuccessAt) + '</td></tr>' +
+        '<tr><td>Incydentów</td><td>' + formatCount(ai.incidentCount ?? 0) + '</td></tr>' +
+        (ai.lastError
+          ? '<tr><td>Błąd</td><td class="bad">' + escapeHtml(ai.lastError) + '</td></tr>'
+          : '') +
+      '</table></div></section>';
+  };
+
+  const renderAi = (ai) => {
+    const source = ai.overrideModel ? 'ustawiony tutaj' : 'z pliku .env';
+    document.getElementById('aiModel').value = ai.model ?? '';
+    document.getElementById('aiMeta').innerHTML =
+      'Model: <code>' + escapeHtml(ai.model ?? '—') + '</code> (' + source + ') · ' +
+      'w .env: <code>' + escapeHtml(ai.envModel ?? '—') + '</code> · ' +
+      'klucz API: ' + (ai.hasApiKey ? 'jest' : '<span class="bad">brak</span>') + ' · ' +
+      'limit czasu: ' + Math.round((ai.timeoutMs ?? 0) / 1000) + ' s';
+  };
+
+  const saveModel = async (model) => {
+    const note = document.getElementById('aiNote');
+    note.textContent = 'Zapisywanie…';
+    try {
+      const response = await fetch(API_BASE + '/admin/api/ai/model', {
+        method: 'PUT',
+        headers: { Authorization: 'Bearer ' + token(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || ('HTTP ' + response.status));
+      note.textContent = model === null
+        ? 'Przywrócono model z .env. Nowe incydenty użyją go przy następnym odświeżeniu.'
+        : 'Zapisano. Nowe incydenty użyją tego modelu przy następnym odświeżeniu.';
+      await refresh();
+    } catch (error) {
+      note.innerHTML = '<span class="bad">' + escapeHtml(error.message) + '</span>';
+    }
+  };
+
   const render = (stats) => {
     document.getElementById('subtitle').textContent =
       'Dzień ' + stats.today + ' · ' + stats.daysTracked + ' dni w pamięci · zliczono ' +
@@ -162,23 +274,41 @@
     document.getElementById('dashboard').classList.remove('hidden');
   };
 
+  const authed = (path) => fetch(API_BASE + path, { headers: { Authorization: 'Bearer ' + token() } });
+
   const refresh = async () => {
     if (!token()) return showLogin();
     try {
-      const response = await fetch(API_BASE + '/admin/api/stats', {
-        headers: { Authorization: 'Bearer ' + token() },
-      });
-      if (response.status === 401) {
+      // One round trip per panel, in parallel — health is the one worth having
+      // even when stats are turned off, so a failure in either must not blank
+      // the other.
+      const [stats, health, ai] = await Promise.all([
+        authed('/admin/api/stats'),
+        authed('/admin/api/health'),
+        authed('/admin/api/ai'),
+      ]);
+
+      if ([stats, health, ai].some((response) => response.status === 401)) {
         sessionStorage.removeItem(KEY);
         return showLogin();
       }
-      if (!response.ok) throw new Error('HTTP ' + response.status);
-      render(await response.json());
+      if (!health.ok) throw new Error('HTTP ' + health.status);
+
+      renderHealth(await health.json());
+      if (ai.ok) renderAi(await ai.json());
+      if (stats.ok) render(await stats.json());
       showDashboard();
     } catch (error) {
-      document.getElementById('subtitle').textContent = 'Błąd: ' + escapeHtml(error.message);
+      document.getElementById('subtitle').textContent = 'Błąd: ' + error.message;
     }
   };
+
+  document.getElementById('aiSave').addEventListener('click', () => {
+    const value = document.getElementById('aiModel').value.trim();
+    if (value) saveModel(value);
+  });
+
+  document.getElementById('aiReset').addEventListener('click', () => saveModel(null));
 
   document.getElementById('loginBtn').addEventListener('click', async () => {
     const value = document.getElementById('token').value.trim();

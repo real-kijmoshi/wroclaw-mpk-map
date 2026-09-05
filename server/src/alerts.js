@@ -9,6 +9,7 @@ const logger = require('./logger');
 const { fetchWithTimeout, requestText } = require('./http');
 const { lineToType } = require('./lines');
 const { stripHtml } = require('./html');
+const { validateModel } = require('./runtime-settings');
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 
@@ -583,6 +584,18 @@ class XBridgeProvider {
 }
 
 /**
+ * Said on every refresh, and in `/health`, when nothing is configured.
+ *
+ * Names the variable to set rather than the condition, because the person
+ * reading it is looking at an empty `/alerts` and needs the next action, not
+ * a diagnosis.
+ */
+const NO_ALERT_SOURCE_MESSAGE =
+  'No alerts source is configured, so /alerts will stay empty — set ALERT_X_BRIDGE_URLS ' +
+  'to an RSS bridge for @AlertMPK (see server/.env.example), then check it with ' +
+  'npm run scrape:alerts';
+
+/**
  * Aggregates disruption notices from every configured page.
  *
  * Fails soft: a provider that throws keeps the previous alert list in place and
@@ -603,6 +616,9 @@ class AlertsService {
     this.aiModel = options.aiModel ?? config.aiAlerts[config.aiAlerts.requestedProvider]?.model ?? null;
     this.aiCacheTtlMs = options.aiCacheTtlMs ?? config.aiAlerts.cacheTtlMs;
     this.aiIncidentCache = new Map();
+    /** Null in tests that do not care; the service works without one. */
+    this.archive = options.archive ?? null;
+    this.maxAgeMs = (options.archiveDaysToKeep ?? config.alerts.archiveDaysToKeep) * 86400000;
 
     this.incidentStatus = {
       enabled: Boolean(this.aiProvider.enabled),
@@ -661,8 +677,12 @@ class AlertsService {
     );
 
     this.status.lastRefreshAt = new Date().toISOString();
+    // With no providers there is no provider error to report, and a null here
+    // reads in /health as "alerts are fine" — which is how an unconfigured
+    // deploy looks healthy while serving nothing. Say it instead.
     this.status.lastError =
-      this.status.providers.find((provider) => provider.lastError)?.lastError ?? null;
+      this.status.providers.find((provider) => provider.lastError)?.lastError ??
+      (this.providers.length ? null : NO_ALERT_SOURCE_MESSAGE);
 
     // Every provider failed: keep whatever we last had rather than blanking the
     // screen, and let /health explain the staleness.
@@ -674,6 +694,14 @@ class AlertsService {
           'No alerts available from any provider — check ALERT_PAGE_URLS and, if one is ' +
             'configured, ALERT_X_BRIDGE_URLS (see npm run scrape:alerts)',
         );
+      } else {
+        // No provider at all is the quietest failure there is: nothing throws,
+        // nothing is stale, /health lists an empty provider array, and the
+        // server looks healthy while /alerts is permanently []. It is also the
+        // state a fresh deploy starts in, since nothing ships configured — so
+        // it has to say so on every refresh rather than only at boot, where the
+        // line scrolls away.
+        logger.warn(NO_ALERT_SOURCE_MESSAGE);
       }
       return this.alerts;
     }
@@ -682,9 +710,17 @@ class AlertsService {
     const byFingerprint = new Map();
     const deduped = [];
 
+    // What we already knew goes in first, so the dedup below treats it as the
+    // original: the archived copy keeps its id and URL, and a fresh repeat of
+    // the same post merges into it rather than replacing it. This is also what
+    // makes the list outlive the bridge's window — RSSHub only ever hands over
+    // the last ALERT_X_MAX_POSTS, and without this everything older vanished
+    // the moment it scrolled off.
+    const previous = this.alerts.filter((alert) => alert.timestamp >= Date.now() - this.maxAgeMs);
+
     // Pre-compute fingerprint and affected lines for each collected item so the
     // merge step below has everything it needs.
-    const enriched = collected.map((item) => {
+    const enriched = [...previous, ...collected].map((item) => {
       const id = item.id || `${item.source}:${item.timestamp}:${item.title ?? item.content}`;
       const fp = fingerprint(item.title, item.content);
       // A source that states its affected lines is believed. Re-deriving them
@@ -768,6 +804,11 @@ class AlertsService {
       logger.debug(`AI incident generation failed: ${this.incidentStatus.lastError}`);
     }
 
+    // Written after the AI step so the cache saved is the warm one. Fail-soft
+    // inside save(): an archive that cannot be written costs the next boot its
+    // history, never this refresh.
+    this.archive?.save({ alerts: this.alerts, aiCache: this.aiIncidentCache });
+
     return this.alerts;
   }
 
@@ -795,10 +836,38 @@ class AlertsService {
     );
   }
 
+  /**
+   * Restore what the last run knew, before the first refresh.
+   *
+   * Called from start() rather than the constructor so a test can build a
+   * service without touching the disk. Publishing fallback incidents here
+   * means `/alerts` and `/incidents` answer from the first request rather than
+   * being empty for however long the bridge takes.
+   */
+  restore() {
+    if (!this.archive) return;
+
+    const { alerts, aiCache } = this.archive.load();
+    if (alerts.length) {
+      this.alerts = alerts;
+      this.status.count = alerts.length;
+      this.incidents = createFallbackIncidents(alerts);
+      this.incidentStatus.incidentCount = this.incidents.length;
+    }
+    for (const [key, entry] of aiCache) this.aiIncidentCache.set(key, entry);
+
+    if (alerts.length || aiCache.length) {
+      logger.info(
+        `Restored ${alerts.length} alert(s) and ${aiCache.length} cached incident group(s)`,
+      );
+    }
+  }
+
   start() {
     if (this.started) return;
     this.started = true;
     this._stopped = false;
+    this.restore();
 
     // First refresh immediately. A placeholder handle keeps `timer` non-null from
     // the first instant — stop() and callers that inspect the timer rely on it —
@@ -826,6 +895,51 @@ class AlertsService {
     } finally {
       this.#scheduleNextRefresh();
     }
+  }
+
+  /**
+   * Point the AI at a different model without restarting.
+   *
+   * The provider captures its model when it is built (see `createAiProvider`),
+   * so this rebuilds it rather than assigning a field that nothing reads. The
+   * incident cache is dropped with it: its entries are narratives the previous
+   * model wrote, and keeping them would leave the dashboard reporting a new
+   * model while serving the old one's output for up to `aiCacheTtlMs`.
+   *
+   * Only the model moves. The base URL and key stay where `config.js` put
+   * them, which is not an oversight: a settable base URL would let anyone
+   * holding the admin token redirect the provider — and the API key with it —
+   * to a server of their choosing.
+   *
+   * @param {string} model
+   * @returns {{ ok: boolean, error?: string }}
+   */
+  setAiModel(model) {
+    const checked = validateModel(model);
+    if (!checked.ok) return checked;
+
+    const provider = config.aiAlerts.requestedProvider;
+    const settings = config.aiAlerts[provider];
+    if (!settings) return { ok: false, error: `no settings for provider "${provider}"` };
+
+    this.aiProvider = createAiProvider(
+      { ...config.aiAlerts, [provider]: { ...settings, model: checked.value } },
+      logger,
+    );
+    this.aiModel = checked.value;
+    this.aiIncidentCache.clear();
+
+    this.incidentStatus.enabled = Boolean(this.aiProvider.enabled);
+    this.incidentStatus.provider = this.aiProvider.name ?? null;
+    this.incidentStatus.model = checked.value;
+    // The previous model's failure is not this one's. Leaving it would have
+    // the dashboard show a timeout against a model that has not been tried.
+    this.incidentStatus.lastError = this.aiProvider.enabled
+      ? null
+      : (this.aiProvider.status?.reason ?? 'AI disabled');
+
+    logger.info(`AI incident model set to ${checked.value}`);
+    return { ok: true };
   }
 
   stop() {

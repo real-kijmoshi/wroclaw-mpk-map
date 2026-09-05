@@ -214,6 +214,14 @@ module.exports = {
     refreshIntervalMs: num(process.env.ALERTS_REFRESH_INTERVAL_MS, DEFAULTS.alerts.refreshIntervalMs),
     timeoutMs: num(process.env.ALERTS_TIMEOUT_MS, DEFAULTS.alerts.timeoutMs),
     maxItems: num(process.env.ALERTS_MAX_ITEMS, DEFAULTS.alerts.maxItems),
+
+    // Alerts and the AI incident cache survive a restart in a JSON file beside
+    // the stats snapshot. Without it `/alerts` is empty until the first
+    // refresh, anything older than the bridge's window is lost for good, and
+    // every incident narrative is regenerated — and paid for — on each boot.
+    // `maxItems` still bounds the list, so it bounds the history too.
+    archiveEnabled: bool(process.env.ALERTS_ARCHIVE_ENABLED, DEFAULTS.alerts.archiveEnabled),
+    archiveDaysToKeep: num(process.env.ALERTS_ARCHIVE_DAYS, DEFAULTS.alerts.archiveDaysToKeep),
     // Optional extra source: @AlertMPK's public posts, read through whatever
     // RSS bridge the operator has — see XBridgeProvider in src/alerts.js.
     // Empty by default, so the provider is not created at all: this used to

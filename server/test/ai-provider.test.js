@@ -128,6 +128,61 @@ describe('createAiProvider', () => {
     assert.deepEqual(JSON.parse(request.init.body).response_format, { type: 'json_object' });
   });
 
+  it('reports the reason the provider gave, not just the status code', async () => {
+    // Observed live: AI was enabled and configured, incidents were silently
+    // deterministic, and /health said only "HTTP 404" — which sends you
+    // hunting through config for something the response had already named.
+    global.fetch = async () => ({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      text: async () =>
+        JSON.stringify({ error: { message: 'No endpoints found that support JSON mode', code: 404 } }),
+    });
+
+    const provider = createAiProvider(baseConfig('openrouter'));
+    await assert.rejects(
+      () => provider.completeJson({ system: '', user: '', schemaName: 'timeline' }),
+      (error) => {
+        assert.match(error.message, /HTTP 404/);
+        assert.match(error.message, /No endpoints found that support JSON mode/);
+        return error instanceof AiProviderError && error.code === 'http_error';
+      },
+    );
+  });
+
+  it('still reports something useful when the error body is not JSON', async () => {
+    global.fetch = async () => ({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      text: async () => 'User not found.',
+    });
+
+    const provider = createAiProvider(baseConfig('openrouter'));
+    await assert.rejects(
+      () => provider.completeJson({ system: '', user: '', schemaName: 'timeline' }),
+      (error) => /HTTP 401 .*User not found/.test(error.message),
+    );
+  });
+
+  it('falls back to the status line when the body cannot be read', async () => {
+    global.fetch = async () => ({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      text: async () => {
+        throw new Error('socket hang up');
+      },
+    });
+
+    const provider = createAiProvider(baseConfig('openrouter'));
+    await assert.rejects(
+      () => provider.completeJson({ system: '', user: '', schemaName: 'timeline' }),
+      (error) => /HTTP 500 Internal Server Error/.test(error.message),
+    );
+  });
+
   it('accepts an unexpected hosted SSE response without retrying the generation', async () => {
     global.fetch = async () => ({
       ok: true,

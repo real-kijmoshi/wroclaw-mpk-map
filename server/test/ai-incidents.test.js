@@ -78,6 +78,115 @@ const modelPayload = (sourceAlerts) => ({
   }],
 });
 
+describe('recognising that a disruption is over', () => {
+  // Both of these were served to the app as "Aktywne" while their own text
+  // said the works had finished — a card telling people to avoid a street
+  // that had already reopened. RESTORED_WORDS only knew @AlertMPK's
+  // "ruch przywrócony" house style, and neither of these uses it.
+  const post = (content) => ({
+    id: `post-${content.slice(0, 12)}`,
+    title: null,
+    content,
+    url: 'https://x.com/AlertMPK/status/1',
+    timestamp: at('09:42'),
+    source: 'x-bridge:test',
+    affected: [],
+    types: {},
+  });
+
+  const statusOf = (content) => createFallbackIncidents([post(content)])[0].status;
+
+  const BARDZKA =
+    'Naprawa płyt w buspasie na ul. Bardzkiej zakończona. Autobusy wracają do realizacji stałych przystanków w tym rejonie.';
+  const MUCHOBORSKA =
+    'Roboty drogowe na ul. Muchoborskiej zakończone. Autobusy wracają do obsługi przystanku "Muchobór Mały (Stacja Kolejowa)".';
+
+  it('resolves the two posts that shipped as active', () => {
+    assert.equal(statusOf(BARDZKA), 'resolved');
+    assert.equal(statusOf(MUCHOBORSKA), 'resolved');
+  });
+
+  it('classifies them as resolution events, not fresh reports', () => {
+    assert.equal(classifyFallbackEvent(post(BARDZKA)), 'resolved');
+    assert.equal(classifyFallbackEvent(post(MUCHOBORSKA)), 'resolved');
+  });
+
+  it('reads "wracają na swoje stałe trasy" as restored', () => {
+    assert.equal(
+      statusOf('#AlertMPK ul. Buforowa - Autobusy wracają na swoje stałe trasy przejazdu.'),
+      'resolved',
+    );
+  });
+
+  it('still reads the house style it always did', () => {
+    assert.equal(statusOf('#AlertMPK ul. Reymonta - ruch przywrócony.'), 'resolved');
+    assert.equal(statusOf('Kursowanie wznowione na ul. Legnickiej po awarii.'), 'resolved');
+  });
+
+  it('treats a removed fault as restored', () => {
+    assert.equal(statusOf('Awaria tramwaju na Świdnickiej usunięta.'), 'resolved');
+  });
+
+  it('does not read the end of a service as the end of a disruption', () => {
+    // "zakończone" on its own ends a *service*, which is a disruption, not a
+    // restoration. It only counts alongside the works or the fault.
+    assert.notEqual(statusOf('Kursowanie linii 100 zostało zakończone.'), 'resolved');
+    assert.notEqual(statusOf('Zakończenie kursowania linii nocnych.'), 'resolved');
+  });
+
+  it('does not resolve a disruption that is still running', () => {
+    assert.notEqual(
+      statusOf('Brak przejazdu - ul. Reymonta. Autobusy linii K, 142 wstrzymane.'),
+      'resolved',
+    );
+    assert.notEqual(
+      statusOf('Roboty drogowe na ul. Muchoborskiej. Autobusy jadą objazdem.'),
+      'resolved',
+    );
+  });
+
+  it('lets a resolution post override an active status from the model', async () => {
+    // The model returned `active` for exactly these; the regex is the only
+    // thing that overrides it, so it has to fire with AI on as well as off.
+    const incidents = await buildIncidentsFromAlerts([post(BARDZKA)], {
+      provider: {
+        enabled: true,
+        name: 'stub',
+        async completeJson() {
+          const source = post(BARDZKA);
+          return {
+            incidents: [
+              {
+                status: 'active',
+                severity: 'moderate',
+                title: 'Naprawa buspasa',
+                locationName: 'Bardzka',
+                summary: 'Naprawa płyt w buspasie.',
+                shortNotificationTitle: null,
+                shortNotificationBody: null,
+                mapHints: { stopNames: [], streetNames: ['Bardzka'], areaNames: [] },
+                timeline: [
+                  { kind: 'reported', title: source.content, detail: null, sourceAlertIds: [source.id] },
+                ],
+                sourceAlertIds: [source.id],
+                ai: { confidence: 'high' },
+              },
+            ],
+          };
+        },
+      },
+      model: 'stub-model',
+    });
+
+    assert.equal(incidents.length, 1);
+    // Without this the test passes for the wrong reason: a stub with the wrong
+    // method name falls through to the deterministic path, which returns
+    // `resolved` on its own and proves nothing about the override.
+    assert.equal(incidents[0].ai.generated, true, 'the AI path actually ran');
+    assert.equal(incidents[0].status, 'resolved', 'the text wins over the model');
+  });
+});
+
 describe('AI incident fallback', () => {
   it('pre-clusters related AlertMPK posts into one resolved, ascending timeline', async () => {
     const incidents = await buildIncidentsFromAlerts(alerts, {

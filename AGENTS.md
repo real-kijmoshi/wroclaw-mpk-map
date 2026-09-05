@@ -355,6 +355,19 @@ than accepted as zero alerts, so `/health` says so. `toXPostUrl()` rewrites
 each post's permalink from the bridge's own domain to `x.com`, so a link
 handed to a user still resolves after that bridge goes away.
 
+**The bridge's window is not the memory.** A bridge hands over its last
+`ALERT_X_MAX_POSTS` posts and nothing else, so for a while everything older
+simply vanished from `/alerts` — along with, on every restart, the whole list
+and every AI narrative already paid for. `AlertArchive`
+(`server/src/alert-archive.js`) keeps both in `alert-archive.json` beside the
+stats snapshot: `restore()` runs from `start()` before the first refresh, so
+`/alerts` and `/incidents` answer from the first request, and each refresh
+merges what was already known ahead of what just arrived — history first, so
+dedup treats the archived copy as the original and keeps its id and URL.
+`ALERTS_MAX_ITEMS` bounds the served list and therefore the history;
+`ALERTS_ARCHIVE_DAYS` ages the rest out. It is a cache, not a database: a
+corrupt or unwritable file costs the history and never the refresh.
+
 **A deploy whose only configured alerts sources are down gets zero alerts
 until someone notices.** `npm run scrape:alerts` (and `npm run doctor`, which
 checks every configured source) are the manual, non-test ways to check the
