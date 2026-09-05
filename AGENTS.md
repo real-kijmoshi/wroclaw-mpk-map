@@ -255,6 +255,37 @@ The native surface (`wroclive/src/components/native-map.tsx`) keeps the same
 cost model: custom markers freeze `tracksViewChanges` and re-enable it only
 while an appearance change is being re-captured.
 
+**21. The basemap is OpenStreetMap's own tiles, and that is a favour, not a
+service.**
+All three surfaces draw `https://tile.openstreetmap.org/{z}/{x}/{y}.png` —
+`server/views/map.html`, its byte-identical `landing/map.html`, the app's
+Leaflet page (`wroclive/src/lib/map-html.ts`), and the native `UrlTile` in
+`wroclive/src/components/native-map.tsx`. This replaced CARTO's basemaps, and
+two things came with the change.
+
+The first is the [tile usage
+policy](https://operations.osmfoundation.org/policies/tiles/). The OSMF serves
+those tiles on donated capacity and asks that heavy users run their own; a live
+map polling every ten seconds across a real userbase is what the policy has in
+mind. Nothing enforces it — tiles simply stop arriving, and a blank basemap with
+working markers over it reads as a rendering bug. Treat this as borrowed: if the
+map goes blank everywhere at once and the markers still move, check the tile
+requests before anything else. There is no fallback source configured. The
+single hostname is also deliberate: `{s}` sharding costs a connection per host
+over HTTP/2 rather than saving one, and the policy asks for the one name.
+
+The second is that OSM publishes exactly **one** raster style, and it is light.
+There is no dark tile URL to pair with the theme the way CARTO's `dark_all`
+did, so dark mode is a filter — `--tile-filter`, applied to Leaflet's
+`.leaflet-tile-pane` and nothing wider. Filtering the map as a whole inverts the
+markers with the basemap and a red tram badge comes out cyan, which is invariant
+11 undone at render time; `test/map.test.js` pins the tile pane as the only
+selector that may carry it. A native `UrlTile` has no filter at all, so on the
+native surface an OSM basemap stays light in both schemes and
+`useMapChrome()` answers `light` for it — same rule as satellite imagery, in
+the other direction: the chrome follows what the map is *drawing*, never what
+the phone is set to.
+
 ## Fragile by nature
 
 **There is no default alerts source, and that is a decision, not a gap.**

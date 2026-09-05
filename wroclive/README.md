@@ -64,7 +64,14 @@ page (`map-html.ts`) in an iframe instead, because `react-native-maps` has no we
 implementation.
 
 The OpenStreetMap preference replaces the native tiles with a `UrlTile` layer on
-Android and iOS, and is what the Leaflet page uses on web.
+Android and iOS, and is what the Leaflet page uses on web. Both draw
+OpenStreetMap's own tiles (`tile.openstreetmap.org`), which come in one style
+and it is a light one: the Leaflet page darkens them with a CSS filter on the
+tile pane, and the native layer, which has no filter, stays light in both
+schemes and takes the chrome with it (`useMapChrome()`). Those tiles are served
+on the OSMF's donated capacity under a [usage
+policy](https://operations.osmfoundation.org/policies/tiles/) — see invariant 21
+in the root `AGENTS.md` before pointing more traffic at them.
 
 An `expo-maps` MapKit surface (`apple-map.ios.tsx`) is in the tree but is not
 wired into the screen. `expo-maps` is alpha and is *not* in Expo Go, so that

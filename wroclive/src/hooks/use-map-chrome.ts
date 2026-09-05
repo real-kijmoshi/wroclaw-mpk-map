@@ -21,14 +21,28 @@ export function useMapChrome(): { scheme: MapChromeScheme; tokens: MapChromeToke
   const colorScheme = useColorScheme();
 
   // `appleMapType` is only consulted by the MapKit surface: Android's system
-  // map is Google's standard base and the web build is a vector tile layer, so
+  // map is Google's standard base and the web build is the OSM raster page, so
   // neither can be showing imagery no matter what this preference says.
   const imagery =
     Platform.OS === 'ios' &&
     preferences.mapProvider === 'auto' &&
     (preferences.appleMapType === 'satellite' || preferences.appleMapType === 'hybrid');
 
-  const scheme: MapChromeScheme = imagery || colorScheme === 'dark' ? 'dark' : 'light';
+  /*
+   * The same argument in reverse. OpenStreetMap publishes one raster style and
+   * it is a light one, so on the native surface a dark-scheme phone with the
+   * OSM tile layer on is looking at a *light* map — dark chrome and white stop
+   * labels over it are exactly the pairing imagery caused, upside down. The
+   * Leaflet page is the exception to the exception: it darkens the same tiles
+   * with a CSS filter, which a native `UrlTile` has no equivalent of.
+   */
+  const lightBasemap = Platform.OS !== 'web' && preferences.mapProvider === 'osm';
+
+  const scheme: MapChromeScheme = lightBasemap
+    ? 'light'
+    : imagery || colorScheme === 'dark'
+      ? 'dark'
+      : 'light';
 
   return { scheme, tokens: MapChrome[scheme] };
 }

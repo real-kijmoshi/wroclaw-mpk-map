@@ -11,6 +11,7 @@ const { buildFixtureZip } = require('./fixtures/gtfs');
 
 const MAP_HTML = path.join(__dirname, '..', 'views', 'map.html');
 const LANDING_MAP_HTML = path.join(__dirname, '..', '..', 'landing', 'map.html');
+const APP_MAP_HTML = path.join(__dirname, '..', '..', 'wroclive', 'src', 'lib', 'map-html.ts');
 const APP_PALETTE = path.join(__dirname, '..', '..', 'wroclive', 'src', 'lib', 'lines.ts');
 const APP_MARKER = path.join(__dirname, '..', '..', 'wroclive', 'src', 'lib', 'vehicle-marker.ts');
 
@@ -276,14 +277,68 @@ describe('browser map', () => {
   });
 
   /**
-   * OpenStreetMap and CARTO both require attribution, and the control was
-   * switched off outright — the tile layer declared it, and nothing displayed
-   * it.
+   * OpenStreetMap requires attribution, and the control was switched off
+   * outright — the tile layer declared it, and nothing displayed it.
    */
   it('leaves map attribution switched on', () => {
     const html = readMap();
     assert.doesNotMatch(html, /attributionControl:\s*false/);
-    assert.match(html, /attribution:\s*['"][^'"]*OpenStreetMap/);
+    assert.match(html, /attribution:\s*'[^']*OpenStreetMap/);
+    // The licence wants the credit to link to the copyright page, not just
+    // name the project.
+    assert.match(html, /openstreetmap\.org\/copyright/);
+  });
+
+  /**
+   * The basemap comes from OpenStreetMap's own tile servers, on the single
+   * hostname their usage policy asks for: {s}-style sharding costs a
+   * connection per host over HTTP/2 rather than saving one.
+   */
+  it('serves the basemap from tile.openstreetmap.org, unsharded', () => {
+    const html = readMap();
+    const tiles = /L\.tileLayer\(\s*'([^']+)'/.exec(html);
+    assert.ok(tiles, 'no tile layer URL found');
+    assert.equal(tiles[1], 'https://tile.openstreetmap.org/{z}/{x}/{y}.png');
+    assert.doesNotMatch(tiles[1], /\{s\}/, 'the tile URL is sharded across subdomains');
+  });
+
+  /**
+   * OSM publishes one raster style and it is light, so dark mode is a filter
+   * rather than a second tile URL — and the filter belongs to the tile pane
+   * alone. Over the whole map it inverts the line palette with the basemap: a
+   * red tram badge comes out cyan, which is invariant 11 undone at render time.
+   */
+  it('filters the tiles for dark mode, and only the tiles', () => {
+    const html = readMap();
+    assert.match(html, /\.leaflet-tile-pane\s*\{\s*filter:\s*var\(--tile-filter\);\s*\}/);
+
+    // Defined light, redefined dark: a filter that only exists inside the
+    // media query leaves the variable unresolved in light mode.
+    assert.match(html, /--tile-filter:\s*none;/);
+    assert.match(html, /--tile-filter:\s*invert\(1\)/);
+
+    // The tile pane is the only selector allowed to name it. Anything wider —
+    // `.leaflet-container`, `#map`, `body` — holds the marker panes too.
+    const carriers = [...html.matchAll(/([^{}\n]+)\{[^}]*var\(--tile-filter\)[^}]*\}/g)].map(
+      ([, selector]) => selector.trim(),
+    );
+    assert.deepEqual(carriers, ['.leaflet-tile-pane']);
+  });
+
+  /**
+   * Invariant 19: this page and the app's Leaflet page are two readers of the
+   * same design, and the basemap is one more thing that has to move together —
+   * the app pointing at a retired provider is a blank map with no error.
+   */
+  it('uses the same tile source as the app page', () => {
+    const appPage = fs.readFileSync(APP_MAP_HTML, 'utf8');
+    const tiles = /L\.tileLayer\(\s*'([^']+)'/.exec(readMap());
+    assert.ok(tiles, 'no tile layer URL found in the served page');
+    assert.ok(
+      appPage.includes(tiles[1]),
+      `wroclive/src/lib/map-html.ts does not serve tiles from ${tiles[1]}`,
+    );
+    assert.match(appPage, /\.leaflet-tile-pane \{ filter: var\(--tile-filter\); \}/);
   });
 
   /**
