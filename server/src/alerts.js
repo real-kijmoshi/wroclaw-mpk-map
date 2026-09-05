@@ -208,9 +208,134 @@ const polishDate = (text) => {
   return Number.isFinite(ms) ? ms : null;
 };
 
+const MAX_NOTICE_TITLE = 200;
+
+const NOTICE_DATE = String.raw`\d{1,2}\.\d{1,2}\.\d{4}`;
+
+/**
+ * The `linie:` / `obowiązuje:` / dated-headline preamble of one notice.
+ *
+ * `[^:]{0,120}?` keeps the line list from running past a missing field into
+ * the next notice: it cannot cross the `:` of the following label.
+ */
+const STRUCTURED_NOTICE = new RegExp(
+  String.raw`linie:\s*(?<lines>[^:]{0,120}?)\s*` +
+    String.raw`obowi[ąa]zuje:\s*(?<from>${NOTICE_DATE})\s*[-–—]\s*(?<to>${NOTICE_DATE})\s+` +
+    String.raw`(?<published>${NOTICE_DATE})\s*r\.\s*[-–—]\s*`,
+  'giu',
+);
+
+/** A line as these pages write them: 128, 6, N, A, S7, 15A. */
+const LINE_TOKEN = /^(?:\d{1,3}[A-Z]?|[A-Z]\d{0,2}|[A-Z]{2})$/i;
+
+/** `DD.MM.YYYY` -> `YYYY-MM-DD`, so windows compare as plain strings. */
+const toIsoDate = (date) => {
+  const [day, month, year] = date.split('.');
+  return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+};
+
+/**
+ * Today in Wrocław, as `YYYY-MM-DD`.
+ *
+ * The window is day-granular, so comparing it against a UTC instant would
+ * expire a notice up to two hours early on its last evening — the one moment
+ * a rider is most likely to be reading it. Ask Intl for the local date and
+ * compare dates to dates.
+ */
+const warsawDate = (now) =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Warsaw',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+
+/**
+ * A notice list that states each notice's lines and validity window.
+ *
+ * Some of the city's notice pages publish, per notice, the affected lines and
+ * the dates the change is in force, not just a headline:
+ *
+ *   linie: N 128 130 242 251
+ *   obowiązuje: 03.09.2026 - 08.09.2026
+ *   05.09.2026r. - przywrócenie do ruchu zatoki autobusowej Kromera (24146)
+ *
+ * That is strictly better than what `parsePage()` below can recover, and it
+ * retires two guesses rather than improving them. The line list is *stated*,
+ * so `extractAffectedLines()` never runs for these notices — which is the real
+ * fix for the phantom-line class of bug (a day-of-month that happens to be a
+ * real line number), because there is nothing left to infer. And the validity
+ * window is stated, so a notice whose last day has passed is dropped instead
+ * of sitting at the top of `/alerts` describing a closure that ended.
+ *
+ * Parsed out of the page's *text* rather than its markup, deliberately, for
+ * the same reason `parseFileListing()` walks the GTFS payload shape-agnostic:
+ * these three fields are a publishing convention that survives a redesign,
+ * whereas the class names carrying them do not. `stripHtml()` collapses the
+ * document to a single line, so this reads a flat string.
+ *
+ * Known soft spot: a notice's text runs until the next `linie:`, so the last
+ * notice on the page has nothing to stop at and is capped at
+ * MAX_NOTICE_TITLE characters. If a page's footer starts leaking into the
+ * final alert, that cap is why.
+ *
+ * @param {string} html
+ * @param {string} pageUrl
+ * @param {{ now?: number }} options
+ */
+const parseStructuredNotices = (html, pageUrl, { now = Date.now() } = {}) => {
+  if (typeof html !== 'string' || !html) return [];
+
+  const text = stripHtml(html);
+  const today = warsawDate(now);
+  const matches = [...text.matchAll(STRUCTURED_NOTICE)];
+  const results = [];
+
+  for (const [index, match] of matches.entries()) {
+    const { lines, from, to, published } = match.groups;
+
+    // The notice's own text runs from the end of its preamble to the start of
+    // the next notice — the same rule parsePage() uses for a lead paragraph,
+    // and for the same reason: a fixed window runs into the following notice
+    // and appends its text to this one.
+    const bodyStart = match.index + match[0].length;
+    const bodyEnd = matches[index + 1]?.index ?? text.length;
+    const title = text.slice(bodyStart, bodyEnd).trim().slice(0, MAX_NOTICE_TITLE).trim();
+    if (title.length < 3) continue;
+
+    // Past its last day: the change is over. Publishing it anyway is the same
+    // failure as a fake disruption — it sends people around a closure that
+    // has been lifted.
+    if (toIsoDate(to) < today) continue;
+
+    const affected = lines
+      .split(/[\s,;]+/)
+      .filter(Boolean)
+      .filter((token) => LINE_TOKEN.test(token))
+      .map((token) => token.toUpperCase());
+
+    results.push({
+      id: `${pageUrl}#${toIsoDate(published)}-${title.slice(0, 60)}`,
+      title,
+      // The window is what a rider actually asks next ("do kiedy?"), and it
+      // is stated on the page, so it belongs in the text rather than only in
+      // a field no client reads yet.
+      content: `${title} Obowiązuje ${from} – ${to}.`,
+      url: pageUrl,
+      timestamp: polishDate(published) ?? now,
+      source: pageUrl,
+      // Stated by the page, so AlertsService.refresh() must not re-guess it.
+      affected,
+    });
+  }
+
+  return results;
+};
+
 /**
  * Scrape service notices out of an HTML page.
  *
+
  * MPK publishes disruptions as web pages and nothing else — there is no API,
  * and the X timeline the old code read has needed a paid tier since 2023, which
  * is why `/alerts` quietly returned `[]` for a year.
@@ -300,9 +425,10 @@ const parsePage = (html, pageUrl) => {
 /**
  * One upstream page of notices.
  *
- * Auto-detects the format: if the response parses as RSS or Atom with items it
- * is read as a feed, otherwise it is scraped as HTML. That means a site can add
- * or drop a feed without any change here.
+ * Auto-detects the format, cheapest and most trustworthy first: RSS/Atom if
+ * the response parses as a feed, then the stated `linie:` / `obowiązuje:`
+ * notice list, then headlines scraped out of anchors. That means a site can
+ * add or drop a feed, or start stating its lines, without any change here.
  */
 class NoticeProvider {
   constructor(url) {
@@ -323,6 +449,12 @@ class NoticeProvider {
     const feedItems = parseFeed(body, this.url);
     if (feedItems.length) return feedItems;
 
+    // Before falling back to reading headlines out of anchors, check whether
+    // this page states its lines and validity windows — that form carries
+    // strictly more than parsePage() can recover, so it wins where it parses.
+    const structured = parseStructuredNotices(body, this.url);
+    if (structured.length) return structured;
+
     const scraped = parsePage(body, this.url);
     if (!scraped.length) throw new Error('no notices found — page markup probably changed');
     return scraped;
@@ -330,38 +462,66 @@ class NoticeProvider {
 }
 
 /**
- * Rewrites a Nitter permalink to the equivalent x.com one.
+ * Rewrites an RSS-bridge permalink to the equivalent x.com one.
  *
- * The alert itself should keep working after the mirror that served it goes
- * down — public Nitter instances disappear with no notice — so the link an
- * alert carries points at the source of truth, not the mirror that happened
- * to answer this refresh.
+ * The alert itself should keep working after the bridge that served it goes
+ * away — Nitter, the bridge this project used to depend on, is exactly that
+ * story — so the link an alert carries points at the source of truth, not at
+ * whichever front end happened to answer this refresh.
  *
- * @param {string|null} nitterUrl
+ * @param {string|null} bridgeUrl
  * @returns {string|null}
  */
-const toXPostUrl = (nitterUrl) => {
-  if (!nitterUrl) return null;
+const toXPostUrl = (bridgeUrl) => {
+  if (!bridgeUrl) return null;
   try {
-    return `https://x.com${new URL(nitterUrl).pathname}`;
+    return `https://x.com${new URL(bridgeUrl).pathname}`;
   } catch {
-    return nitterUrl;
+    return bridgeUrl;
   }
 };
 
 /**
- * Reads @AlertMPK's public posts through a Nitter mirror's RSS feed.
+ * Turn one configured bridge entry into the feed URL for `username`.
+ *
+ * An entry is a URL template carrying `{username}`, because bridges do not
+ * agree on a path shape — RSSHub publishes `/twitter/user/<name>`, a Nitter
+ * mirror published `/<name>/rss`, and a self-hosted bridge can be anything.
+ * Hardcoding one of those shapes is what tied this source to a single piece
+ * of software; a template ties it to none. An entry with no placeholder is
+ * treated as a Nitter-shaped base URL so an existing private mirror keeps
+ * working without a rewrite.
+ *
+ * @param {string} template
+ * @param {string} username
+ * @returns {string}
+ */
+const buildBridgeUrl = (template, username) => {
+  const base = String(template).trim();
+  if (base.includes('{username}')) {
+    return base.replaceAll('{username}', encodeURIComponent(username));
+  }
+  return `${stripTrailingSlash(base)}/${encodeURIComponent(username)}/rss`;
+};
+
+/**
+ * Reads @AlertMPK's public posts through an RSS bridge.
  *
  * There is no free API path to a user's timeline — that has needed a paid
  * tier since 2023, which is what silently emptied `/alerts` for a year (see
- * CLAUDE.md). Nitter (an alternative X front end) republishes public
- * profiles as plain RSS, which `parseFeed()` above already parses — no
- * browser, no reverse-engineered endpoint, no markup to keep up with.
+ * CLAUDE.md). A bridge is any service that republishes a public profile as
+ * plain RSS, which `parseFeed()` above already parses — no browser, no
+ * reverse-engineered endpoint, no markup to keep up with.
  *
- * The tradeoff moves rather than disappears: public Nitter instances are
- * themselves unreliable and vanish with no warning, so `instances` is tried
- * in order and the list is meant to carry more than one entry, same as every
- * other multi-source config in this project (see CLAUDE.md invariant 1).
+ * This used to be hardwired to Nitter, which has since been discontinued;
+ * its public mirrors are gone and the ones still answering serve empty
+ * feeds. That is why nothing is configured by default and why the notice
+ * page (`config.alerts.pages`) is now the source that ships working: this
+ * provider only exists when `ALERT_X_BRIDGE_URLS` names a bridge the
+ * operator actually has, and `buildBridgeUrl()` above makes no assumption
+ * about which software is behind it. Entries are tried in order, same
+ * pattern as every other multi-source config in this project (see CLAUDE.md
+ * invariant 1).
  *
  * The account is dedicated entirely to service alerts, unlike the corporate
  * news page rejected earlier — so unlike `parsePage()`, a post here does not
@@ -369,33 +529,41 @@ const toXPostUrl = (nitterUrl) => {
  * are still extracted centrally by `AlertsService.refresh()`, same as every
  * other provider.
  */
-class NitterProvider {
-  constructor({ username, instances, maxPosts, timeoutMs }) {
+class XBridgeProvider {
+  /**
+   * @param {object} options
+   * @param {(url: string, init: object) => Promise<{ ok: boolean, status: number, statusText: string, text: string }>} [options.request]
+   *   the HTTP reader, injectable so the suite can exercise bridge failover
+   *   without a network.
+   */
+  constructor({ username, bridges, maxPosts, timeoutMs, request = requestText }) {
     this.username = username;
-    this.instances = instances;
+    this.bridges = bridges;
     this.maxPosts = maxPosts;
     this.timeoutMs = timeoutMs;
-    this.name = `nitter:@${username}`;
+    this.request = request;
+    this.name = `x-bridge:@${username}`;
   }
 
   async fetch() {
-    let lastError = new Error(`no Nitter instance configured for @${this.username}`);
+    let lastError = new Error(`no RSS bridge configured for @${this.username}`);
 
-    for (const instance of this.instances) {
-      const url = `${stripTrailingSlash(instance)}/${this.username}/rss`;
+    for (const bridge of this.bridges) {
+      const url = buildBridgeUrl(bridge, this.username);
       try {
         // requestText(), not fetchWithTimeout() — see its doc comment in
-        // src/http.js: nitter.net answers the global fetch() with a genuine
-        // 200 and an empty body, and only a raw http(s) request gets the
+        // src/http.js: a bridge fronting X is usually hardened against
+        // scrapers, and at least one answered the global fetch() with a
+        // genuine 200 and an empty body while a raw http(s) request got the
         // actual feed.
-        const response = await requestText(url, {
+        const response = await this.request(url, {
           timeoutMs: this.timeoutMs,
           headers: { Accept: 'application/rss+xml, application/xml;q=0.9' },
         });
         if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
 
         const items = parseFeed(response.text, url);
-        if (!items.length) throw new Error('no items in feed — the instance may be serving an empty page');
+        if (!items.length) throw new Error('no items in feed — the bridge may be serving an empty page');
 
         return items.slice(0, this.maxPosts).map((item) => ({
           id: item.id,
@@ -406,7 +574,7 @@ class NitterProvider {
           source: url,
         }));
       } catch (error) {
-        lastError = new Error(`${instance}: ${error.message}`);
+        lastError = new Error(`${bridge}: ${error.message}`);
       }
     }
 
@@ -461,8 +629,13 @@ class AlertsService {
 
   #defaultProviders() {
     const result = config.alerts.pages.map((url) => new NoticeProvider(url));
-    if (config.alerts.nitter.enabled) {
-      result.push(new NitterProvider(config.alerts.nitter));
+    // No bridge configured is the normal case, not a misconfiguration: the
+    // notice page is the source that ships working. Adding a provider with an
+    // empty candidate list would only manufacture a permanent lastError in
+    // /health for a source the operator never asked for.
+    const { enabled, bridges } = config.alerts.xBridge;
+    if (enabled && bridges.length) {
+      result.push(new XBridgeProvider(config.alerts.xBridge));
     }
     return result;
   }
@@ -498,8 +671,8 @@ class AlertsService {
         logger.warn('No alert provider responded; keeping the previous list');
       } else if (this.providers.length) {
         logger.warn(
-          'No alerts available from any provider — check NITTER_ENABLED/NITTER_INSTANCE_URLS ' +
-            '(see npm run scrape:nitter) and ALERT_PAGE_URLS',
+          'No alerts available from any provider — check ALERT_PAGE_URLS and, if one is ' +
+            'configured, ALERT_X_BRIDGE_URLS (see npm run scrape:alerts)',
         );
       }
       return this.alerts;
@@ -514,7 +687,12 @@ class AlertsService {
     const enriched = collected.map((item) => {
       const id = item.id || `${item.source}:${item.timestamp}:${item.title ?? item.content}`;
       const fp = fingerprint(item.title, item.content);
-      const affected = extractAffectedLines(`${item.title ?? ''} ${item.content ?? ''}`, knownLines);
+      // A source that states its affected lines is believed. Re-deriving them
+      // from prose could only lose: extractAffectedLines() has to guess which
+      // numbers are line numbers, and this page has already answered that.
+      const affected = item.affected?.length
+        ? item.affected
+        : extractAffectedLines(`${item.title ?? ''} ${item.content ?? ''}`, knownLines);
       // Clients colour line badges by type; without this they would all have to
       // re-implement the categorisation rules and drift out of sync with them.
       const types = {};
@@ -661,12 +839,14 @@ class AlertsService {
 module.exports = {
   AlertsService,
   NoticeProvider,
-  NitterProvider,
+  XBridgeProvider,
+  buildBridgeUrl,
   toXPostUrl,
   extractAffectedLines,
   fingerprint,
   parseFeed,
   parsePage,
+  parseStructuredNotices,
   normalizeText,
   stripHtml,
 };

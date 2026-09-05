@@ -32,19 +32,22 @@ const fetchWithTimeout = async (url, { timeoutMs = 15_000, ...init } = {}) => {
  * A GET request over Node's own http(s) module instead of the global
  * fetch() (undici).
  *
- * Exists for one confirmed reason: nitter.net answers fetch() with a genuine
- * `200` and an empty body — no Content-Type, no other response headers a
- * real hit carries — while the exact same request over this module, or curl,
- * or a browser, gets the full feed. Every header this project sends was
- * identical between the two; the only variable left is the client itself, so
- * this reads as the origin fingerprinting undici specifically (a known
- * pattern for sites hardened against scraping) rather than anything about
- * the request. `fetchWithTimeout` above is unaffected for every other
- * upstream this project talks to and should stay the default; reach for this
- * only where a source has demonstrated the same silent-empty-body behavior.
+ * Exists for one confirmed reason: nitter.net (then the alerts source, since
+ * discontinued — see XBridgeProvider in src/alerts.js) answered fetch() with
+ * a genuine `200` and an empty body — no Content-Type, no other response
+ * headers a real hit carries — while the exact same request over this
+ * module, or curl, or a browser, got the full feed. Every header this
+ * project sends was identical between the two; the only variable left is the
+ * client itself, so this reads as the origin fingerprinting undici
+ * specifically (a known pattern for sites hardened against scraping) rather
+ * than anything about the request. Any RSS bridge fronting X is hardened the
+ * same way, which is why that provider still comes through here.
+ * `fetchWithTimeout` above is unaffected for every other upstream this
+ * project talks to and should stay the default; reach for this only where a
+ * source has demonstrated the same silent-empty-body behavior.
  *
- * Follows at most one redirect — enough for a Nitter instance moving
- * http -> https or bare -> www, not a general-purpose redirect chain.
+ * Follows at most one redirect — enough for a bridge moving http -> https or
+ * bare -> www, not a general-purpose redirect chain.
  *
  * @param {string} url
  * @param {{ timeoutMs?: number, headers?: Record<string, string>, redirectsLeft?: number }} options

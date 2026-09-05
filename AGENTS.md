@@ -257,22 +257,56 @@ while an appearance change is being re-captured.
 
 ## Fragile by nature
 
-The default (and, out of the box, only) alerts source is `@AlertMPK` on X —
-see the `NitterProvider` paragraph below. `parsePage()` in
-`server/src/alerts.js` can also scrape
-`wroclaw.pl/komunikacja/zmiany-w-komunikacji`, a page verified to carry live
-disruptions, but `ALERT_PAGES` is empty by default; set `ALERT_PAGE_URLS` to
-add it (or another page) back as an extra source. `mpk.wroc.pl/komunikaty` was
-a guess and 404s; `/o-mpk/aktualnosci` exists but is corporate news. The page
-provider is an HTML scrape and the Nitter provider depends on a mirror staying
-up — both are the most likely thing here to break, for different reasons.
+**There is no default alerts source, and that is a decision, not a gap.**
+`@AlertMPK` on X is the only thing publishing actual disruptions, and every
+route to it needs something the operator supplies (see the X section below).
+The obvious free substitute is not one: the city's notice pages
+(`wroclaw.pl/komunikacja/zmiany-w-komunikacji` and friends) carry *planned*
+changes — stop relocations, roadworks, event closures — and were briefly wired
+in as the default before that got caught. Filling `/alerts` with things that
+are not going wrong is the "a fake disruption is worse than a missing one"
+rule at the level of a whole source: it buries the one notice that matters.
+
+Those pages are still worth adding via `ALERT_PAGE_URLS` when you *want* the
+planned changes alongside the incidents. Only add one carrying dated notices:
+`mpk.wroc.pl/komunikaty` was a guess and 404s, and `/o-mpk/aktualnosci` exists
+but is corporate news. An HTML scrape is the most likely thing here to break.
 
 It fails soft: when every provider fails the previous list stays in place, and
 the reason shows up in `/health` under `alerts.providers[].lastError`. If alerts
-go stale, check that field first — then, for the X source, `npm run
-scrape:nitter`, and for a configured page, the keyword lists in `parsePage()`.
-A configured page that serves RSS is auto-detected and parsed as a feed
-instead.
+go stale, check that field first — then `npm run scrape:alerts`, which prints
+what each configured source actually yields, and the keyword lists in
+`parsePage()`. A configured page that serves RSS is auto-detected and parsed as
+a feed instead.
+
+A notice page that states its own data is read differently, and better.
+Some list, per notice, the affected lines and the window the change is in
+force:
+
+```
+linie: N 128 130 242 251
+obowiązuje: 03.09.2026 - 08.09.2026
+05.09.2026r. - przywrócenie do ruchu zatoki autobusowej Kromera (24146)
+```
+
+`parseStructuredNotices()` reads that form, and `NoticeProvider` prefers it —
+feed, then stated list, then anchor scrape. It is worth the extra parser
+because it retires two guesses rather than sharpening them. The line list is
+*stated*, so `extractAffectedLines()` never runs for these notices and the
+phantom-line bug below cannot occur on them; `AlertsService.refresh()` only
+derives lines for an item that arrives without them. And the window is stated,
+so a notice whose last day has passed is dropped rather than sitting at the top
+of `/alerts` describing a closure that has been lifted — expiry is compared as
+a Wrocław calendar date, not a UTC instant, or a notice expires up to two hours
+early on the evening people are actually reading it.
+
+It parses the page's *text*, not its markup, for the same reason
+`parseFileListing()` walks the GTFS payload shape-agnostic: those three fields
+are a publishing convention that outlives a redesign, and the class names
+carrying them are not. The soft spot is the last notice on a page — a notice's
+text runs until the next `linie:`, and the last one has nothing to stop at, so
+it is capped at `MAX_NOTICE_TITLE`. If page chrome starts appearing at the end
+of the final alert, that cap is why.
 
 A notice's body is the text between its headline link and the next link on the
 page. A fixed-size lookahead instead runs into the following notice and appends
@@ -289,36 +323,58 @@ organizacji ruchu na ulicy X" and only list the affected lines in the body.
 
 The X API is not usable as a source: reading someone else's timeline needs a
 paid tier, which is what silently emptied `/alerts` for a year in the first
-place. `@AlertMPK` posts real disruptions, though, and `NitterProvider` in
-`server/src/alerts.js` reads them through a Nitter mirror's RSS feed
-(`<instance>/<username>/rss`) instead of scraping X directly — Nitter is an
-alternative X front end that republishes public profiles as plain RSS, which
-`parseFeed()` (the same function every other feed source in this file uses)
-already parses: no browser, no regex-scraped HTML, no reverse-engineered
-endpoint. It is the default and, out of the box, only alerts source
-(`NITTER_ENABLED` defaults to `true`; set it to `false` to turn it off).
+place. `@AlertMPK` posts real disruptions, though, so `XBridgeProvider` in
+`server/src/alerts.js` can read them through an *RSS bridge* — any service
+that republishes a public X profile as plain RSS, which `parseFeed()` (the
+same function every other feed source in this file uses) already parses: no
+browser, no regex-scraped HTML, no reverse-engineered endpoint.
 
-The fragility moved rather than disappeared. Parsing is no longer the weak
-point — RSS is a stable, documented format — but public Nitter instances are
-themselves unreliable and disappear with no warning (this is a known property
-of the Nitter ecosystem, not specific to this project). That is why
-`NITTER_INSTANCE_URLS` is a list tried in order, same pattern as every other
-multi-source config in this project (invariant 1): a deploy should not depend
-on exactly one public mirror staying up forever. `toXPostUrl()` rewrites each
-post's permalink from the mirror's own domain to `x.com`, so a link handed to
-a user still resolves after the mirror that served it goes down.
+**This provider was `NitterProvider`, hardwired to Nitter, and it is history
+worth keeping.** Nitter has been discontinued; the public mirrors it was
+pointed at are gone, and one that still answers serves an empty feed rather
+than an error. Because a dead mirror reads as "zero posts," not a crash, that
+is a silent failure — the same shape as the paid-API outage before it. It had
+been the default and, out of the box, only alerts source, so a stock deploy
+was left with nothing that answers. **Do not put another public bridge back in
+`config.defaults.json`.** Whichever one you pick will go the same way, and the
+default deploy will break again with nothing in the logs.
 
-Because a dead mirror reads as "zero posts," not a crash, a silent failure
-here is easy to miss; that is why `parsePage()` above stays available as a
-fallback/extra source via `ALERT_PAGE_URLS`. **A deploy with every configured
-Nitter instance down, and no page-scrape source configured, gets zero alerts
-until someone notices and adds another instance or a page.** `npm run
-scrape:nitter` (and `npm run doctor`, which checks every configured instance)
-are manual, non-test ways to check the real feed before relying on it — the
-automated suite can't, since it has no network; `test/alerts.test.js` instead
-pins `parseFeed()` against a fixture captured from a real Nitter response
-(attributed `<guid>`, CDATA description with a nested `<a>`) to cover the
-parsing, which is the part that can be tested without a network call.
+So: `alerts.xBridge.bridges` is empty by default and the provider is not even
+constructed unless `ALERT_X_BRIDGE_URLS` names a bridge — and the intended
+answer is **a bridge the operator runs**, not a public one. That is the whole
+lesson of the Nitter outage restated as configuration: a bridge you host
+cannot be discontinued out from under you, and it is the reason this source
+ships unset rather than pointed somewhere convenient. `server/.env.example`
+carries the docker one-liner. Entries are URL templates carrying `{username}`
+(RSSHub publishes `/twitter/user/<name>`, a Nitter mirror published
+`/<name>/rss`, a self-hosted bridge can be anything), tried in order, same
+pattern as every other multi-source config here (invariant 1); an entry with
+no placeholder is read as a Nitter-shaped base URL so a private mirror needs
+no rewrite. An empty feed is raised as a provider failure rather
+than accepted as zero alerts, so `/health` says so. `toXPostUrl()` rewrites
+each post's permalink from the bridge's own domain to `x.com`, so a link
+handed to a user still resolves after that bridge goes away.
+
+**A deploy whose only configured alerts sources are down gets zero alerts
+until someone notices.** `npm run scrape:alerts` (and `npm run doctor`, which
+checks every configured source) are the manual, non-test ways to check the
+real thing before relying on it — the automated suite can't, since it has no
+network; `test/alerts.test.js` instead pins the parsing, which is the part
+that can be tested without one, against **two** real bridge responses — and
+keeps both on purpose. "Any bridge that republishes the profile" is only true
+if more than one shape is covered, and the two differ in every field that
+matters: RSSHub's `<guid>` is a `twitter.com` permalink where Nitter's was a
+bare numeric id, RSSHub's `<link>` is already on `x.com` (so `toXPostUrl()`
+has to be a no-op there and a rewrite on Nitter's own domain), and RSSHub
+escapes entities where Nitter used CDATA with a nested `<a>`. The RSSHub
+fixture also pins two things a live timeline will hand you: the channel
+`<image>`, which carries its own `<title>`/`<link>` and must not read as a
+post, and untagged posts — roughly half of them carry no `#AlertMPK`, so a
+keyword gate here would silently drop real notices.
+
+The configuration itself is pinned too, since that is where the Nitter
+failure actually lived: no default page, no default bridge, nothing public
+depended on without being asked for.
 
 `parseFileListing()` is deliberately shape-agnostic — it walks the JSON looking
 for url-ish and name-ish fields rather than hardcoding a schema, because the CUI
@@ -347,7 +403,9 @@ Wrocław has real lines numbered 1, 6, 11 and 21. A day-of-month next to those
 numbers ("Od **1** sierpnia", "**21**.07.2026", "od **6** lipca", "(**11** - 16
 lipca)") is not a reference to those lines, but matching against the
 known-lines set alone cannot tell the difference — the number really is a
-valid line, just not the one in that sentence. `extractAffectedLines()` strips
+valid line, just not the one in that sentence. This applies only to sources
+that do not state their lines — `parseStructuredNotices()` above sidesteps the
+whole problem. `extractAffectedLines()` strips
 recognized Polish date expressions (`POLISH_DATE`) before tokenizing,
 specifically because this produced phantom line badges on notices that were
 correctly about other lines. The date-range form has to be matched as one unit

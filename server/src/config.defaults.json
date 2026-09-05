@@ -59,9 +59,9 @@
     "refreshIntervalMs": 300000,
     "timeoutMs": 15000,
     "maxItems": 100,
-    "nitter": {
+    "xBridge": {
       "enabled": true,
-      "instances": ["https://nitter.net"],
+      "bridges": [],
       "username": "AlertMPK",
       "maxPosts": 10,
       "timeoutMs": 15000
