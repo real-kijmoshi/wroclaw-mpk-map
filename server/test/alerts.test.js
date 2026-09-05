@@ -173,6 +173,105 @@ describe('parseFeed against a real X-bridge RSS response', () => {
   });
 });
 
+describe('the bridge this actually runs against: a real RSSHub response', () => {
+  // Captured from a working `curl http://127.0.0.1:1200/twitter/user/AlertMPK`.
+  // Kept alongside the Nitter fixture above rather than replacing it: the two
+  // bridges emit genuinely different RSS for the same account, and "any bridge
+  // that republishes the profile" is only true if more than one shape is
+  // pinned. The differences that matter are all here — the guid is a
+  // twitter.com permalink instead of a bare numeric id, the link is already on
+  // x.com, and entities arrive escaped rather than in CDATA.
+  const RSSHUB = `<?xml version="1.0" encoding="UTF-8"?>
+    <rss xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel>
+      <title>Twitter @MPK Wrocław</title>
+      <link>https://x.com/AlertMPK</link>
+      <atom:link href="http://127.0.0.1:1200/twitter/user/AlertMPK" rel="self" type="application/rss+xml"></atom:link>
+      <generator>RSSHub</generator>
+      <image>
+        <url>https://pbs.twimg.com/profile_images/676359617211998208/q015WWtC.jpg</url>
+        <title>Twitter @MPK Wrocław</title>
+        <link>https://x.com/AlertMPK</link>
+      </image>
+      <item>
+        <title>#AlertMPK ul. Buforowa - ruch przywrócony. Autobusy wracają na swoje stałe trasy przejazdu.</title>
+        <description>#AlertMPK ul. Buforowa - ruch przywrócony. Autobusy wracają na swoje stałe trasy przejazdu.</description>
+        <link>https://x.com/AlertMPK/status/2096172105628799333</link>
+        <guid isPermaLink="false">https://twitter.com/AlertMPK/status/2096172105628799333</guid>
+        <pubDate>Sat, 05 Sep 2026 09:42:29 GMT</pubDate>
+        <category>AlertMPK</category>
+      </item>
+      <item>
+        <title>Roboty drogowe na ul. Muchoborskiej zakończone. Autobusy wracają do obsługi przystanku &quot;Muchobór Mały (Stacja Kolejowa)&quot;.</title>
+        <description>Roboty drogowe na ul. Muchoborskiej zakończone. Autobusy wracają do obsługi przystanku &quot;Muchobór Mały (Stacja Kolejowa)&quot;.</description>
+        <link>https://x.com/AlertMPK/status/2096143068680401189</link>
+        <guid isPermaLink="false">https://twitter.com/AlertMPK/status/2096143068680401189</guid>
+        <pubDate>Sat, 05 Sep 2026 07:47:06 GMT</pubDate>
+      </item>
+    </channel></rss>`;
+
+  const BRIDGE = 'http://127.0.0.1:1200/twitter/user/AlertMPK';
+
+  const provider = () =>
+    new XBridgeProvider({
+      username: 'AlertMPK',
+      bridges: ['http://127.0.0.1:1200/twitter/user/{username}'],
+      maxPosts: 10,
+      timeoutMs: 50,
+      request: () => ({ ok: true, status: 200, statusText: 'OK', text: RSSHUB }),
+    });
+
+  it('does not mistake the channel image for a post', () => {
+    // <image> carries its own <title> and <link>. Reading it as an item would
+    // put the account's avatar at the top of /alerts.
+    assert.equal(parseFeed(RSSHUB, BRIDGE).length, 2);
+  });
+
+  it('uses the permalink guid as the id', () => {
+    const [item] = parseFeed(RSSHUB, BRIDGE);
+    assert.equal(item.id, 'https://twitter.com/AlertMPK/status/2096172105628799333');
+  });
+
+  it('leaves a link that is already on x.com alone', async () => {
+    // RSSHub hands out x.com links; Nitter handed out its own domain. The
+    // rewrite has to be a no-op on the first and a fix on the second, or one
+    // bridge's links come out mangled.
+    const items = await provider().fetch();
+    assert.equal(items[0].url, 'https://x.com/AlertMPK/status/2096172105628799333');
+  });
+
+  it('decodes escaped entities in the post text', async () => {
+    const items = await provider().fetch();
+    assert.match(items[1].content, /"Muchobór Mały \(Stacja Kolejowa\)"/);
+  });
+
+  it('keeps a post that does not carry the #AlertMPK tag', async () => {
+    // The account posts nothing but service information, so there is no
+    // keyword gate here — unlike parsePage(), where a news page would
+    // otherwise turn press releases into alerts. Half of a real timeline is
+    // untagged, and dropping it would drop real notices.
+    const items = await provider().fetch();
+    assert.equal(items.length, 2);
+    assert.match(items[1].content, /^Roboty drogowe/);
+  });
+
+  it('carries the post text as content with no headline of its own', async () => {
+    const items = await provider().fetch();
+    assert.equal(items[0].title, null);
+    assert.match(items[0].content, /^#AlertMPK ul\. Buforowa/);
+    assert.equal(items[0].timestamp, Date.parse('Sat, 05 Sep 2026 09:42:29 GMT'));
+  });
+
+  it('reports no affected lines when the post names none', async () => {
+    // "ul. Buforowa - ruch przywrócony" names a street, not a line. Inventing
+    // a badge here would be the phantom-line bug wearing a different hat; an
+    // alert with no lines is correct and still shows in the unfiltered list.
+    const service = new AlertsService(() => new Set(['4', '10', '133']), [provider()]);
+    for (const alert of await service.refresh()) {
+      assert.deepEqual(alert.affected, []);
+    }
+  });
+});
+
 describe('toXPostUrl', () => {
   it('rewrites a bridge permalink to the equivalent x.com one', () => {
     assert.equal(
