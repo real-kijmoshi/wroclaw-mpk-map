@@ -10,6 +10,7 @@ const {
   createFallbackIncidents,
   incidentFingerprintForAlert,
   normalizeIncidentPayload,
+  splitHeadline,
 } = require('../src/ai-incidents');
 const { AlertsService } = require('../src/alerts');
 
@@ -484,5 +485,192 @@ describe('AlertsService incident integration', () => {
     assert.equal(calls, 1);
     assert.deepEqual(service.getIncidents(), generated);
     assert.equal(service.incidentStatus.lastError, null);
+  });
+});
+
+describe('one notice, printed once', () => {
+  // Observed in the app: an incident detail screen showed the same AlertMPK
+  // post three times over — as the summary, as the timeline entry's title, and
+  // again as that entry's detail. An X post has no title of its own, so the
+  // fallback used its whole text for both fields and the client, comparing
+  // them for equality, saw a 120-character truncation and a full text and
+  // rendered both.
+  const post = {
+    id: 'post-1',
+    title: null,
+    content:
+      '⚠️ Brak przejazdu - Podwale (awaria tramwaju). 🚋 Tramwaje linii 20>Leśnica ' +
+      'zostały skierowane objazdem z pominięciem przystanku "Renoma".',
+    url: 'https://x.com/AlertMPK/status/9',
+    timestamp: at('15:54'),
+    source: 'x-bridge:test',
+    affected: ['20'],
+    types: { 20: 'tram' },
+  };
+
+  it('does not repeat the post as both title and detail', () => {
+    const [incident] = createFallbackIncidents([post]);
+    const [event] = incident.timeline;
+
+    assert.ok(event.detail, 'the rest of the post is still served');
+    assert.notEqual(event.title, event.detail);
+    assert.ok(
+      !event.detail.includes(event.title),
+      'the detail must not restate the headline above it',
+    );
+    assert.equal(`${event.title} ${event.detail}`, post.content, 'and nothing is lost');
+  });
+
+  it('keeps the incident title clear of the summary it sits above', () => {
+    const [incident] = createFallbackIncidents([post]);
+
+    assert.equal(incident.title, '⚠️ Brak przejazdu - Podwale (awaria tramwaju).');
+    assert.ok(incident.summary.length > incident.title.length);
+  });
+
+  it('still carries a separate title through when the source has one', () => {
+    // Notice pages do have real headlines, and those are not a duplicate of
+    // the body — that path must not be collateral damage.
+    const [incident] = createFallbackIncidents([{
+      ...post,
+      id: 'notice-1',
+      title: 'Zmiana trasy linii 20',
+      content: 'Od poniedziałku tramwaje linii 20 pojadą objazdem przez Podwale.',
+    }]);
+
+    assert.equal(incident.timeline[0].title, 'Zmiana trasy linii 20');
+    assert.equal(
+      incident.timeline[0].detail,
+      'Od poniedziałku tramwaje linii 20 pojadą objazdem przez Podwale.',
+    );
+  });
+
+  it('does not split on a Polish abbreviation', () => {
+    // "ul." and "godz." end a token, not a sentence; splitting there leaves a
+    // stub headline with the whole notice underneath it — the same bug again.
+    const { title } = splitHeadline(
+      'Zderzenie na ul. Legnickiej blokuje torowisko w obu kierunkach, tramwaje ' +
+        'linii 3 i 10 kursują objazdem przez Poświętne aż do odwołania.',
+    );
+
+    assert.ok(title.length > 24, `headline too short: ${title}`);
+    assert.ok(!/\bul\.$/.test(title));
+  });
+
+  it('leaves a short notice whole', () => {
+    assert.deepEqual(splitHeadline('Awaria usunięta, ruch przywrócony.'), {
+      title: 'Awaria usunięta, ruch przywrócony.',
+      detail: null,
+    });
+  });
+});
+
+describe('re-parsing incidents on demand', () => {
+  // A provider that was down leaves deterministic incidents behind, and
+  // nothing invalidates them: a cluster that generated nothing cached nothing
+  // to expire, so those incidents stay prose-free until a *new* post arrives.
+  // This is that retry, on demand.
+  const buildService = (provider) => new AlertsService(
+    () => new Set(['K', '142', '144']),
+    [{ name: 'fixture', async fetch() { return alerts; } }],
+    { aiProvider: provider, aiCacheTtlMs: 60_000 },
+  );
+
+  const payloadFor = (group) => ({
+    incidents: [{
+      status: 'active',
+      severity: 'moderate',
+      title: 'Utrudnienia na Reymonta',
+      locationName: 'Reymonta',
+      summary: 'Autobusy kursują objazdem.',
+      shortNotificationTitle: null,
+      shortNotificationBody: null,
+      mapHints: { stopNames: [], streetNames: ['Reymonta'], areaNames: [] },
+      sourceAlertIds: group.alerts.map((alert) => String(alert.id)),
+      timeline: group.alerts.map((alert) => ({
+        kind: 'update',
+        title: 'Aktualizacja',
+        detail: null,
+        sourceAlertIds: [String(alert.id)],
+      })),
+      ai: { confidence: 'medium' },
+    }],
+  });
+
+  it('turns a failed run into a generated one without a new alert arriving', async () => {
+    let down = true;
+    let calls = 0;
+    const service = buildService({
+      enabled: true,
+      name: 'openrouter',
+      activeModel: 'test/model',
+      models: ['test/model'],
+      status: { reason: null },
+      async completeJson({ user }) {
+        calls += 1;
+        if (down) throw new Error('AI provider timed out after 90000ms');
+        return payloadFor(JSON.parse(user));
+      },
+    });
+
+    await service.refresh();
+    assert.equal(service.getIncidents().every((incident) => !incident.ai.generated), true);
+    assert.match(service.incidentStatus.lastError, /timed out/);
+
+    down = false;
+    const result = await service.regenerateIncidents();
+
+    assert.ok(result.generated > 0, 'the AI narrative is there on the second try');
+    assert.equal(result.fallback, 0);
+    assert.equal(result.error, null);
+    assert.equal(service.incidentStatus.lastError, null);
+    assert.equal(service.getIncidents().every((incident) => incident.ai.generated), true);
+    assert.ok(calls > 1);
+  });
+
+  it('does not re-bill a cluster whose narrative is already cached', async () => {
+    let calls = 0;
+    const service = buildService({
+      enabled: true,
+      name: 'openrouter',
+      activeModel: 'test/model',
+      models: ['test/model'],
+      status: { reason: null },
+      async completeJson({ user }) {
+        calls += 1;
+        return payloadFor(JSON.parse(user));
+      },
+    });
+
+    await service.refresh();
+    const afterRefresh = calls;
+    await service.regenerateIncidents();
+
+    assert.equal(calls, afterRefresh, 'a settled incident costs nothing to re-parse');
+  });
+
+  it('reports the model that answered, not the head of the chain', async () => {
+    const service = buildService({
+      enabled: true,
+      name: 'openrouter',
+      activeModel: 'second/free',
+      models: ['first/free', 'second/free'],
+      status: { reason: null },
+      async completeJson({ user }) { return payloadFor(JSON.parse(user)); },
+    });
+
+    await service.refresh();
+    assert.equal(service.incidentStatus.model, 'second/free');
+    assert.equal(service.getIncidents()[0].ai.model, 'second/free');
+  });
+
+  it('is a no-op with nothing to parse', async () => {
+    const service = buildService({ enabled: false, name: 'off', status: { reason: 'off' } });
+    assert.deepEqual(await service.regenerateIncidents(), {
+      incidents: 0,
+      generated: 0,
+      fallback: 0,
+      error: null,
+    });
   });
 });

@@ -213,9 +213,21 @@ function IncidentCard({ incident, onPress }: { incident: Incident; onPress: () =
   );
 }
 
+/** Lowercased, punctuation-free, for comparing two renderings of one notice. */
+const sameWords = (text: string) =>
+  text.toLocaleLowerCase('pl-PL').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
 function IncidentDetail({ incident, onShowMap }: { incident: Incident; onShowMap: () => void }) {
   const theme = useTheme();
   const timeline = [...incident.timeline].sort((left, right) => left.timestamp - right.timestamp);
+  const summary = clean(incident.summary);
+  // A one-post incident has nothing to summarise: "Stan obecny" and the single
+  // timeline entry are the same sentence, and printing both made one AlertMPK
+  // post fill the screen twice. With more than one entry the summary earns its
+  // place — it is the current state, not the whole history.
+  const summaryIsTheTimeline =
+    timeline.length === 1 &&
+    sameWords(`${timeline[0].title} ${timeline[0].detail ?? ''}`).includes(sameWords(summary));
 
   return (
     <View style={styles.detail}>
@@ -248,11 +260,13 @@ function IncidentDetail({ incident, onShowMap }: { incident: Incident; onShowMap
         </View>
       )}
 
-      <Section title="Stan obecny">
-        <View style={styles.summary}>
-          <ThemedText type="body">{clean(incident.summary)}</ThemedText>
-        </View>
-      </Section>
+      {!!summary && !summaryIsTheTimeline && (
+        <Section title="Stan obecny">
+          <View style={styles.summary}>
+            <ThemedText type="body">{summary}</ThemedText>
+          </View>
+        </Section>
+      )}
 
       <Section title="Oś czasu">
         {timeline.length ? timeline.map((entry, index) => {

@@ -716,6 +716,24 @@ const createRouter = ({
 
       return res.json({ model: alerts.aiModel, source: 'override' });
     });
+
+    // Re-run incident generation over the alerts already in memory.
+    //
+    // The refresh cycle re-tries failed clusters on its own, but only every
+    // few minutes and without saying so; after fixing the thing that broke —
+    // a rate limit, a dead model, a provider that was down — this is how you
+    // see whether it worked. Cached clusters are not regenerated, so the cost
+    // is the clusters that fell back and nothing else.
+    router.post('/admin/api/ai/reparse', requireAdmin, noStore, async (req, res) => {
+      if (typeof alerts.regenerateIncidents !== 'function') {
+        return res.status(501).json({ error: 'this server cannot re-parse incidents' });
+      }
+      try {
+        return res.json(await alerts.regenerateIncidents());
+      } catch (error) {
+        return res.status(500).json({ error: error?.message || 're-parse failed' });
+      }
+    });
   }
 
   return router;

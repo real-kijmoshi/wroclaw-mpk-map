@@ -105,6 +105,59 @@ const clampText = (value, max, nullable = false) => {
   return text.slice(0, max);
 };
 
+const HEADLINE_MAX = 120;
+const HEADLINE_MIN = 24;
+
+/**
+ * Polish abbreviations whose full stop is not the end of a sentence.
+ *
+ * "ul." and "godz." are in almost every AlertMPK post, and splitting on them
+ * produces a two-word headline ("Awaria na ul.") with the whole notice as its
+ * detail — which is the duplication this function exists to remove, wearing a
+ * hat.
+ */
+const ABBREVIATION_END = /(?:^|\s)(?:ul|al|pl|os|godz|ok|tzw|im|st|nr|dot|tj|np|min|szt|wg|r)\.$/i;
+
+/**
+ * Split one notice into a headline and the rest of it.
+ *
+ * An X post has no title of its own: `title` is null and `content` is the whole
+ * post. Using the post for both — a 120-character `title` and the full text as
+ * `detail` — printed it twice in the timeline, and a third time as the
+ * incident summary above. So the first sentence becomes the headline and what
+ * follows becomes the detail: every word still reaches the reader, exactly
+ * once. A notice with no usable sentence break is cut at a word boundary for
+ * the same reason, rather than truncated with the full text repeated under it.
+ *
+ * @param {string} raw
+ * @returns {{ title: string|null, detail: string|null }}
+ */
+const splitHeadline = (raw) => {
+  const text = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return { title: null, detail: null };
+  if (text.length <= HEADLINE_MAX) return { title: text, detail: null };
+
+  const boundary = /[.!?…](?=\s)/g;
+  let match;
+  while ((match = boundary.exec(text)) !== null) {
+    const head = text.slice(0, match.index + 1);
+    if (head.length > HEADLINE_MAX) break;
+    if (head.length < HEADLINE_MIN || ABBREVIATION_END.test(head)) continue;
+    const rest = text.slice(match.index + 1).trim();
+    if (rest) return { title: head, detail: rest.slice(0, 500) };
+    break;
+  }
+
+  // Cut at a word boundary — but not one that leaves a stray word or two
+  // underneath the headline, which reads as a typesetting accident rather than
+  // as detail. Backing the cut up gives the second line something to say.
+  const space = text.lastIndexOf(' ', HEADLINE_MAX);
+  const earlier = text.lastIndexOf(' ', text.length - HEADLINE_MIN);
+  const boundaries = [space, earlier].filter((index) => index > HEADLINE_MIN && index <= HEADLINE_MAX);
+  const cut = boundaries.length ? Math.min(...boundaries) : Math.min(space > 0 ? space : HEADLINE_MAX, HEADLINE_MAX);
+  return { title: text.slice(0, cut).trim(), detail: text.slice(cut).trim().slice(0, 500) };
+};
+
 const warsawDate = (timestamp) => new Date(asTimestamp(timestamp)).toLocaleDateString('en-CA', {
   timeZone: 'Europe/Warsaw',
   year: 'numeric',
@@ -263,7 +316,10 @@ const fallbackIncidentForGroup = (alerts, error = 'AI disabled') => {
     id: incidentIdForAlerts(ordered),
     status: resolved ? 'resolved' : (combinedText ? 'active' : 'unknown'),
     severity,
-    title: clampText(titleSource, 120),
+    // splitHeadline rather than a hard 120-character cut: the title sits above
+    // the summary, and half a sentence followed by the whole of it reads as
+    // the same text printed twice.
+    title: splitHeadline(titleSource).title ?? 'Utrudnienia w komunikacji',
     locationName: hints.length ? hints.slice(0, 3).join(' / ') : null,
     affected,
     types,
@@ -273,14 +329,17 @@ const fallbackIncidentForGroup = (alerts, error = 'AI disabled') => {
     mapHints: { stopNames: [], streetNames: hints.slice(0, 8), areaNames: [] },
     timeline: ordered.map((alert) => {
       const kind = classifyFallbackEvent(alert);
+      // A source with a real title of its own keeps it; a post that is nothing
+      // but body text is split rather than printed as both title and detail.
+      const parts = alert.title && alert.title !== alert.content
+        ? { title: clampText(alert.title, 120), detail: clampText(alert.content, 500, true) }
+        : splitHeadline(alert.content || alert.title || 'Aktualizacja');
       return {
         id: `event-${incidentFingerprintForAlert(alert)}`,
         timestamp: asTimestamp(alert.timestamp),
         kind,
-        title: clampText(alert.title || alert.content || 'Aktualizacja', 120),
-        detail: alert.content && alert.content !== alert.title
-          ? clampText(alert.content, 500, true)
-          : null,
+        title: parts.title ?? 'Aktualizacja',
+        detail: parts.detail,
         sourceAlertIds: [String(alert.id)],
       };
     }),
@@ -551,4 +610,5 @@ module.exports = {
   createFallbackIncidents,
   incidentFingerprintForAlert,
   normalizeIncidentPayload,
+  splitHeadline,
 };
