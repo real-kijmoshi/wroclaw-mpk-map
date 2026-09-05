@@ -2,42 +2,103 @@
 <html lang="pl">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="wroclive — prosta mapa tramwajów i autobusów Wrocławia na żywo. Sprawdź pojazdy, trasy, odjazdy i utrudnienia w jednym miejscu.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="wroclive — tramwaje i autobusy Wrocławia na żywo. Darmowa aplikacja na iPhone'a i mapa w przeglądarce: pozycje pojazdów co 10 sekund, trasy, odjazdy i utrudnienia.">
   <meta name="author" content="real-kijmoshi">
   <link rel="canonical" href="https://wroclive.kijmoshi.xyz/">
   <title>wroclive — mapa tramwajów i autobusów Wrocławia na żywo</title>
+
+  <!-- Baner instalacji w Safari na iOS. app-id musi zgadzać się z linkiem do App Store poniżej. -->
+  <meta name="apple-itunes-app" content="app-id=6799716104">
+
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="wroclive" />
   <meta property="og:title" content="wroclive — mapa tramwajów i autobusów Wrocławia na żywo" />
-  <meta property="og:description" content="Sprawdź, gdzie jest Twój tramwaj lub autobus, dokąd jedzie i kiedy pojawi się na przystanku." />
-  <meta property="og:image" content="https://raw.githubusercontent.com/real-kijmoshi/wroclaw-mpk-map/main/landing/images/IMG_9061.PNG" />
-  <meta property="og:image:alt" content="Zrzut ekranu aplikacji wroclive z mapą na żywo" />
+  <meta property="og:description" content="Sprawdź, gdzie jest Twój tramwaj lub autobus, dokąd jedzie i kiedy pojawi się na przystanku. Darmowa aplikacja na iPhone'a." />
+  <meta property="og:image" content="https://wroclive.kijmoshi.xyz/images/og.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="wroclive — mapa tramwajów i autobusów Wrocławia na żywo" />
+  <meta property="og:locale" content="pl_PL" />
   <meta property="og:url" content="https://wroclive.kijmoshi.xyz/" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="wroclive — mapa tramwajów i autobusów Wrocławia na żywo" />
-  <meta name="twitter:description" content="Sprawdź, gdzie jest Twój tramwaj lub autobus, dokąd jedzie i kiedy pojawi się na przystanku." />
-  <meta name="twitter:image" content="https://raw.githubusercontent.com/real-kijmoshi/wroclaw-mpk-map/main/landing/images/IMG_9061.PNG" />
-  <meta name="twitter:image:alt" content="Zrzut ekranu aplikacji wroclive z mapą na żywo" />
+  <meta name="twitter:description" content="Sprawdź, gdzie jest Twój tramwaj lub autobus, dokąd jedzie i kiedy pojawi się na przystanku. Darmowa aplikacja na iPhone'a." />
+  <meta name="twitter:image" content="https://wroclive.kijmoshi.xyz/images/og.jpg" />
+  <meta name="twitter:image:alt" content="wroclive — mapa tramwajów i autobusów Wrocławia na żywo" />
   <meta name="theme-color" content="#0B5FBF" />
   <meta name="theme-color" content="#05070C" media="(prefers-color-scheme: dark)" />
   <meta name="color-scheme" content="light dark" />
+
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "WebSite",
-    "name": "wroclive",
-    "url": "https://wroclive.kijmoshi.xyz/",
-    "description": "Mapa tramwajów i autobusów Wrocławia na żywo.",
-    "inLanguage": "pl-PL"
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "@id": "https://wroclive.kijmoshi.xyz/#website",
+        "name": "wroclive",
+        "url": "https://wroclive.kijmoshi.xyz/",
+        "description": "Mapa tramwajów i autobusów Wrocławia na żywo.",
+        "inLanguage": "pl-PL"
+      },
+      {
+        "@type": "MobileApplication",
+        "@id": "https://wroclive.kijmoshi.xyz/#app",
+        "name": "Wroclive – Tramwaje i Busy",
+        "applicationCategory": "TravelApplication",
+        "operatingSystem": "iOS 16.4 lub nowszy",
+        "url": "https://wroclive.kijmoshi.xyz/",
+        "installUrl": "https://apps.apple.com/pl/app/wroclive-tramwaje-i-busy/id6799716104",
+        "downloadUrl": "https://apps.apple.com/pl/app/wroclive-tramwaje-i-busy/id6799716104",
+        "screenshot": "https://wroclive.kijmoshi.xyz/images/IMG_9061.PNG",
+        "inLanguage": "pl-PL",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "PLN" }
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://wroclive.kijmoshi.xyz/#faq",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Skąd wroclive wie, gdzie jest pojazd?",
+            "acceptedAnswer": { "@type": "Answer", "text": "Z publicznego punktu końcowego MPK z pozycjami pojazdów, odpytywanego co 10 sekund, i z miejskiego rozkładu GTFS. Obie rzeczy są otwartymi danymi." }
+          },
+          {
+            "@type": "Question",
+            "name": "Czy aplikacja jest darmowa?",
+            "acceptedAnswer": { "@type": "Answer", "text": "Tak. Bez opłat, bez kont, bez reklam i bez zakupów w aplikacji." }
+          },
+          {
+            "@type": "Question",
+            "name": "Czy jest wersja na Androida?",
+            "acceptedAnswer": { "@type": "Answer", "text": "W App Store jest wersja na iPhone'a. Na Androidzie i na komputerze działa ta sama mapa w przeglądarce — bez instalacji." }
+          },
+          {
+            "@type": "Question",
+            "name": "Dlaczego pojazd stoi w miejscu albo znika?",
+            "acceptedAnswer": { "@type": "Answer", "text": "wroclive pokazuje dokładnie to, co nadaje pojazd. Kiedy nadajnik milczy, pozycja się nie zmienia, a po dłuższej przerwie pojazd znika z mapy zamiast udawać, że jedzie dalej." }
+          },
+          {
+            "@type": "Question",
+            "name": "Czy wroclive to oficjalna aplikacja MPK?",
+            "acceptedAnswer": { "@type": "Answer", "text": "Nie. To niezależny projekt open source, który czyta dane publikowane publicznie przez miasto." }
+          }
+        ]
+      }
+    ]
   }
   </script>
+
   <link rel="icon" href="images/icon-light.jpeg" type="image/jpeg" />
   <link rel="icon" href="images/icon-dark.jpeg" type="image/jpeg" media="(prefers-color-scheme: dark)" />
+  <link rel="apple-touch-icon" href="images/icon-dark.jpeg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://api.wroclive.kijmoshi.xyz" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Spline+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="preload" as="image" href="images/IMG_9061.webp" type="image/webp" fetchpriority="high" />
   <style>
     /*
      * System wizualny: schemat sieci + tablica odjazdów.
@@ -46,7 +107,7 @@
      * indziej jako dekoracja. Bursztyn nadal zarezerwowany dla
      * odliczania minut w aplikacji i tu się nie pojawia.
      * Mono (IBM Plex Mono) dla wszystkiego co odczytowe/techniczne:
-     * etykiety sekcji, statusy, endpointy — jak na panelu dyspozytora.
+     * etykiety sekcji, statusy, liczniki — jak na panelu dyspozytora.
      */
     :root {
       color-scheme: light dark;
@@ -61,6 +122,7 @@
 
       --bg: #F2F2F7;
       --surface: #FFFFFF;
+      --surface-2: #FAFAFC;
       --text: #0F172A;
       --muted: #64748B;
       --separator: rgba(60, 60, 67, 0.18);
@@ -82,6 +144,7 @@
       :root {
         --bg: #000000;
         --surface: #1C1C1E;
+        --surface-2: #141416;
         --text: #F5F5F7;
         --muted: #98989F;
         --separator: rgba(255, 255, 255, 0.14);
@@ -96,7 +159,7 @@
 
     html {
       scroll-behavior: smooth;
-      scroll-padding-top: 68px;
+      scroll-padding-top: 72px;
     }
 
     body {
@@ -112,28 +175,29 @@
     a { color: var(--rail); text-decoration: none; }
     a:hover { text-decoration: underline; }
 
-    a:focus-visible, button:focus-visible {
+    a:focus-visible, button:focus-visible, summary:focus-visible {
       outline: 2px solid var(--rail);
       outline-offset: 3px;
       border-radius: 4px;
     }
 
     .container {
-      width: min(1080px, 100% - 2 * 24px);
+      width: min(1120px, 100% - 2 * 24px);
       margin: 0 auto;
     }
 
-    section { padding: 4.5rem 0; }
+    section { padding: clamp(3.5rem, 8vw, 5.5rem) 0; }
+    section + section { border-top: 1px solid var(--separator); }
     section > .container > .eyebrow { margin: 0 0 0.6rem; }
     section > .container > h2 {
       margin: 0 0 0.5rem;
-      font-size: clamp(1.6rem, 3vw, 2.1rem);
-      line-height: 1.2;
-      letter-spacing: -0.02em;
+      font-size: clamp(1.7rem, 3.4vw, 2.3rem);
+      line-height: 1.15;
+      letter-spacing: -0.025em;
     }
     section > .container > .lead {
       margin: 0 0 2.5rem;
-      max-width: 60ch;
+      max-width: 62ch;
       color: var(--muted);
       font-size: 1.05rem;
     }
@@ -188,7 +252,7 @@
       display: flex;
       align-items: center;
       gap: 0.85rem;
-      height: 56px;
+      height: 60px;
     }
     .nav__logo {
       display: inline-flex;
@@ -234,7 +298,10 @@
 
     /* ---------- przyciski ---------- */
     .btn {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
       padding: 0.8rem 1.6rem;
       border-radius: var(--radius-control);
       font-weight: 600;
@@ -253,17 +320,43 @@
       border: 1px solid var(--separator);
     }
 
+    /* Przycisk instalacji. Nie jest oficjalną plakietką Apple — własny
+       kształt w typografii tej strony, żeby nie podszywać się pod artwork. */
+    .install {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.7rem 1.4rem 0.75rem;
+      border-radius: 14px;
+      background: #0B0B0C;
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      box-shadow: var(--shadow-chip);
+      transition: transform var(--ease), background var(--ease);
+    }
+    .install:hover { text-decoration: none; }
+    .install svg { width: 26px; height: 26px; flex: none; fill: currentColor; }
+    .install__label { display: block; line-height: 1.15; text-align: left; }
+    .install__label small {
+      display: block;
+      font-size: 0.68rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      opacity: 0.75;
+      font-family: var(--font-mono);
+    }
+    .install__label strong { display: block; font-size: 1.12rem; font-weight: 600; letter-spacing: -0.01em; }
+
     /* ---------- hero ---------- */
     .hero {
       position: relative;
       overflow: hidden;
-      padding: clamp(4rem, 10vh, 7rem) 0 clamp(3.5rem, 8vh, 6rem);
+      padding: clamp(3rem, 8vh, 5.5rem) 0 clamp(3rem, 8vh, 5rem);
       background:
         radial-gradient(1100px 500px at 85% -10%, rgba(11, 95, 191, 0.45), transparent 60%),
         radial-gradient(800px 420px at -10% 110%, rgba(8, 74, 150, 0.35), transparent 60%),
         linear-gradient(180deg, var(--ink), var(--ink-2));
       color: #fff;
-      text-align: center;
     }
     .hero__bg {
       position: absolute;
@@ -288,15 +381,14 @@
     .hero__bg .vehicle__core { fill: var(--live); }
 
     .hero > .container { position: relative; z-index: 1; }
-    .hero .hero__logo {
-      width: 84px;
-      height: 84px;
-      margin: 0 auto 1.5rem;
-      display: block;
-      filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.4));
+    .hero__grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+      align-items: center;
+      gap: clamp(2rem, 5vw, 4rem);
     }
     .hero .kicker {
-      margin: 0 0 1rem;
+      margin: 0 0 0.9rem;
       font-family: var(--font-mono);
       font-size: 0.78rem;
       font-weight: 600;
@@ -306,45 +398,101 @@
     }
     .hero h1 {
       margin: 0;
-      font-size: clamp(2.6rem, 8vw, 4.5rem);
-      line-height: 1.05;
-      letter-spacing: -0.03em;
+      font-size: clamp(2.6rem, 6.5vw, 4.2rem);
+      line-height: 1.03;
+      letter-spacing: -0.035em;
       font-weight: 700;
     }
+    .hero h1 .h1-sub {
+      display: block;
+      margin-top: 0.5rem;
+      font-size: clamp(1.15rem, 2.4vw, 1.6rem);
+      line-height: 1.25;
+      letter-spacing: -0.01em;
+      font-weight: 500;
+      color: #9EC6F5;
+    }
     .hero .tagline {
-      margin: 1.25rem auto 2rem;
-      max-width: 46ch;
-      font-size: clamp(1.05rem, 2vw, 1.25rem);
+      margin: 1.25rem 0 2rem;
+      max-width: 44ch;
+      font-size: clamp(1.02rem, 1.6vw, 1.18rem);
       color: #B9C4D2;
     }
     .hero .cta {
       display: flex;
       flex-wrap: wrap;
-      justify-content: center;
       gap: 0.9rem;
+      align-items: center;
     }
     .hero .btn-ghost {
       color: #fff;
       border-color: rgba(255, 255, 255, 0.25);
     }
-    .hero .badges {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 0.5rem;
-      margin: 2.5rem 0 0;
+    .hero .meta {
+      margin: 1.1rem 0 0;
+      font-size: 0.85rem;
+      color: #8FA1B6;
+    }
+    .hero__logo {
+      width: 64px;
+      height: 64px;
+      border-radius: 14px;
+      display: block;
+      margin: 0 0 1.4rem;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+    }
+
+    /* licznik na żywo — wypełniany z API, ukryty gdy API milczy */
+    .livebar {
+      margin: 2.25rem 0 0;
       padding: 0;
       list-style: none;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      background: rgba(255, 255, 255, 0.14);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: var(--radius-card);
+      overflow: hidden;
     }
-    .hero .badges li {
-      padding: 0.35rem 0.85rem;
-      border: 1px solid rgba(255, 255, 255, 0.16);
-      border-radius: 999px;
+    .livebar[hidden] { display: none; }
+    .livebar li {
+      background: rgba(5, 7, 12, 0.45);
+      padding: 0.9rem 1rem;
+      text-align: center;
+    }
+    .livebar .num {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: clamp(1.25rem, 2.6vw, 1.65rem);
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: #fff;
+      font-variant-numeric: tabular-nums;
+    }
+    .livebar .num.is-live { color: #4ADE80; }
+    .livebar .lbl {
+      display: block;
+      margin-top: 0.15rem;
+      font-size: 0.74rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #8FA1B6;
+      font-family: var(--font-mono);
+    }
+
+    /* telefon w hero — specyficzniej niż .phone niżej, bo ta ramka
+       stoi na ciemnym tle i nie może wziąć jasnego tła karty */
+    .hero .hero__phone {
+      justify-self: center;
+      width: min(300px, 78vw);
+      padding: 0.55rem 0.55rem 0.55rem;
+      border-radius: 34px;
       background: rgba(255, 255, 255, 0.06);
-      font-size: 0.82rem;
-      color: #D4DBE4;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: 0 30px 60px rgba(0, 0, 0, 0.5);
+      transform: rotate(-1.2deg);
     }
-    .hero .badges .live { color: #4ADE80; font-family: var(--font-mono); }
 
     @keyframes pulseDot {
       0% { box-shadow: 0 0 0 0 var(--live-glow); }
@@ -362,11 +510,12 @@
       flex-wrap: wrap;
       justify-content: center;
       align-items: flex-end;
-      gap: 2rem;
+      gap: clamp(1.25rem, 4vw, 2.5rem);
       margin: 0;
     }
     .phone {
       width: min(240px, 60vw);
+      margin: 0;
       padding: 0.55rem 0.55rem 0.75rem;
       background: var(--surface);
       border: 1px solid var(--separator);
@@ -397,7 +546,7 @@
       display: block;
       width: 100%;
       height: auto;
-      aspect-ratio: 1206 / 2622;
+      aspect-ratio: 1290 / 2796;
       object-fit: cover;
     }
     .phone__live {
@@ -432,6 +581,8 @@
       font-size: 0.85rem;
       color: var(--muted);
     }
+    .hero__phone .phone__frame { border-radius: 28px; }
+    .hero__phone .phone__frame::before { background: rgba(0, 0, 0, 0.9); }
 
     /* ---------- funkcje ---------- */
     .grid {
@@ -461,6 +612,69 @@
       flex: none;
     }
     .icon-mark svg { width: 22px; height: 22px; }
+
+    /* ---------- pobierz ---------- */
+    .download {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+      gap: 1.25rem;
+      align-items: stretch;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--separator);
+      border-radius: var(--radius-card);
+      padding: clamp(1.4rem, 3vw, 2rem);
+    }
+    .card h3 { margin: 0 0 0.4rem; font-size: 1.25rem; letter-spacing: -0.015em; }
+    .card p { margin: 0 0 1.25rem; color: var(--muted); font-size: 0.95rem; }
+    .card--ios { display: flex; flex-direction: column; }
+    .card--ios .install { align-self: flex-start; }
+    .specs {
+      margin: 1.25rem 0 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .specs li {
+      padding: 0.3rem 0.7rem;
+      border: 1px solid var(--separator);
+      border-radius: 999px;
+      background: var(--surface-2);
+    }
+    .qr {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: 0.9rem;
+    }
+    .qr img {
+      width: 148px;
+      height: 148px;
+      display: block;
+      border-radius: 12px;
+      background: #fff;
+      padding: 8px;
+      border: 1px solid var(--separator);
+    }
+    .qr p { margin: 0; font-size: 0.88rem; }
+    .alt-platforms {
+      margin: 1.25rem 0 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+    }
+    .alt-platforms .note { font-size: 0.85rem; color: var(--muted); margin: 0; }
 
     /* ---------- dane ---------- */
     .sources {
@@ -510,6 +724,53 @@
       border-radius: 4px;
     }
 
+    /* ---------- faq ---------- */
+    .faq { max-width: 760px; }
+    .faq details {
+      background: var(--surface);
+      border: 1px solid var(--separator);
+      border-radius: var(--radius-card);
+      padding: 0 1.35rem;
+      margin-bottom: 0.75rem;
+    }
+    .faq summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 1.1rem 2rem 1.1rem 0;
+      font-weight: 600;
+      font-size: 1rem;
+      position: relative;
+    }
+    .faq summary::-webkit-details-marker { display: none; }
+    .faq summary::after {
+      content: "";
+      position: absolute;
+      right: 0.2rem;
+      top: 50%;
+      width: 9px;
+      height: 9px;
+      border-right: 2px solid var(--muted);
+      border-bottom: 2px solid var(--muted);
+      transform: translateY(-70%) rotate(45deg);
+      transition: transform 0.2s var(--ease);
+    }
+    .faq details[open] summary::after { transform: translateY(-30%) rotate(-135deg); }
+    .faq p { margin: 0 0 1.2rem; color: var(--muted); font-size: 0.95rem; }
+
+    /* ---------- pasek końcowy ---------- */
+    .closer {
+      background:
+        radial-gradient(700px 320px at 80% 0%, rgba(11, 95, 191, 0.4), transparent 60%),
+        linear-gradient(180deg, var(--ink), var(--ink-2));
+      color: #fff;
+      text-align: center;
+      border-top: 0;
+    }
+    .closer h2 { margin: 0 0 0.6rem; font-size: clamp(1.6rem, 3.4vw, 2.2rem); letter-spacing: -0.025em; }
+    .closer p { margin: 0 auto 1.9rem; max-width: 46ch; color: #B9C4D2; }
+    .closer .cta { display: flex; flex-wrap: wrap; gap: 0.9rem; justify-content: center; }
+    .closer .btn-ghost { color: #fff; border-color: rgba(255, 255, 255, 0.25); }
+
     /* ---------- stopka ---------- */
     footer {
       padding: 3rem 0 4rem;
@@ -524,7 +785,7 @@
       justify-content: space-between;
       gap: 1rem;
     }
-    footer .links { display: flex; gap: 1.25rem; }
+    footer .links { display: flex; flex-wrap: wrap; gap: 1.25rem; }
     footer a { color: var(--muted); font-weight: 500; }
     footer a:hover { color: var(--text); }
     footer .disclaimer { width: 100%; margin: 1.25rem 0 0; font-size: 0.82rem; }
@@ -533,7 +794,8 @@
     @media (hover: hover) {
       .btn-primary:hover { background: var(--rail-dark); transform: translateY(-1px); }
       .btn-ghost:hover { background: var(--fill); }
-      .hero .btn-ghost:hover { background: rgba(255, 255, 255, 0.08); }
+      .hero .btn-ghost:hover, .closer .btn-ghost:hover { background: rgba(255, 255, 255, 0.08); }
+      .install:hover { background: #17171A; transform: translateY(-1px); }
       .phone:hover { transform: translateY(-4px); }
       .feature:hover {
         transform: translateY(-4px);
@@ -552,11 +814,31 @@
       .hero__bg .vehicle { display: none; }
     }
 
-    /* ---------- drobne poprawki mobilne ---------- */
+    /* ---------- układy węższe ---------- */
+    @media (max-width: 900px) {
+      .hero__grid { grid-template-columns: 1fr; text-align: center; }
+      .hero .tagline { margin-left: auto; margin-right: auto; }
+      .hero .cta { justify-content: center; }
+      .hero__logo { margin-left: auto; margin-right: auto; }
+      .hero .hero__phone { order: -1; width: min(260px, 66vw); transform: none; }
+      .download { grid-template-columns: 1fr; }
+      .card--ios .install { align-self: center; }
+      .card--ios { text-align: center; }
+      .card--ios .specs { justify-content: center; }
+      .card--ios .alt-platforms { justify-content: center; }
+    }
+
+    /* Kod QR ma sens tylko na dużym ekranie — na telefonie użytkownik
+       już ma telefon w ręku i kartę można schować. */
+    @media (max-width: 700px) {
+      .qr { display: none; }
+    }
+
     @media (max-width: 480px) {
       .nav__links { gap: 0.75rem; }
       .nav__links a:not(.btn) { display: none; }
-      section { padding: 3.5rem 0; }
+      .livebar { grid-template-columns: 1fr; }
+      .phone, .phone--feature { width: min(260px, 78vw); }
     }
   </style>
 </head>
@@ -575,8 +857,9 @@
       <div class="nav__links">
         <a href="#funkcje">Funkcje</a>
         <a href="#dane">Dane</a>
+        <a href="#faq">FAQ</a>
         <a href="support.html">Pomoc</a>
-        <a class="btn btn-primary" href="https://github.com/real-kijmoshi/wroclaw-mpk-map">GitHub</a>
+        <a class="btn btn-primary" href="https://apps.apple.com/pl/app/wroclive-tramwaje-i-busy/id6799716104" target="_blank" rel="noopener">Pobierz na iPhone'a</a>
       </div>
     </div>
   </nav>
@@ -600,48 +883,45 @@
       </svg>
     </div>
     <div class="container">
-      <img class="hero__logo" src="images/icon-dark.jpeg" alt="" width="84" height="84" />
-      <p class="kicker">Wrocław · tramwaje · autobusy</p>
-      <h1>wroclive</h1>
-      <p class="tagline">Wrocław bez zgadywania. Zobacz, gdzie jest Twój tramwaj lub autobus, dokąd jedzie i ile zostało do Twojego przystanku.</p>
-      <div class="cta">
-        <a class="btn btn-primary" href="/map.html">Mapa na żywo</a>
-        <a class="btn btn-ghost" href="support.html">Pomoc i kontakt</a>
+      <div class="hero__grid">
+        <div>
+          <img class="hero__logo" src="images/icon-dark.jpeg" alt="" width="64" height="64" />
+          <p class="kicker">Wrocław · tramwaje · autobusy</p>
+          <h1>wroclive<span class="h1-sub">Twój tramwaj na mapie, zanim dojdziesz na przystanek.</span></h1>
+          <p class="tagline">Zobacz, gdzie naprawdę jest Twój kurs, dokąd jedzie i ile minut zostało do Twojego przystanku. Bez kont, bez reklam.</p>
+          <div class="cta">
+            <a class="install" href="https://apps.apple.com/pl/app/wroclive-tramwaje-i-busy/id6799716104" target="_blank" rel="noopener">
+              <svg viewBox="0 0 22.773 22.773" aria-hidden="true" focusable="false"><path d="M15.769 0h.162c.13 1.606-.483 2.806-1.228 3.675-.731.863-1.732 1.7-3.351 1.573-.108-1.583.506-2.694 1.25-3.561C13.292.879 14.557.16 15.769 0zm4.901 16.716v.014c-.455 1.377-1.104 2.558-1.896 3.653-.723.994-1.609 2.331-3.191 2.331-1.367 0-2.275-.879-3.676-.903-1.482-.024-2.297.735-3.652.926h-.462c-.995-.144-1.798-.932-2.383-1.642-1.725-2.098-3.058-4.808-3.306-8.276v-1.019c.105-2.482 1.311-4.5 2.914-5.478.846-.52 2.009-.963 3.304-.765.555.086 1.122.276 1.619.464.471.181 1.06.502 1.618.485.378-.011.754-.208 1.135-.347 1.116-.403 2.21-.865 3.652-.648 1.733.262 2.963 1.032 3.723 2.22-1.466.933-2.625 2.339-2.427 4.74.176 2.181 1.443 3.457 3.028 4.245z"/></svg>
+              <span class="install__label">
+                <small>Pobierz za darmo</small>
+                <strong>App Store</strong>
+              </span>
+            </a>
+            <a class="btn btn-ghost" href="/map.html">Otwórz mapę w przeglądarce</a>
+          </div>
+          <p class="meta">iOS 16.4 lub nowszy · 48 MB · bez opłat i bez zakupów w aplikacji</p>
+        </div>
+
+        <figure class="phone hero__phone">
+          <div class="phone__frame">
+            <picture>
+              <source srcset="images/IMG_9061.webp" type="image/webp" />
+              <img src="images/IMG_9061.PNG" alt="Mapa wroclive z pozycjami tramwajów i autobusów oraz narysowaną trasą linii" width="1290" height="2796" fetchpriority="high" />
+            </picture>
+            <span class="phone__live"><span class="dot"></span>NA ŻYWO</span>
+          </div>
+        </figure>
       </div>
-      <ul class="badges">
-        <li class="live">● Pojazdy na żywo, co 10 s</li>
-        <li>Otwarte dane</li>
-        <li>iOS · Android · Web</li>
+
+      <ul class="livebar" id="livebar" hidden>
+        <li><span class="num is-live" id="stat-vehicles">—</span><span class="lbl">pojazdów w ruchu</span></li>
+        <li><span class="num" id="stat-lines">—</span><span class="lbl">linii</span></li>
+        <li><span class="num" id="stat-stops">—</span><span class="lbl">przystanków</span></li>
       </ul>
     </div>
   </header>
 
   <main id="main-content">
-    <section id="aplikacja" aria-labelledby="aplikacja-heading">
-      <div class="container">
-        <p class="eyebrow">Podgląd</p>
-        <h2 id="aplikacja-heading">Aplikacja</h2>
-        <p class="lead">Najważniejsze informacje są pod ręką: pozycja pojazdu, kierunek, trasa, najbliższe odjazdy i aktualne utrudnienia.</p>
-        <div class="screenshots">
-          <figure class="phone">
-            <div class="phone__frame"><img src="images/IMG_9056.PNG" alt="Trasa linii i najbliższe odjazdy z przystanku" loading="lazy"></div>
-            <figcaption class="phone__caption">Trasa i odjazdy</figcaption>
-          </figure>
-          <figure class="phone phone--feature">
-            <div class="phone__frame">
-              <img src="images/IMG_9061.PNG" alt="Mapa z pozycjami pojazdów i narysowaną trasą" loading="lazy">
-              <span class="phone__live"><span class="dot"></span>NA ŻYWO</span>
-            </div>
-            <figcaption class="phone__caption">Mapa na żywo</figcaption>
-          </figure>
-          <figure class="phone">
-            <div class="phone__frame"><img src="images/IMG_9058.PNG" alt="Szczegóły komunikatu o utrudnieniu" loading="lazy"></div>
-            <figcaption class="phone__caption">Utrudnienia</figcaption>
-          </figure>
-        </div>
-      </div>
-    </section>
-
     <section id="funkcje" aria-labelledby="funkcje-heading">
       <div class="container">
         <p class="eyebrow">Funkcje</p>
@@ -666,29 +946,103 @@
             <span class="icon-mark" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="18" r="2"/><path d="M6 18h5l3-8h5"/><circle cx="20" cy="8" r="2"/></svg>
             </span>
-            <h3>Trasy linii</h3>
-            <p>Pełne trasy na interaktywnej mapie, z każdym przystankiem po drodze i kursem, którym jedzie pojazd.</p>
+            <h3>Trasy i kierunek</h3>
+            <p>Pełna trasa na mapie, z każdym przystankiem po drodze i z kierunkiem, w którym pojazd faktycznie jedzie — a nie tym bliższym na mapie.</p>
           </div>
           <div class="feature">
             <span class="icon-mark" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             </span>
             <h3>Komunikaty o utrudnieniach</h3>
-            <p>Opóźnienia, awarie i zmiany w rozkładach dla linii, które obserwujesz — prosto z miejskich komunikatów.</p>
+            <p>Objazdy, awarie i zmiany w rozkładach — z filtrem, który przepuszcza komunikat dopiero wtedy, gdy naprawdę coś się dzieje.</p>
           </div>
           <div class="feature">
             <span class="icon-mark" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>
             </span>
             <h3>Najbliższe odjazdy</h3>
-            <p>Dotknij przystanku na trasie i zobacz najbliższe odjazdy oraz faktyczne opóźnienie pojazdu.</p>
+            <p>Dotknij przystanku na trasie i zobacz najbliższe odjazdy oraz faktyczne opóźnienie pojazdu, który do niego jedzie.</p>
           </div>
           <div class="feature">
             <span class="icon-mark" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><line x1="10.5" y1="18" x2="13.5" y2="18"/></svg>
             </span>
             <h3>Dla ulicy</h3>
-            <p>Telefon na pierwszym miejscu: mapa wypełnia ekran, a wszystko inne trzyma wysuwany panel.</p>
+            <p>Telefon na pierwszym miejscu: mapa wypełnia ekran, a wszystko inne trzyma wysuwany panel. Bez logowania i bez reklam.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="aplikacja" aria-labelledby="aplikacja-heading">
+      <div class="container">
+        <p class="eyebrow">Podgląd</p>
+        <h2 id="aplikacja-heading">Jak to wygląda</h2>
+        <p class="lead">Najważniejsze informacje są pod ręką: pozycja pojazdu, kierunek, trasa, najbliższe odjazdy i aktualne utrudnienia.</p>
+        <div class="screenshots">
+          <figure class="phone">
+            <div class="phone__frame">
+              <picture>
+                <source srcset="images/IMG_9056.webp" type="image/webp" />
+                <img src="images/IMG_9056.PNG" alt="Trasa linii i najbliższe odjazdy z przystanku" width="1290" height="2796" loading="lazy" decoding="async" />
+              </picture>
+            </div>
+            <figcaption class="phone__caption">Trasa i odjazdy</figcaption>
+          </figure>
+          <figure class="phone phone--feature">
+            <div class="phone__frame">
+              <picture>
+                <source srcset="images/IMG_9061.webp" type="image/webp" />
+                <img src="images/IMG_9061.PNG" alt="Mapa z pozycjami pojazdów i narysowaną trasą" width="1290" height="2796" loading="lazy" decoding="async" />
+              </picture>
+              <span class="phone__live"><span class="dot"></span>NA ŻYWO</span>
+            </div>
+            <figcaption class="phone__caption">Mapa na żywo</figcaption>
+          </figure>
+          <figure class="phone">
+            <div class="phone__frame">
+              <picture>
+                <source srcset="images/IMG_9058.webp" type="image/webp" />
+                <img src="images/IMG_9058.PNG" alt="Szczegóły komunikatu o utrudnieniu" width="1290" height="2796" loading="lazy" decoding="async" />
+              </picture>
+            </div>
+            <figcaption class="phone__caption">Utrudnienia</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section id="pobierz" aria-labelledby="pobierz-heading">
+      <div class="container">
+        <p class="eyebrow">Pobierz</p>
+        <h2 id="pobierz-heading">Weź wroclive ze sobą</h2>
+        <p class="lead">Na iPhone'a jest aplikacja. Na Androidzie i na komputerze działa ta sama mapa w przeglądarce — nic nie trzeba instalować.</p>
+        <div class="download">
+          <div class="card card--ios">
+            <h3>Aplikacja na iPhone'a</h3>
+            <p>Mapa na cały ekran, wyszukiwarka linii, odjazdy z przystanku i komunikaty — w jednej aplikacji.</p>
+            <a class="install" href="https://apps.apple.com/pl/app/wroclive-tramwaje-i-busy/id6799716104" target="_blank" rel="noopener">
+              <svg viewBox="0 0 22.773 22.773" aria-hidden="true" focusable="false"><path d="M15.769 0h.162c.13 1.606-.483 2.806-1.228 3.675-.731.863-1.732 1.7-3.351 1.573-.108-1.583.506-2.694 1.25-3.561C13.292.879 14.557.16 15.769 0zm4.901 16.716v.014c-.455 1.377-1.104 2.558-1.896 3.653-.723.994-1.609 2.331-3.191 2.331-1.367 0-2.275-.879-3.676-.903-1.482-.024-2.297.735-3.652.926h-.462c-.995-.144-1.798-.932-2.383-1.642-1.725-2.098-3.058-4.808-3.306-8.276v-1.019c.105-2.482 1.311-4.5 2.914-5.478.846-.52 2.009-.963 3.304-.765.555.086 1.122.276 1.619.464.471.181 1.06.502 1.618.485.378-.011.754-.208 1.135-.347 1.116-.403 2.21-.865 3.652-.648 1.733.262 2.963 1.032 3.723 2.22-1.466.933-2.625 2.339-2.427 4.74.176 2.181 1.443 3.457 3.028 4.245z"/></svg>
+              <span class="install__label">
+                <small>Pobierz za darmo</small>
+                <strong>App Store</strong>
+              </span>
+            </a>
+            <ul class="specs">
+              <li>Za darmo</li>
+              <li>iOS 16.4+</li>
+              <li>48 MB</li>
+              <li>Bez reklam</li>
+              <li>Bez kont</li>
+            </ul>
+            <div class="alt-platforms">
+              <a class="btn btn-ghost" href="/map.html">Mapa w przeglądarce</a>
+              <p class="note">Android, komputer, wszystko z przeglądarką.</p>
+            </div>
+          </div>
+          <div class="card qr">
+            <img src="images/qr-appstore.svg" alt="Kod QR prowadzący do aplikacji wroclive w App Store" width="148" height="148" loading="lazy" />
+            <p>Zeskanuj aparatem telefonu,<br>żeby otworzyć App Store.</p>
           </div>
         </div>
       </div>
@@ -733,6 +1087,57 @@
         </ul>
       </div>
     </section>
+
+    <section id="faq" aria-labelledby="faq-heading">
+      <div class="container">
+        <p class="eyebrow">FAQ</p>
+        <h2 id="faq-heading">Częste pytania</h2>
+        <p class="lead">Krótko o tym, co widać na mapie i skąd się to bierze.</p>
+        <div class="faq">
+          <details>
+            <summary>Skąd wroclive wie, gdzie jest pojazd?</summary>
+            <p>Z publicznego punktu końcowego MPK z pozycjami pojazdów, odpytywanego co 10 sekund, i z miejskiego rozkładu GTFS. Obie rzeczy są otwartymi danymi — nic nie pochodzi z zamkniętego API ani z ręcznych wpisów.</p>
+          </details>
+          <details>
+            <summary>Czy aplikacja jest darmowa?</summary>
+            <p>Tak. Bez opłat, bez kont, bez reklam i bez zakupów w aplikacji.</p>
+          </details>
+          <details>
+            <summary>Czy jest wersja na Androida?</summary>
+            <p>W App Store jest wersja na iPhone'a. Na Androidzie i na komputerze działa <a href="/map.html">ta sama mapa w przeglądarce</a> — z tymi samymi danymi i bez instalacji.</p>
+          </details>
+          <details>
+            <summary>Dlaczego pojazd stoi w miejscu albo znika z mapy?</summary>
+            <p>wroclive pokazuje dokładnie to, co nadaje pojazd. Kiedy nadajnik milczy, pozycja się nie zmienia, a po dłuższej przerwie pojazd znika z mapy — zamiast udawać, że jedzie dalej.</p>
+          </details>
+          <details>
+            <summary>Skąd biorą się minuty opóźnienia?</summary>
+            <p>Feed MPK nie podaje numeru kursu, więc wroclive rzutuje pozycję pojazdu na trasę i sprawdza, który rozkładowy kurs byłby dokładnie w tym miejscu o tej godzinie. Jeśli żaden nie pasuje wystarczająco blisko, aplikacja nie zgaduje — pokazuje pozostały czas jazdy zamiast wymyślonego opóźnienia.</p>
+          </details>
+          <details>
+            <summary>Czy wroclive to oficjalna aplikacja MPK?</summary>
+            <p>Nie. To niezależny projekt open source, który czyta dane publikowane publicznie przez miasto. Kod jest na <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map" target="_blank" rel="noopener noreferrer">GitHubie</a>.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="closer" aria-labelledby="closer-heading">
+      <div class="container">
+        <h2 id="closer-heading">Następny tramwaj już gdzieś jedzie</h2>
+        <p>Zobacz gdzie — na telefonie albo w przeglądarce.</p>
+        <div class="cta">
+          <a class="install" href="https://apps.apple.com/pl/app/wroclive-tramwaje-i-busy/id6799716104" target="_blank" rel="noopener">
+            <svg viewBox="0 0 22.773 22.773" aria-hidden="true" focusable="false"><path d="M15.769 0h.162c.13 1.606-.483 2.806-1.228 3.675-.731.863-1.732 1.7-3.351 1.573-.108-1.583.506-2.694 1.25-3.561C13.292.879 14.557.16 15.769 0zm4.901 16.716v.014c-.455 1.377-1.104 2.558-1.896 3.653-.723.994-1.609 2.331-3.191 2.331-1.367 0-2.275-.879-3.676-.903-1.482-.024-2.297.735-3.652.926h-.462c-.995-.144-1.798-.932-2.383-1.642-1.725-2.098-3.058-4.808-3.306-8.276v-1.019c.105-2.482 1.311-4.5 2.914-5.478.846-.52 2.009-.963 3.304-.765.555.086 1.122.276 1.619.464.471.181 1.06.502 1.618.485.378-.011.754-.208 1.135-.347 1.116-.403 2.21-.865 3.652-.648 1.733.262 2.963 1.032 3.723 2.22-1.466.933-2.625 2.339-2.427 4.74.176 2.181 1.443 3.457 3.028 4.245z"/></svg>
+            <span class="install__label">
+              <small>Pobierz za darmo</small>
+              <strong>App Store</strong>
+            </span>
+          </a>
+          <a class="btn btn-ghost" href="/map.html">Otwórz mapę</a>
+        </div>
+      </div>
+    </section>
   </main>
 
   <footer>
@@ -742,15 +1147,76 @@
         <p style="margin:0.35rem 0 0"><a href="https://kijmoshi.xyz" target="_blank" rel="noopener noreferrer">kijmoshi.xyz</a> · <a href="mailto:wroclive@kijmoshi.xyz">wroclive@kijmoshi.xyz</a></p>
       </div>
       <div class="links">
+        <a href="https://apps.apple.com/pl/app/wroclive-tramwaje-i-busy/id6799716104" target="_blank" rel="noopener noreferrer">App Store</a>
+        <a href="/map.html">Mapa</a>
         <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map" target="_blank" rel="noopener noreferrer">GitHub</a>
         <a href="privacy.html">Polityka prywatności</a>
         <a href="terms.html">Warunki korzystania</a>
         <a href="support.html">Pomoc i kontakt</a>
-        <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map/blob/main/README.md" target="_blank" rel="noopener noreferrer">README</a>
         <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Licencja</a>
       </div>
-      <p class="disclaimer">Projekt niezależny od MPK Wrocław. wroclive czyta otwarte dane publikowane przez miasto. © 2026 wroclive.</p>
+      <p class="disclaimer">Projekt niezależny od MPK Wrocław. wroclive czyta otwarte dane publikowane przez miasto. Apple i App Store są znakami towarowymi Apple Inc. © 2026 wroclive.</p>
     </div>
   </footer>
+
+  <script>
+    /*
+     * Licznik na żywo. Ta strona jest statyczna i stoi poza originem API,
+     * więc liczby są dopisywane po załadowaniu — a gdy API milczy albo
+     * dopiero wstaje (503 w trakcie ingestu, tak jak w aplikacji), pasek
+     * po prostu się nie pokazuje. Nigdy nie wyświetlamy tu liczby, której
+     * nie potwierdziło /health.
+     */
+    (function () {
+      /* Ten sam wybór originu i ta sama furtka `?api=` co w map.html. */
+      var API_BASE = (
+        new URLSearchParams(location.search).get('api') ||
+        ((location.hostname === 'localhost' || location.protocol === 'file:')
+          ? 'http://localhost:3000'
+          : 'https://api.wroclive.kijmoshi.xyz')
+      ).replace(/\/+$/, '');
+
+      var bar = document.getElementById('livebar');
+      if (!bar || !window.fetch) return;
+
+      var fields = {
+        vehicles: document.getElementById('stat-vehicles'),
+        lines: document.getElementById('stat-lines'),
+        stops: document.getElementById('stat-stops')
+      };
+      var format = new Intl.NumberFormat('pl-PL').format;
+
+      function apply(health) {
+        var counts = (health && health.gtfs && health.gtfs.counts) || {};
+        var tracked = health && health.vehicles && health.vehicles.tracked;
+        if (typeof tracked !== 'number' || !counts.routes || !counts.stops) return false;
+        fields.vehicles.textContent = format(tracked);
+        fields.lines.textContent = format(counts.routes);
+        fields.stops.textContent = format(counts.stops);
+        bar.hidden = false;
+        return true;
+      }
+
+      /* Pierwsze zapytanie idzie zawsze — karta wczytana w tle też ma
+         mieć liczby, kiedy użytkownik na nią wróci. Dopiero odświeżanie
+         w tle jest pomijane, żeby nie pompować requestów w nikogo. */
+      function poll(force) {
+        if (document.hidden && !force) return;
+        var abort = new AbortController();
+        var timer = setTimeout(function () { abort.abort(); }, 6000);
+        fetch(API_BASE + '/health', { signal: abort.signal, cache: 'no-store' })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(apply)
+          .catch(function () { /* API milczy — pasek zostaje ukryty */ })
+          .then(function () { clearTimeout(timer); });
+      }
+
+      poll(true);
+      setInterval(poll, 30000);
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) poll(true);
+      });
+    })();
+  </script>
 </body>
 </html>
