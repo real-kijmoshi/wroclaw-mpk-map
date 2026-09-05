@@ -583,6 +583,18 @@ class XBridgeProvider {
 }
 
 /**
+ * Said on every refresh, and in `/health`, when nothing is configured.
+ *
+ * Names the variable to set rather than the condition, because the person
+ * reading it is looking at an empty `/alerts` and needs the next action, not
+ * a diagnosis.
+ */
+const NO_ALERT_SOURCE_MESSAGE =
+  'No alerts source is configured, so /alerts will stay empty — set ALERT_X_BRIDGE_URLS ' +
+  'to an RSS bridge for @AlertMPK (see server/.env.example), then check it with ' +
+  'npm run scrape:alerts';
+
+/**
  * Aggregates disruption notices from every configured page.
  *
  * Fails soft: a provider that throws keeps the previous alert list in place and
@@ -661,8 +673,12 @@ class AlertsService {
     );
 
     this.status.lastRefreshAt = new Date().toISOString();
+    // With no providers there is no provider error to report, and a null here
+    // reads in /health as "alerts are fine" — which is how an unconfigured
+    // deploy looks healthy while serving nothing. Say it instead.
     this.status.lastError =
-      this.status.providers.find((provider) => provider.lastError)?.lastError ?? null;
+      this.status.providers.find((provider) => provider.lastError)?.lastError ??
+      (this.providers.length ? null : NO_ALERT_SOURCE_MESSAGE);
 
     // Every provider failed: keep whatever we last had rather than blanking the
     // screen, and let /health explain the staleness.
@@ -674,6 +690,14 @@ class AlertsService {
           'No alerts available from any provider — check ALERT_PAGE_URLS and, if one is ' +
             'configured, ALERT_X_BRIDGE_URLS (see npm run scrape:alerts)',
         );
+      } else {
+        // No provider at all is the quietest failure there is: nothing throws,
+        // nothing is stale, /health lists an empty provider array, and the
+        // server looks healthy while /alerts is permanently []. It is also the
+        // state a fresh deploy starts in, since nothing ships configured — so
+        // it has to say so on every refresh rather than only at boot, where the
+        // line scrolls away.
+        logger.warn(NO_ALERT_SOURCE_MESSAGE);
       }
       return this.alerts;
     }

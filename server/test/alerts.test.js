@@ -886,6 +886,30 @@ describe('AlertsService dedup', () => {
     assert.equal(result2.length, 1, 'previous list retained on total failure');
   });
 
+  it('says so in /health when no source is configured at all', async () => {
+    // Observed on the first real deploy: ALERT_X_BRIDGE_URLS was unset, so
+    // providers was [], nothing threw, nothing was stale, and the boot log
+    // carried no alerts line at all — /alerts served [] and /health reported
+    // lastError: null, which reads as healthy. The quietest failure in the
+    // service was the one state a fresh deploy actually starts in.
+    const service = new AlertsService(() => KNOWN, []);
+
+    assert.deepEqual(await service.refresh(), []);
+    assert.match(service.status.lastError, /No alerts source is configured/);
+    assert.match(service.status.lastError, /ALERT_X_BRIDGE_URLS/, 'names the fix, not the symptom');
+    assert.deepEqual(service.status.providers, []);
+  });
+
+  it('does not claim a missing source once one is configured and failing', async () => {
+    // A configured-but-broken bridge has its own error; overwriting it with
+    // "nothing is configured" would send the operator to the wrong fix.
+    const service = new AlertsService(() => KNOWN, [mockProvider('bridge', [], { fail: true })]);
+
+    await service.refresh();
+    assert.match(service.status.lastError, /bridge failed/);
+    assert.doesNotMatch(service.status.lastError, /No alerts source is configured/);
+  });
+
   it('one provider failure: successful results still used', async () => {
     const service = new AlertsService(() => KNOWN, [
       mockProvider('fail', [], { fail: true }),
