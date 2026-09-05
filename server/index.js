@@ -7,6 +7,7 @@ const config = require('./src/config');
 const logger = require('./src/logger');
 const { createApp } = require('./src/app');
 const { AlertsService } = require('./src/alerts');
+const { AlertArchive } = require('./src/alert-archive');
 const { GtfsStore } = require('./src/gtfs/store');
 const { KlosokService } = require('./src/klosok/service');
 const { RuntimeSettings } = require('./src/runtime-settings');
@@ -27,6 +28,16 @@ const vehicles = new VehicleTracker(() => gtfs.lines, { gtfs });
 // timetable, so the matcher reads them from the store on every refresh.
 const alerts = new AlertsService(
   () => new Set([...gtfs.routesByLine.keys()].map((line) => line.toUpperCase())),
+  null,
+  {
+    archive: config.alerts.archiveEnabled
+      ? new AlertArchive({
+          file: path.join(config.stats.cacheDir, 'alert-archive.json'),
+          daysToKeep: config.alerts.archiveDaysToKeep,
+          logger,
+        })
+      : null,
+  },
 );
 
 // The one setting the dashboard may change while running. Loaded before the

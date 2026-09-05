@@ -616,6 +616,9 @@ class AlertsService {
     this.aiModel = options.aiModel ?? config.aiAlerts[config.aiAlerts.requestedProvider]?.model ?? null;
     this.aiCacheTtlMs = options.aiCacheTtlMs ?? config.aiAlerts.cacheTtlMs;
     this.aiIncidentCache = new Map();
+    /** Null in tests that do not care; the service works without one. */
+    this.archive = options.archive ?? null;
+    this.maxAgeMs = (options.archiveDaysToKeep ?? config.alerts.archiveDaysToKeep) * 86400000;
 
     this.incidentStatus = {
       enabled: Boolean(this.aiProvider.enabled),
@@ -707,9 +710,17 @@ class AlertsService {
     const byFingerprint = new Map();
     const deduped = [];
 
+    // What we already knew goes in first, so the dedup below treats it as the
+    // original: the archived copy keeps its id and URL, and a fresh repeat of
+    // the same post merges into it rather than replacing it. This is also what
+    // makes the list outlive the bridge's window — RSSHub only ever hands over
+    // the last ALERT_X_MAX_POSTS, and without this everything older vanished
+    // the moment it scrolled off.
+    const previous = this.alerts.filter((alert) => alert.timestamp >= Date.now() - this.maxAgeMs);
+
     // Pre-compute fingerprint and affected lines for each collected item so the
     // merge step below has everything it needs.
-    const enriched = collected.map((item) => {
+    const enriched = [...previous, ...collected].map((item) => {
       const id = item.id || `${item.source}:${item.timestamp}:${item.title ?? item.content}`;
       const fp = fingerprint(item.title, item.content);
       // A source that states its affected lines is believed. Re-deriving them
@@ -793,6 +804,11 @@ class AlertsService {
       logger.debug(`AI incident generation failed: ${this.incidentStatus.lastError}`);
     }
 
+    // Written after the AI step so the cache saved is the warm one. Fail-soft
+    // inside save(): an archive that cannot be written costs the next boot its
+    // history, never this refresh.
+    this.archive?.save({ alerts: this.alerts, aiCache: this.aiIncidentCache });
+
     return this.alerts;
   }
 
@@ -820,10 +836,38 @@ class AlertsService {
     );
   }
 
+  /**
+   * Restore what the last run knew, before the first refresh.
+   *
+   * Called from start() rather than the constructor so a test can build a
+   * service without touching the disk. Publishing fallback incidents here
+   * means `/alerts` and `/incidents` answer from the first request rather than
+   * being empty for however long the bridge takes.
+   */
+  restore() {
+    if (!this.archive) return;
+
+    const { alerts, aiCache } = this.archive.load();
+    if (alerts.length) {
+      this.alerts = alerts;
+      this.status.count = alerts.length;
+      this.incidents = createFallbackIncidents(alerts);
+      this.incidentStatus.incidentCount = this.incidents.length;
+    }
+    for (const [key, entry] of aiCache) this.aiIncidentCache.set(key, entry);
+
+    if (alerts.length || aiCache.length) {
+      logger.info(
+        `Restored ${alerts.length} alert(s) and ${aiCache.length} cached incident group(s)`,
+      );
+    }
+  }
+
   start() {
     if (this.started) return;
     this.started = true;
     this._stopped = false;
+    this.restore();
 
     // First refresh immediately. A placeholder handle keeps `timer` non-null from
     // the first instant — stop() and callers that inspect the timer rely on it —
