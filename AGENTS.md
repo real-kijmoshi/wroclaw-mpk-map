@@ -359,11 +359,22 @@ handed to a user still resolves after that bridge goes away.
 until someone notices.** `npm run scrape:alerts` (and `npm run doctor`, which
 checks every configured source) are the manual, non-test ways to check the
 real thing before relying on it — the automated suite can't, since it has no
-network; `test/alerts.test.js` instead pins `parseFeed()` against a fixture
-captured from a real bridge response (attributed `<guid>`, CDATA description
-with a nested `<a>`) to cover the parsing, which is the part that can be
-tested without a network call, and pins that a default page source exists at
-all.
+network; `test/alerts.test.js` instead pins the parsing, which is the part
+that can be tested without one, against **two** real bridge responses — and
+keeps both on purpose. "Any bridge that republishes the profile" is only true
+if more than one shape is covered, and the two differ in every field that
+matters: RSSHub's `<guid>` is a `twitter.com` permalink where Nitter's was a
+bare numeric id, RSSHub's `<link>` is already on `x.com` (so `toXPostUrl()`
+has to be a no-op there and a rewrite on Nitter's own domain), and RSSHub
+escapes entities where Nitter used CDATA with a nested `<a>`. The RSSHub
+fixture also pins two things a live timeline will hand you: the channel
+`<image>`, which carries its own `<title>`/`<link>` and must not read as a
+post, and untagged posts — roughly half of them carry no `#AlertMPK`, so a
+keyword gate here would silently drop real notices.
+
+The configuration itself is pinned too, since that is where the Nitter
+failure actually lived: no default page, no default bridge, nothing public
+depended on without being asked for.
 
 `parseFileListing()` is deliberately shape-agnostic — it walks the JSON looking
 for url-ish and name-ish fields rather than hardcoding a schema, because the CUI
