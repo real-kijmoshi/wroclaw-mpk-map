@@ -269,3 +269,172 @@ describe('parseJsonObject', () => {
     );
   });
 });
+
+describe('model fallback chain', () => {
+  const chained = (models) => {
+    const config = baseConfig('openrouter');
+    config.openrouter.model = models;
+    return config;
+  };
+
+  const okResponse = (model) => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({ answered: model }) } }],
+    }),
+  });
+
+  it('moves to the next model when a free tier rate-limits the first', async () => {
+    // The whole reason this exists: a free model answers 429 for a few
+    // minutes, and generating deterministic fallbacks for every incident in
+    // the city because of it is a worse answer than a second model's prose.
+    const tried = [];
+    global.fetch = async (url, init) => {
+      const model = JSON.parse(init.body).model;
+      tried.push(model);
+      if (model === 'first/free') {
+        return {
+          ok: false,
+          status: 429,
+          statusText: 'Too Many Requests',
+          text: async () => JSON.stringify({ error: { message: 'Rate limit exceeded' } }),
+        };
+      }
+      return okResponse(model);
+    };
+
+    const provider = createAiProvider(chained('first/free, second/free'));
+    const result = await provider.completeJson({ system: '', user: '', schemaName: 't' });
+
+    assert.deepEqual(tried, ['first/free', 'second/free']);
+    assert.deepEqual(result, { answered: 'second/free' });
+    assert.equal(provider.activeModel, 'second/free', 'the dashboard must name the model that answered');
+  });
+
+  it('falls through a timeout, which is what a slow free model does', async () => {
+    const tried = [];
+    global.fetch = async (url, init) => {
+      const model = JSON.parse(init.body).model;
+      tried.push(model);
+      if (model === 'slow/free') {
+        return new Promise((resolve, reject) => {
+          init.signal.addEventListener('abort', () => {
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          });
+        });
+      }
+      return okResponse(model);
+    };
+
+    const config = chained('slow/free,quick/free');
+    config.timeoutMs = 20;
+    const provider = createAiProvider(config);
+
+    assert.deepEqual(await provider.completeJson({ system: '', user: '', schemaName: 't' }), {
+      answered: 'quick/free',
+    });
+    assert.deepEqual(tried, ['slow/free', 'quick/free']);
+  });
+
+  it('skips a model that just failed rather than paying its timeout again', async () => {
+    const tried = [];
+    global.fetch = async (url, init) => {
+      const model = JSON.parse(init.body).model;
+      tried.push(model);
+      if (model === 'dead/free') {
+        return { ok: false, status: 429, statusText: 'Too Many Requests', text: async () => '{}' };
+      }
+      return okResponse(model);
+    };
+
+    const provider = createAiProvider(chained('dead/free,live/free'));
+    await provider.completeJson({ system: '', user: '', schemaName: 't' });
+    await provider.completeJson({ system: '', user: '', schemaName: 't' });
+
+    assert.deepEqual(
+      tried,
+      ['dead/free', 'live/free', 'live/free'],
+      'the second call goes straight to the model that worked',
+    );
+  });
+
+  it('does not walk the chain on a bad key — that answer is the same for every model', async () => {
+    // Five requests and five identical 401s would read in /health as five
+    // broken models rather than one wrong key.
+    const tried = [];
+    global.fetch = async (url, init) => {
+      tried.push(JSON.parse(init.body).model);
+      return {
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        text: async () => JSON.stringify({ error: { message: 'No auth credentials found' } }),
+      };
+    };
+
+    const provider = createAiProvider(chained('one/free,two/free,three/free'));
+    await assert.rejects(() => provider.completeJson({ system: '', user: '', schemaName: 't' }));
+    assert.deepEqual(tried, ['one/free']);
+  });
+
+  it('reports the last failure when every model refuses', async () => {
+    global.fetch = async () => ({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      text: async () => JSON.stringify({ error: { message: 'No endpoints found' } }),
+    });
+
+    const provider = createAiProvider(chained('one/free,two/free'));
+    await assert.rejects(
+      () => provider.completeJson({ system: '', user: '', schemaName: 't' }),
+      /No endpoints found/,
+    );
+  });
+
+  it('treats a single model exactly as before', async () => {
+    global.fetch = async (url, init) => okResponse(JSON.parse(init.body).model);
+    const provider = createAiProvider(baseConfig('openrouter'));
+
+    assert.deepEqual(provider.models, ['test-model']);
+    assert.deepEqual(await provider.completeJson({ system: '', user: '', schemaName: 't' }), {
+      answered: 'test-model',
+    });
+  });
+});
+
+describe('a chain with every model cooling down', () => {
+  it('tries them all again rather than giving up on the lot', async () => {
+    // Every model has failed, so every model is skipped — and skipping the
+    // whole chain would mean no AI at all until a cooldown lapses, which is a
+    // worse answer than one more attempt.
+    let failing = true;
+    const tried = [];
+    global.fetch = async (url, init) => {
+      const model = JSON.parse(init.body).model;
+      tried.push(model);
+      if (failing) {
+        return { ok: false, status: 429, statusText: 'Too Many Requests', text: async () => '{}' };
+      }
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }),
+      };
+    };
+
+    const config = baseConfig('openrouter');
+    config.openrouter.model = 'one/free,two/free';
+    const provider = createAiProvider(config);
+
+    await assert.rejects(() => provider.completeJson({ system: '', user: '', schemaName: 't' }));
+    assert.deepEqual(tried, ['one/free', 'two/free']);
+
+    failing = false;
+    assert.deepEqual(await provider.completeJson({ system: '', user: '', schemaName: 't' }), {
+      ok: true,
+    });
+    assert.deepEqual(tried, ['one/free', 'two/free', 'one/free'], 'back to the preferred model');
+  });
+});

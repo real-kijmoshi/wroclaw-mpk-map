@@ -100,12 +100,17 @@
       <div class="sub" id="aiMeta"></div>
       <div class="modelRow">
         <input type="text" id="aiModel" spellcheck="false" autocapitalize="off"
-               placeholder="np. openai/gpt-4o-mini">
+               placeholder="np. openai/gpt-4o-mini, qwen/qwen3-8b:free">
         <button id="aiSave">Zapisz</button>
         <button id="aiReset" class="secondary">Przywróć z .env</button>
+        <button id="aiReparse" class="secondary">Przetwórz ponownie</button>
       </div>
       <div class="sub" id="aiNote">
         Zmiana działa od razu i przetrwa restart. Adres API i klucz pozostają w .env.
+        Kilka modeli po przecinku działa jako łańcuch zapasowy — kolejny jest
+        używany, gdy poprzedni odmówi (limit zapytań, brak modelu, przekroczony
+        czas). „Przetwórz ponownie” ponawia tylko te incydenty, które nie mają
+        opisu z AI.
       </div>
     </section>
 
@@ -207,9 +212,14 @@
 
   const renderAi = (ai) => {
     const source = ai.overrideModel ? 'ustawiony tutaj' : 'z pliku .env';
-    document.getElementById('aiModel').value = ai.model ?? '';
+    const chain = Array.isArray(ai.models) ? ai.models : [];
+    // The input holds the whole chain; the meta line names the model that
+    // actually answered, which with a fallback chain need not be the first.
+    document.getElementById('aiModel').value =
+      (ai.overrideModel ?? (chain.length ? chain.join(',') : ai.model)) ?? '';
     document.getElementById('aiMeta').innerHTML =
       'Model: <code>' + escapeHtml(ai.model ?? '—') + '</code> (' + source + ') · ' +
+      (chain.length > 1 ? 'łańcuch: <code>' + escapeHtml(chain.join(' → ')) + '</code> · ' : '') +
       'w .env: <code>' + escapeHtml(ai.envModel ?? '—') + '</code> · ' +
       'klucz API: ' + (ai.hasApiKey ? 'jest' : '<span class="bad">brak</span>') + ' · ' +
       'limit czasu: ' + Math.round((ai.timeoutMs ?? 0) / 1000) + ' s';
@@ -309,6 +319,29 @@
   });
 
   document.getElementById('aiReset').addEventListener('click', () => saveModel(null));
+
+  document.getElementById('aiReparse').addEventListener('click', async () => {
+    const button = document.getElementById('aiReparse');
+    const note = document.getElementById('aiNote');
+    button.disabled = true;
+    note.textContent = 'Przetwarzanie… może potrwać do kilkudziesięciu sekund.';
+    try {
+      const response = await fetch(API_BASE + '/admin/api/ai/reparse', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token() },
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || ('HTTP ' + response.status));
+      note.textContent =
+        'Gotowe: ' + body.generated + ' z ' + body.incidents + ' incydentów z opisem AI, ' +
+        body.fallback + ' bez.' + (body.error ? ' Ostatni błąd: ' + body.error : '');
+      await refresh();
+    } catch (error) {
+      note.innerHTML = '<span class="bad">' + escapeHtml(error.message) + '</span>';
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   document.getElementById('loginBtn').addEventListener('click', async () => {
     const value = document.getElementById('token').value.trim();

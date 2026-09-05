@@ -60,6 +60,12 @@ const fakeAlerts = {
     lastSuccessAt: null,
     lastError: null,
     incidentCount: 0,
+    models: ['env/model'],
+  },
+  reparseCalls: 0,
+  async regenerateIncidents() {
+    this.reparseCalls += 1;
+    return { incidents: 3, generated: 2, fallback: 1, error: null };
   },
   setAiModel(model) {
     // Uses the real validator rather than a copy of it: a fake with its own
@@ -68,7 +74,8 @@ const fakeAlerts = {
     const checked = validateModel(model);
     if (!checked.ok) return checked;
     this.aiModel = checked.value;
-    this.incidentStatus.model = checked.value;
+    this.incidentStatus.model = checked.value.split(',')[0];
+    this.incidentStatus.models = checked.value.split(',');
     return { ok: true };
   },
 };
@@ -90,6 +97,14 @@ describe('Admin dashboard', () => {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(body),
+    });
+    return { status: response.status, body: await response.json().catch(() => null) };
+  };
+
+  const post = async (path, { token } = {}) => {
+    const response = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     return { status: response.status, body: await response.json().catch(() => null) };
   };
@@ -239,6 +254,36 @@ describe('Admin dashboard', () => {
       assert.equal(runtimeSettings.values.aiModel, 'good/model');
     });
 
+    it('re-parses only behind the token', async () => {
+      assert.equal((await post('/admin/api/ai/reparse')).status, 401);
+      assert.equal((await post('/admin/api/ai/reparse', { token: 'wrong' })).status, 401);
+    });
+
+    it('re-parses on demand and reports what the AI actually wrote', async () => {
+      // The point of the button: after fixing a rate limit or a dead model,
+      // seeing whether the incidents that fell back now have prose — without
+      // waiting for the refresh cycle to come round and say nothing about it.
+      const before = fakeAlerts.reparseCalls;
+      const { status, body } = await post('/admin/api/ai/reparse', { token });
+
+      assert.equal(status, 200);
+      assert.equal(fakeAlerts.reparseCalls, before + 1);
+      assert.deepEqual(body, { incidents: 3, generated: 2, fallback: 1, error: null });
+    });
+
+    it('accepts a fallback chain and reports it', async () => {
+      const { status, body } = await put(
+        '/admin/api/ai/model',
+        { model: 'first/free, second/free' },
+        { token },
+      );
+      assert.equal(status, 200);
+      assert.equal(body.model, 'first/free,second/free');
+
+      const ai = await get('/admin/api/ai', { token });
+      assert.deepEqual(ai.body.models, ['first/free', 'second/free']);
+    });
+
     it('does not let the base URL or key be set through this route', async () => {
       // The security boundary: a settable base URL would redirect the provider,
       // and the API key it sends, to a server of the caller's choosing.
@@ -262,5 +307,28 @@ describe('Admin dashboard', () => {
       assert.equal(body.source, 'env');
       assert.equal(runtimeSettings.values.aiModel, null, 'the override file is cleared');
     });
+  });
+});
+
+describe('the model chain and re-parsing', () => {
+  // The validator is the security boundary here, so a chain must not be a way
+  // in for something a single value would have been rejected for.
+  it('accepts a comma-separated fallback chain', () => {
+    assert.deepEqual(validateModel(' a/one , b/two:free , a/one '), {
+      ok: true,
+      value: 'a/one,b/two:free',
+    });
+  });
+
+  it('rejects a chain carrying a URL, exactly as it rejects a lone one', () => {
+    // A settable base URL would redirect the provider and the API key with it.
+    // A model list must not become one by having more than one entry.
+    assert.equal(validateModel('good/model,https://evil.example.com/v1').ok, false);
+    assert.equal(validateModel('https://evil.example.com/v1').ok, false);
+  });
+
+  it('caps how many models may be listed', () => {
+    assert.equal(validateModel('a/1,b/2,c/3,d/4,e/5').ok, true);
+    assert.equal(validateModel('a/1,b/2,c/3,d/4,e/5,f/6').ok, false);
   });
 });

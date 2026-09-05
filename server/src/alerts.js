@@ -611,6 +611,8 @@ class AlertsService {
     this.started = false;
     /** True after stop() so an in-flight refresh never re-arms its timer. */
     this._stopped = false;
+    /** The in-flight admin re-parse, so concurrent requests share one run. */
+    this._reparse = null;
     this.providers = providers ?? this.#defaultProviders();
     this.aiProvider = options.aiProvider ?? createAiProvider(config.aiAlerts, logger);
     this.aiModel = options.aiModel ?? config.aiAlerts[config.aiAlerts.requestedProvider]?.model ?? null;
@@ -623,7 +625,9 @@ class AlertsService {
     this.incidentStatus = {
       enabled: Boolean(this.aiProvider.enabled),
       provider: this.aiProvider.name ?? null,
-      model: this.aiModel,
+      model: this.aiProvider.activeModel ?? this.aiModel,
+      // The whole chain, in order. One model is a one-entry list.
+      models: this.aiProvider.models ?? (this.aiModel ? [this.aiModel] : []),
       lastSuccessAt: null,
       lastError: this.aiProvider.enabled ? null : (this.aiProvider.status?.reason ?? 'AI disabled'),
       incidentCount: 0,
@@ -780,29 +784,7 @@ class AlertsService {
     this.incidents = createFallbackIncidents(this.alerts);
     this.incidentStatus.incidentCount = this.incidents.length;
 
-    try {
-      // Caching is per incident cluster (inside buildIncidentsFromAlerts), not
-      // per refresh: an unrelated new alert elsewhere in the city must not
-      // force every already-settled incident's narrative to regenerate.
-      const incidents = await buildIncidentsFromAlerts(this.alerts, {
-        provider: this.aiProvider,
-        model: this.aiModel,
-        maxInputAlerts: config.aiAlerts.maxInputAlerts,
-        cache: this.aiIncidentCache,
-        cacheTtlMs: this.aiCacheTtlMs,
-      });
-      this.incidents = incidents;
-      this.incidentStatus.incidentCount = incidents.length;
-      const generated = incidents.some((incident) => incident.ai.generated);
-      const failed = incidents.find((incident) => !incident.ai.generated && incident.ai.error);
-      if (generated) this.incidentStatus.lastSuccessAt = new Date().toISOString();
-      this.incidentStatus.lastError = failed?.ai.error ?? null;
-    } catch (error) {
-      // buildIncidentsFromAlerts is fail-soft itself. This final guard keeps a
-      // future regression there from escaping the public refresh/route path.
-      this.incidentStatus.lastError = error?.message || 'AI incident generation failed';
-      logger.debug(`AI incident generation failed: ${this.incidentStatus.lastError}`);
-    }
+    await this.#generateIncidents();
 
     // Written after the AI step so the cache saved is the warm one. Fail-soft
     // inside save(): an archive that cannot be written costs the next boot its
@@ -810,6 +792,102 @@ class AlertsService {
     this.archive?.save({ alerts: this.alerts, aiCache: this.aiIncidentCache });
 
     return this.alerts;
+  }
+
+  /**
+   * Turn the alerts already in memory into incidents, AI where it answers.
+   *
+   * Fail-soft on purpose: `buildIncidentsFromAlerts` already falls back per
+   * cluster, and the deterministic incidents published before this runs stay
+   * on screen if it throws. What is returned is what the dashboard shows after
+   * a re-parse — how many clusters the model actually wrote, and how many are
+   * still deterministic.
+   *
+   * @returns {Promise<{ incidents: number, generated: number, fallback: number, error: string|null }>}
+   */
+  async #generateIncidents() {
+    try {
+      // Caching is per incident cluster (inside buildIncidentsFromAlerts), not
+      // per refresh: an unrelated new alert elsewhere in the city must not
+      // force every already-settled incident's narrative to regenerate.
+      const incidents = await buildIncidentsFromAlerts(this.alerts, {
+        provider: this.aiProvider,
+        model: this.aiProvider.activeModel ?? this.aiModel,
+        maxInputAlerts: config.aiAlerts.maxInputAlerts,
+        cache: this.aiIncidentCache,
+        cacheTtlMs: this.aiCacheTtlMs,
+      });
+      this.incidents = incidents;
+      this.incidentStatus.incidentCount = incidents.length;
+      const generated = incidents.filter((incident) => incident.ai.generated);
+      const failed = incidents.find((incident) => !incident.ai.generated && incident.ai.error);
+      if (generated.length) this.incidentStatus.lastSuccessAt = new Date().toISOString();
+      this.incidentStatus.lastError = failed?.ai.error ?? null;
+      // With a model chain the model that answered is not necessarily the one
+      // at the head of it, and a dashboard naming the wrong one is worse than
+      // one naming none: it sends you tuning a model that never ran.
+      this.incidentStatus.model = this.aiProvider.activeModel ?? this.aiModel;
+      return {
+        incidents: incidents.length,
+        generated: generated.length,
+        fallback: incidents.length - generated.length,
+        error: this.incidentStatus.lastError,
+      };
+    } catch (error) {
+      // buildIncidentsFromAlerts is fail-soft itself. This final guard keeps a
+      // future regression there from escaping the public refresh/route path.
+      this.incidentStatus.lastError = error?.message || 'AI incident generation failed';
+      logger.debug(`AI incident generation failed: ${this.incidentStatus.lastError}`);
+      return {
+        incidents: this.incidents.length,
+        generated: 0,
+        fallback: this.incidents.length,
+        error: this.incidentStatus.lastError,
+      };
+    }
+  }
+
+  /**
+   * Re-run incident generation over the alerts already in memory.
+   *
+   * For the case the refresh cycle cannot fix on its own: the provider was
+   * down, the model timed out, or a free tier was rate-limited, so those
+   * clusters fell back to deterministic timelines — and nothing about them
+   * will change until a *new* post arrives, because a cluster that generated
+   * nothing cached nothing to expire. The 5-minute refresh will re-try them,
+   * but only silently and on its own schedule; this is the same work on
+   * demand, which is what the dashboard button is for.
+   *
+   * It is cheap for the same reason: clusters that did generate are served
+   * from the per-cluster cache, so a re-parse only pays for the ones that
+   * failed. Concurrent calls share one run — the button is a button, and
+   * mashing it must not multiply the provider calls.
+   *
+   * @returns {Promise<{ incidents: number, generated: number, fallback: number, error: string|null }>}
+   */
+  async regenerateIncidents() {
+    if (this._reparse) return this._reparse;
+    if (!this.alerts.length) {
+      return { incidents: 0, generated: 0, fallback: 0, error: this.status.lastError };
+    }
+
+    this._reparse = (async () => {
+      const result = await this.#generateIncidents();
+      // Same as refresh(): the archive is written after the AI step so the
+      // cache it saves is the warm one.
+      this.archive?.save({ alerts: this.alerts, aiCache: this.aiIncidentCache });
+      logger.info(
+        `Incident re-parse: ${result.generated}/${result.incidents} generated by AI` +
+          (result.error ? ` (${result.error})` : ''),
+      );
+      return result;
+    })();
+
+    try {
+      return await this._reparse;
+    } finally {
+      this._reparse = null;
+    }
   }
 
   /**
@@ -931,7 +1009,8 @@ class AlertsService {
 
     this.incidentStatus.enabled = Boolean(this.aiProvider.enabled);
     this.incidentStatus.provider = this.aiProvider.name ?? null;
-    this.incidentStatus.model = checked.value;
+    this.incidentStatus.model = this.aiProvider.activeModel ?? checked.value;
+    this.incidentStatus.models = this.aiProvider.models ?? [checked.value];
     // The previous model's failure is not this one's. Leaving it would have
     // the dashboard show a timeout against a model that has not been tried.
     this.incidentStatus.lastError = this.aiProvider.enabled
