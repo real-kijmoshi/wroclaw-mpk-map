@@ -9,6 +9,7 @@ const logger = require('./logger');
 const { fetchWithTimeout, requestText } = require('./http');
 const { lineToType } = require('./lines');
 const { stripHtml } = require('./html');
+const { validateModel } = require('./runtime-settings');
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 
@@ -850,6 +851,51 @@ class AlertsService {
     } finally {
       this.#scheduleNextRefresh();
     }
+  }
+
+  /**
+   * Point the AI at a different model without restarting.
+   *
+   * The provider captures its model when it is built (see `createAiProvider`),
+   * so this rebuilds it rather than assigning a field that nothing reads. The
+   * incident cache is dropped with it: its entries are narratives the previous
+   * model wrote, and keeping them would leave the dashboard reporting a new
+   * model while serving the old one's output for up to `aiCacheTtlMs`.
+   *
+   * Only the model moves. The base URL and key stay where `config.js` put
+   * them, which is not an oversight: a settable base URL would let anyone
+   * holding the admin token redirect the provider — and the API key with it —
+   * to a server of their choosing.
+   *
+   * @param {string} model
+   * @returns {{ ok: boolean, error?: string }}
+   */
+  setAiModel(model) {
+    const checked = validateModel(model);
+    if (!checked.ok) return checked;
+
+    const provider = config.aiAlerts.requestedProvider;
+    const settings = config.aiAlerts[provider];
+    if (!settings) return { ok: false, error: `no settings for provider "${provider}"` };
+
+    this.aiProvider = createAiProvider(
+      { ...config.aiAlerts, [provider]: { ...settings, model: checked.value } },
+      logger,
+    );
+    this.aiModel = checked.value;
+    this.aiIncidentCache.clear();
+
+    this.incidentStatus.enabled = Boolean(this.aiProvider.enabled);
+    this.incidentStatus.provider = this.aiProvider.name ?? null;
+    this.incidentStatus.model = checked.value;
+    // The previous model's failure is not this one's. Leaving it would have
+    // the dashboard show a timeout against a model that has not been tried.
+    this.incidentStatus.lastError = this.aiProvider.enabled
+      ? null
+      : (this.aiProvider.status?.reason ?? 'AI disabled');
+
+    logger.info(`AI incident model set to ${checked.value}`);
+    return { ok: true };
   }
 
   stop() {
