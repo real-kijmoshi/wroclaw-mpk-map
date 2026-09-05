@@ -257,22 +257,20 @@ while an appearance change is being re-captured.
 
 ## Fragile by nature
 
-The default (and, out of the box, only) alerts source is `@AlertMPK` on X —
-see the `NitterProvider` paragraph below. `parsePage()` in
-`server/src/alerts.js` can also scrape
+The default (and, out of the box, only) alerts source is
 `wroclaw.pl/komunikacja/zmiany-w-komunikacji`, a page verified to carry live
-disruptions, but `ALERT_PAGES` is empty by default; set `ALERT_PAGE_URLS` to
-add it (or another page) back as an extra source. `mpk.wroc.pl/komunikaty` was
-a guess and 404s; `/o-mpk/aktualnosci` exists but is corporate news. The page
-provider is an HTML scrape and the Nitter provider depends on a mirror staying
-up — both are the most likely thing here to break, for different reasons.
+disruptions, scraped by `parsePage()` in `server/src/alerts.js`. It is
+`ALERT_PAGES`' single default entry; `ALERT_PAGE_URLS` adds more, which is how
+this source gets redundancy. Only add a page carrying live disruptions:
+`mpk.wroc.pl/komunikaty` was a guess and 404s, and `/o-mpk/aktualnosci` exists
+but is corporate news. An HTML scrape is the most likely thing here to break.
 
 It fails soft: when every provider fails the previous list stays in place, and
 the reason shows up in `/health` under `alerts.providers[].lastError`. If alerts
-go stale, check that field first — then, for the X source, `npm run
-scrape:nitter`, and for a configured page, the keyword lists in `parsePage()`.
-A configured page that serves RSS is auto-detected and parsed as a feed
-instead.
+go stale, check that field first — then `npm run scrape:alerts`, which prints
+what each configured source actually yields, and the keyword lists in
+`parsePage()`. A configured page that serves RSS is auto-detected and parsed as
+a feed instead.
 
 A notice's body is the text between its headline link and the next link on the
 page. A fixed-size lookahead instead runs into the following notice and appends
@@ -289,36 +287,43 @@ organizacji ruchu na ulicy X" and only list the affected lines in the body.
 
 The X API is not usable as a source: reading someone else's timeline needs a
 paid tier, which is what silently emptied `/alerts` for a year in the first
-place. `@AlertMPK` posts real disruptions, though, and `NitterProvider` in
-`server/src/alerts.js` reads them through a Nitter mirror's RSS feed
-(`<instance>/<username>/rss`) instead of scraping X directly — Nitter is an
-alternative X front end that republishes public profiles as plain RSS, which
-`parseFeed()` (the same function every other feed source in this file uses)
-already parses: no browser, no regex-scraped HTML, no reverse-engineered
-endpoint. It is the default and, out of the box, only alerts source
-(`NITTER_ENABLED` defaults to `true`; set it to `false` to turn it off).
+place. `@AlertMPK` posts real disruptions, though, so `XBridgeProvider` in
+`server/src/alerts.js` can read them through an *RSS bridge* — any service
+that republishes a public X profile as plain RSS, which `parseFeed()` (the
+same function every other feed source in this file uses) already parses: no
+browser, no regex-scraped HTML, no reverse-engineered endpoint.
 
-The fragility moved rather than disappeared. Parsing is no longer the weak
-point — RSS is a stable, documented format — but public Nitter instances are
-themselves unreliable and disappear with no warning (this is a known property
-of the Nitter ecosystem, not specific to this project). That is why
-`NITTER_INSTANCE_URLS` is a list tried in order, same pattern as every other
-multi-source config in this project (invariant 1): a deploy should not depend
-on exactly one public mirror staying up forever. `toXPostUrl()` rewrites each
-post's permalink from the mirror's own domain to `x.com`, so a link handed to
-a user still resolves after the mirror that served it goes down.
+**This provider was `NitterProvider`, hardwired to Nitter, and it is history
+worth keeping.** Nitter has been discontinued; the public mirrors it was
+pointed at are gone, and one that still answers serves an empty feed rather
+than an error. Because a dead mirror reads as "zero posts," not a crash, that
+is a silent failure — the same shape as the paid-API outage before it. It had
+been the default and, out of the box, only alerts source, so a stock deploy
+was left with nothing that answers. **Do not put another public bridge back in
+`config.defaults.json`.** Whichever one you pick will go the same way, and the
+default deploy will break again with nothing in the logs.
 
-Because a dead mirror reads as "zero posts," not a crash, a silent failure
-here is easy to miss; that is why `parsePage()` above stays available as a
-fallback/extra source via `ALERT_PAGE_URLS`. **A deploy with every configured
-Nitter instance down, and no page-scrape source configured, gets zero alerts
-until someone notices and adds another instance or a page.** `npm run
-scrape:nitter` (and `npm run doctor`, which checks every configured instance)
-are manual, non-test ways to check the real feed before relying on it — the
-automated suite can't, since it has no network; `test/alerts.test.js` instead
-pins `parseFeed()` against a fixture captured from a real Nitter response
-(attributed `<guid>`, CDATA description with a nested `<a>`) to cover the
-parsing, which is the part that can be tested without a network call.
+So: `alerts.xBridge.bridges` is empty by default and the provider is not even
+constructed unless `ALERT_X_BRIDGE_URLS` names a bridge the operator actually
+has — the notice page above is what ships working. Entries are URL templates
+carrying `{username}` (RSSHub publishes `/twitter/user/<name>`, a Nitter
+mirror published `/<name>/rss`, a self-hosted bridge can be anything), tried
+in order, same pattern as every other multi-source config here (invariant 1);
+an entry with no placeholder is read as a Nitter-shaped base URL so a private
+mirror needs no rewrite. An empty feed is raised as a provider failure rather
+than accepted as zero alerts, so `/health` says so. `toXPostUrl()` rewrites
+each post's permalink from the bridge's own domain to `x.com`, so a link
+handed to a user still resolves after that bridge goes away.
+
+**A deploy whose only configured alerts sources are down gets zero alerts
+until someone notices.** `npm run scrape:alerts` (and `npm run doctor`, which
+checks every configured source) are the manual, non-test ways to check the
+real thing before relying on it — the automated suite can't, since it has no
+network; `test/alerts.test.js` instead pins `parseFeed()` against a fixture
+captured from a real bridge response (attributed `<guid>`, CDATA description
+with a nested `<a>`) to cover the parsing, which is the part that can be
+tested without a network call, and pins that a default page source exists at
+all.
 
 `parseFileListing()` is deliberately shape-agnostic — it walks the JSON looking
 for url-ish and name-ish fields rather than hardcoding a schema, because the CUI

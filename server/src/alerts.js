@@ -330,38 +330,66 @@ class NoticeProvider {
 }
 
 /**
- * Rewrites a Nitter permalink to the equivalent x.com one.
+ * Rewrites an RSS-bridge permalink to the equivalent x.com one.
  *
- * The alert itself should keep working after the mirror that served it goes
- * down — public Nitter instances disappear with no notice — so the link an
- * alert carries points at the source of truth, not the mirror that happened
- * to answer this refresh.
+ * The alert itself should keep working after the bridge that served it goes
+ * away — Nitter, the bridge this project used to depend on, is exactly that
+ * story — so the link an alert carries points at the source of truth, not at
+ * whichever front end happened to answer this refresh.
  *
- * @param {string|null} nitterUrl
+ * @param {string|null} bridgeUrl
  * @returns {string|null}
  */
-const toXPostUrl = (nitterUrl) => {
-  if (!nitterUrl) return null;
+const toXPostUrl = (bridgeUrl) => {
+  if (!bridgeUrl) return null;
   try {
-    return `https://x.com${new URL(nitterUrl).pathname}`;
+    return `https://x.com${new URL(bridgeUrl).pathname}`;
   } catch {
-    return nitterUrl;
+    return bridgeUrl;
   }
 };
 
 /**
- * Reads @AlertMPK's public posts through a Nitter mirror's RSS feed.
+ * Turn one configured bridge entry into the feed URL for `username`.
+ *
+ * An entry is a URL template carrying `{username}`, because bridges do not
+ * agree on a path shape — RSSHub publishes `/twitter/user/<name>`, a Nitter
+ * mirror published `/<name>/rss`, and a self-hosted bridge can be anything.
+ * Hardcoding one of those shapes is what tied this source to a single piece
+ * of software; a template ties it to none. An entry with no placeholder is
+ * treated as a Nitter-shaped base URL so an existing private mirror keeps
+ * working without a rewrite.
+ *
+ * @param {string} template
+ * @param {string} username
+ * @returns {string}
+ */
+const buildBridgeUrl = (template, username) => {
+  const base = String(template).trim();
+  if (base.includes('{username}')) {
+    return base.replaceAll('{username}', encodeURIComponent(username));
+  }
+  return `${stripTrailingSlash(base)}/${encodeURIComponent(username)}/rss`;
+};
+
+/**
+ * Reads @AlertMPK's public posts through an RSS bridge.
  *
  * There is no free API path to a user's timeline — that has needed a paid
  * tier since 2023, which is what silently emptied `/alerts` for a year (see
- * CLAUDE.md). Nitter (an alternative X front end) republishes public
- * profiles as plain RSS, which `parseFeed()` above already parses — no
- * browser, no reverse-engineered endpoint, no markup to keep up with.
+ * CLAUDE.md). A bridge is any service that republishes a public profile as
+ * plain RSS, which `parseFeed()` above already parses — no browser, no
+ * reverse-engineered endpoint, no markup to keep up with.
  *
- * The tradeoff moves rather than disappears: public Nitter instances are
- * themselves unreliable and vanish with no warning, so `instances` is tried
- * in order and the list is meant to carry more than one entry, same as every
- * other multi-source config in this project (see CLAUDE.md invariant 1).
+ * This used to be hardwired to Nitter, which has since been discontinued;
+ * its public mirrors are gone and the ones still answering serve empty
+ * feeds. That is why nothing is configured by default and why the notice
+ * page (`config.alerts.pages`) is now the source that ships working: this
+ * provider only exists when `ALERT_X_BRIDGE_URLS` names a bridge the
+ * operator actually has, and `buildBridgeUrl()` above makes no assumption
+ * about which software is behind it. Entries are tried in order, same
+ * pattern as every other multi-source config in this project (see CLAUDE.md
+ * invariant 1).
  *
  * The account is dedicated entirely to service alerts, unlike the corporate
  * news page rejected earlier — so unlike `parsePage()`, a post here does not
@@ -369,33 +397,41 @@ const toXPostUrl = (nitterUrl) => {
  * are still extracted centrally by `AlertsService.refresh()`, same as every
  * other provider.
  */
-class NitterProvider {
-  constructor({ username, instances, maxPosts, timeoutMs }) {
+class XBridgeProvider {
+  /**
+   * @param {object} options
+   * @param {(url: string, init: object) => Promise<{ ok: boolean, status: number, statusText: string, text: string }>} [options.request]
+   *   the HTTP reader, injectable so the suite can exercise bridge failover
+   *   without a network.
+   */
+  constructor({ username, bridges, maxPosts, timeoutMs, request = requestText }) {
     this.username = username;
-    this.instances = instances;
+    this.bridges = bridges;
     this.maxPosts = maxPosts;
     this.timeoutMs = timeoutMs;
-    this.name = `nitter:@${username}`;
+    this.request = request;
+    this.name = `x-bridge:@${username}`;
   }
 
   async fetch() {
-    let lastError = new Error(`no Nitter instance configured for @${this.username}`);
+    let lastError = new Error(`no RSS bridge configured for @${this.username}`);
 
-    for (const instance of this.instances) {
-      const url = `${stripTrailingSlash(instance)}/${this.username}/rss`;
+    for (const bridge of this.bridges) {
+      const url = buildBridgeUrl(bridge, this.username);
       try {
         // requestText(), not fetchWithTimeout() — see its doc comment in
-        // src/http.js: nitter.net answers the global fetch() with a genuine
-        // 200 and an empty body, and only a raw http(s) request gets the
+        // src/http.js: a bridge fronting X is usually hardened against
+        // scrapers, and at least one answered the global fetch() with a
+        // genuine 200 and an empty body while a raw http(s) request got the
         // actual feed.
-        const response = await requestText(url, {
+        const response = await this.request(url, {
           timeoutMs: this.timeoutMs,
           headers: { Accept: 'application/rss+xml, application/xml;q=0.9' },
         });
         if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
 
         const items = parseFeed(response.text, url);
-        if (!items.length) throw new Error('no items in feed — the instance may be serving an empty page');
+        if (!items.length) throw new Error('no items in feed — the bridge may be serving an empty page');
 
         return items.slice(0, this.maxPosts).map((item) => ({
           id: item.id,
@@ -406,7 +442,7 @@ class NitterProvider {
           source: url,
         }));
       } catch (error) {
-        lastError = new Error(`${instance}: ${error.message}`);
+        lastError = new Error(`${bridge}: ${error.message}`);
       }
     }
 
@@ -461,8 +497,13 @@ class AlertsService {
 
   #defaultProviders() {
     const result = config.alerts.pages.map((url) => new NoticeProvider(url));
-    if (config.alerts.nitter.enabled) {
-      result.push(new NitterProvider(config.alerts.nitter));
+    // No bridge configured is the normal case, not a misconfiguration: the
+    // notice page is the source that ships working. Adding a provider with an
+    // empty candidate list would only manufacture a permanent lastError in
+    // /health for a source the operator never asked for.
+    const { enabled, bridges } = config.alerts.xBridge;
+    if (enabled && bridges.length) {
+      result.push(new XBridgeProvider(config.alerts.xBridge));
     }
     return result;
   }
@@ -498,8 +539,8 @@ class AlertsService {
         logger.warn('No alert provider responded; keeping the previous list');
       } else if (this.providers.length) {
         logger.warn(
-          'No alerts available from any provider — check NITTER_ENABLED/NITTER_INSTANCE_URLS ' +
-            '(see npm run scrape:nitter) and ALERT_PAGE_URLS',
+          'No alerts available from any provider — check ALERT_PAGE_URLS and, if one is ' +
+            'configured, ALERT_X_BRIDGE_URLS (see npm run scrape:alerts)',
         );
       }
       return this.alerts;
@@ -661,7 +702,8 @@ class AlertsService {
 module.exports = {
   AlertsService,
   NoticeProvider,
-  NitterProvider,
+  XBridgeProvider,
+  buildBridgeUrl,
   toXPostUrl,
   extractAffectedLines,
   fingerprint,
