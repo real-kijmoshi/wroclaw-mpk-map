@@ -16,7 +16,7 @@
     "lint": "eslint .",
     "benchmark:progress": "node --expose-gc scripts/benchmark-progress.js",
     "benchmark:open-data": "node --expose-gc scripts/benchmark-open-data.js",
-    "scrape:nitter": "node scripts/verify-nitter.js"
+    "scrape:alerts": "node scripts/verify-alerts.js"
   },
   "keywords": [
     "wroclaw",

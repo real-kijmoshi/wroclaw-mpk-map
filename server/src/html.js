@@ -4,7 +4,7 @@
  * Strip tags and decode the handful of entities that show up in scraped
  * notices, without pulling in a full HTML parser dependency.
  *
- * Used by src/alerts.js to clean up scraped notice pages and Nitter RSS
+ * Used by src/alerts.js to clean up scraped notice pages and syndicated RSS
  * descriptions alike.
  */
 const stripHtml = (value) =>

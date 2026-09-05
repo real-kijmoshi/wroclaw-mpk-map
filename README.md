@@ -109,12 +109,12 @@ when an iOS device count is needed. `STATS_ENABLED=false` disables the aggregate
 
 ## AI incident timelines
 
-Raw `@AlertMPK` posts are grouped into incident timelines at backend alert-refresh time;
+Source notices are grouped into incident timelines at backend alert-refresh time;
 the original source alerts remain available unchanged from `GET /alerts`. `GET /incidents`
 serves the cached/generated incident state and never calls a model for an app request.
 
 AI enrichment is optional and disabled by default. Without it, the server uses a
-deterministic fallback that still groups posts and builds timelines at no AI cost. A hosted
+deterministic fallback that still groups notices and builds timelines at no AI cost. A hosted
 OpenRouter or Command Code provider, or a local Ollama model, can be selected explicitly by
 environment variables documented in [`server/.env.example`](server/.env.example). Provider
 keys stay on the server. Models may organize source-backed text and place names, but all
@@ -220,13 +220,15 @@ Before the first submission you still need to, outside this repo:
 - Vehicle positions: `POST https://mpk.wroc.pl/bus_position`, supplemented by
   `GET https://open-data.cui.wroclaw.pl/hdb/db/14?download=json` (the city's own live
   vehicle table — merged onto the MPK fleet, see `.env.example` for the matching rules)
-- Disruptions: `@AlertMPK` on X, since the timeline API needs a paid tier —
-  the default and, out of the box, only source (`TWITTER_SCRAPE_ENABLED`).
-  Reads a plain HTTP endpoint by default (`TWITTER_SCRAPE_MODE=http`, no
-  browser needed) or a headless Chromium (`TWITTER_SCRAPE_MODE=browser`,
-  needs a Chromium on disk) — see `server/.env.example`
-- Disruptions (optional, extra source): `wroclaw.pl/komunikacja/zmiany-w-komunikacji`,
-  scraped (configurable via `ALERT_PAGE_URLS`, empty by default)
+- Disruptions: `@AlertMPK` on X, the only account publishing live incidents. The
+  timeline API needs a paid tier and Nitter is gone, so it is read through an RSS
+  bridge you run (`ALERT_X_BRIDGE_URLS`). **Nothing is configured by default** — a
+  stock deploy serves no alerts until you set a source up
+- Disruptions (optional, extra source): the city's notice pages, e.g.
+  `wroclaw.pl/komunikacja/zmiany-w-komunikacji` (`ALERT_PAGE_URLS`). These carry
+  *planned* changes — stop relocations, roadworks, event closures — not incidents,
+  so they supplement `@AlertMPK` rather than replacing it. `npm run scrape:alerts`
+  prints what each configured source actually yields
 
 Check the terms of use of each source before deploying publicly.
 

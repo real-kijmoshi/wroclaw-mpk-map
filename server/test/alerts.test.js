@@ -6,11 +6,14 @@ const { describe, it } = require('node:test');
 const config = require('../src/config');
 const {
   AlertsService,
+  XBridgeProvider,
+  buildBridgeUrl,
   extractAffectedLines,
   fingerprint,
   normalizeText,
   parseFeed,
   parsePage,
+  parseStructuredNotices,
   stripHtml,
   toXPostUrl,
 } = require('../src/alerts');
@@ -129,12 +132,14 @@ describe('parseFeed', () => {
   });
 });
 
-describe('parseFeed against a real Nitter RSS response', () => {
-  // Captured live from https://nitter.net/AlertMPK/rss — fixture kept close
-  // to the actual shape (attributed <guid>, CDATA description with an <a>
-  // wrapping the #AlertMPK hashtag) because that shape is what broke the old
-  // syndication.twitter.com scraper's ad-hoc regex parsing; this is exactly
-  // the kind of markup change parseFeed() has to keep tolerating.
+describe('parseFeed against a real X-bridge RSS response', () => {
+  // Captured live from https://nitter.net/AlertMPK/rss, back when Nitter was
+  // the bridge. Nitter is gone but the fixture is not stale: this is the
+  // shape any bridge republishing an X profile emits (attributed <guid>,
+  // CDATA description with an <a> wrapping the #AlertMPK hashtag), and that
+  // shape is what broke the old syndication.twitter.com scraper's ad-hoc
+  // regex parsing — exactly the kind of markup parseFeed() has to keep
+  // tolerating.
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
     <rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">
       <channel>
@@ -168,15 +173,114 @@ describe('parseFeed against a real Nitter RSS response', () => {
   });
 });
 
+describe('the bridge this actually runs against: a real RSSHub response', () => {
+  // Captured from a working `curl http://127.0.0.1:1200/twitter/user/AlertMPK`.
+  // Kept alongside the Nitter fixture above rather than replacing it: the two
+  // bridges emit genuinely different RSS for the same account, and "any bridge
+  // that republishes the profile" is only true if more than one shape is
+  // pinned. The differences that matter are all here — the guid is a
+  // twitter.com permalink instead of a bare numeric id, the link is already on
+  // x.com, and entities arrive escaped rather than in CDATA.
+  const RSSHUB = `<?xml version="1.0" encoding="UTF-8"?>
+    <rss xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel>
+      <title>Twitter @MPK Wrocław</title>
+      <link>https://x.com/AlertMPK</link>
+      <atom:link href="http://127.0.0.1:1200/twitter/user/AlertMPK" rel="self" type="application/rss+xml"></atom:link>
+      <generator>RSSHub</generator>
+      <image>
+        <url>https://pbs.twimg.com/profile_images/676359617211998208/q015WWtC.jpg</url>
+        <title>Twitter @MPK Wrocław</title>
+        <link>https://x.com/AlertMPK</link>
+      </image>
+      <item>
+        <title>#AlertMPK ul. Buforowa - ruch przywrócony. Autobusy wracają na swoje stałe trasy przejazdu.</title>
+        <description>#AlertMPK ul. Buforowa - ruch przywrócony. Autobusy wracają na swoje stałe trasy przejazdu.</description>
+        <link>https://x.com/AlertMPK/status/2096172105628799333</link>
+        <guid isPermaLink="false">https://twitter.com/AlertMPK/status/2096172105628799333</guid>
+        <pubDate>Sat, 05 Sep 2026 09:42:29 GMT</pubDate>
+        <category>AlertMPK</category>
+      </item>
+      <item>
+        <title>Roboty drogowe na ul. Muchoborskiej zakończone. Autobusy wracają do obsługi przystanku &quot;Muchobór Mały (Stacja Kolejowa)&quot;.</title>
+        <description>Roboty drogowe na ul. Muchoborskiej zakończone. Autobusy wracają do obsługi przystanku &quot;Muchobór Mały (Stacja Kolejowa)&quot;.</description>
+        <link>https://x.com/AlertMPK/status/2096143068680401189</link>
+        <guid isPermaLink="false">https://twitter.com/AlertMPK/status/2096143068680401189</guid>
+        <pubDate>Sat, 05 Sep 2026 07:47:06 GMT</pubDate>
+      </item>
+    </channel></rss>`;
+
+  const BRIDGE = 'http://127.0.0.1:1200/twitter/user/AlertMPK';
+
+  const provider = () =>
+    new XBridgeProvider({
+      username: 'AlertMPK',
+      bridges: ['http://127.0.0.1:1200/twitter/user/{username}'],
+      maxPosts: 10,
+      timeoutMs: 50,
+      request: () => ({ ok: true, status: 200, statusText: 'OK', text: RSSHUB }),
+    });
+
+  it('does not mistake the channel image for a post', () => {
+    // <image> carries its own <title> and <link>. Reading it as an item would
+    // put the account's avatar at the top of /alerts.
+    assert.equal(parseFeed(RSSHUB, BRIDGE).length, 2);
+  });
+
+  it('uses the permalink guid as the id', () => {
+    const [item] = parseFeed(RSSHUB, BRIDGE);
+    assert.equal(item.id, 'https://twitter.com/AlertMPK/status/2096172105628799333');
+  });
+
+  it('leaves a link that is already on x.com alone', async () => {
+    // RSSHub hands out x.com links; Nitter handed out its own domain. The
+    // rewrite has to be a no-op on the first and a fix on the second, or one
+    // bridge's links come out mangled.
+    const items = await provider().fetch();
+    assert.equal(items[0].url, 'https://x.com/AlertMPK/status/2096172105628799333');
+  });
+
+  it('decodes escaped entities in the post text', async () => {
+    const items = await provider().fetch();
+    assert.match(items[1].content, /"Muchobór Mały \(Stacja Kolejowa\)"/);
+  });
+
+  it('keeps a post that does not carry the #AlertMPK tag', async () => {
+    // The account posts nothing but service information, so there is no
+    // keyword gate here — unlike parsePage(), where a news page would
+    // otherwise turn press releases into alerts. Half of a real timeline is
+    // untagged, and dropping it would drop real notices.
+    const items = await provider().fetch();
+    assert.equal(items.length, 2);
+    assert.match(items[1].content, /^Roboty drogowe/);
+  });
+
+  it('carries the post text as content with no headline of its own', async () => {
+    const items = await provider().fetch();
+    assert.equal(items[0].title, null);
+    assert.match(items[0].content, /^#AlertMPK ul\. Buforowa/);
+    assert.equal(items[0].timestamp, Date.parse('Sat, 05 Sep 2026 09:42:29 GMT'));
+  });
+
+  it('reports no affected lines when the post names none', async () => {
+    // "ul. Buforowa - ruch przywrócony" names a street, not a line. Inventing
+    // a badge here would be the phantom-line bug wearing a different hat; an
+    // alert with no lines is correct and still shows in the unfiltered list.
+    const service = new AlertsService(() => new Set(['4', '10', '133']), [provider()]);
+    for (const alert of await service.refresh()) {
+      assert.deepEqual(alert.affected, []);
+    }
+  });
+});
+
 describe('toXPostUrl', () => {
-  it('rewrites a Nitter permalink to the equivalent x.com one', () => {
+  it('rewrites a bridge permalink to the equivalent x.com one', () => {
     assert.equal(
       toXPostUrl('https://nitter.net/AlertMPK/status/2085292635451724015#m'),
       'https://x.com/AlertMPK/status/2085292635451724015',
     );
   });
 
-  it('works no matter which instance served the feed', () => {
+  it('works no matter which bridge served the feed', () => {
     assert.equal(
       toXPostUrl('https://nitter.example.org/AlertMPK/status/1'),
       'https://x.com/AlertMPK/status/1',
@@ -187,6 +291,235 @@ describe('toXPostUrl', () => {
     assert.equal(toXPostUrl(null), null);
     assert.equal(toXPostUrl(undefined), null);
     assert.equal(toXPostUrl('not a url'), 'not a url');
+  });
+});
+
+describe('buildBridgeUrl', () => {
+  it('substitutes the username into a templated bridge URL', () => {
+    assert.equal(
+      buildBridgeUrl('https://rsshub.example.com/twitter/user/{username}', 'AlertMPK'),
+      'https://rsshub.example.com/twitter/user/AlertMPK',
+    );
+  });
+
+  it('falls back to the Nitter path shape for a bare base URL', () => {
+    // Nitter's public mirrors are gone, but a private one is still a valid
+    // bridge — an operator who has one should not have to rewrite its URL.
+    assert.equal(
+      buildBridgeUrl('https://mirror.example.org/', 'AlertMPK'),
+      'https://mirror.example.org/AlertMPK/rss',
+    );
+  });
+
+  it('escapes a username that is not URL-safe', () => {
+    assert.equal(
+      buildBridgeUrl('https://bridge.example.com/user/{username}', 'a b'),
+      'https://bridge.example.com/user/a%20b',
+    );
+  });
+});
+
+describe('XBridgeProvider', () => {
+  const rss = `<?xml version="1.0"?>
+    <rss version="2.0"><channel>
+      <item>
+        <title>#AlertMPK Objazd linii 4</title>
+        <description>#AlertMPK Objazd linii 4</description>
+        <guid isPermaLink="false">42</guid>
+        <link>https://bridge.example.com/AlertMPK/status/42#m</link>
+        <pubDate>Thu, 06 Aug 2026 09:11:21 GMT</pubDate>
+      </item>
+    </channel></rss>`;
+
+  const ok = (text) => ({ ok: true, status: 200, statusText: 'OK', text });
+
+  // The HTTP reader is injected (see XBridgeProvider's constructor) so bridge
+  // failover is exercised without a socket — the suite runs with no network.
+  const provider = (bridges, request = () => ok(rss)) =>
+    new XBridgeProvider({ username: 'AlertMPK', bridges, maxPosts: 10, timeoutMs: 50, request });
+
+  it('names itself after the account, not the software behind the bridge', () => {
+    assert.equal(provider(['https://bridge.example.com/user/{username}']).name, 'x-bridge:@AlertMPK');
+  });
+
+  it('throws a useful error when no bridge is configured', async () => {
+    await assert.rejects(() => provider([]).fetch(), /no RSS bridge configured/);
+  });
+
+  it('reads posts and rewrites their links to x.com', async () => {
+    const seen = [];
+    const items = await provider(['https://bridge.example.com/user/{username}'], (url) => {
+      seen.push(url);
+      return ok(rss);
+    }).fetch();
+
+    assert.deepEqual(seen, ['https://bridge.example.com/user/AlertMPK']);
+    assert.equal(items.length, 1);
+    assert.equal(items[0].url, 'https://x.com/AlertMPK/status/42');
+    assert.equal(items[0].content, '#AlertMPK Objazd linii 4');
+    // The account posts nothing but alerts, so a post carries no headline of
+    // its own — the content is the alert.
+    assert.equal(items[0].title, null);
+  });
+
+  it('falls through to the next bridge when the first one is down', async () => {
+    const seen = [];
+    const items = await provider(
+      ['https://dead.example.com/user/{username}', 'https://alive.example.com/user/{username}'],
+      (url) => {
+        seen.push(url);
+        if (url.includes('dead')) return { ok: false, status: 502, statusText: 'Bad Gateway', text: '' };
+        return ok(rss);
+      },
+    ).fetch();
+
+    assert.equal(seen.length, 2, 'both bridges tried, in order');
+    assert.equal(items.length, 1);
+  });
+
+  it('treats an empty feed as a failure, not as zero alerts', async () => {
+    // A discontinued bridge answers 200 with an empty channel rather than an
+    // error — that is how the Nitter source went silent with nothing in
+    // /health saying so. It has to read as a failed provider, so the previous
+    // list is kept and `lastError` explains the staleness.
+    await assert.rejects(
+      () =>
+        provider(['https://empty.example.com/user/{username}'], () =>
+          ok('<rss version="2.0"><channel/></rss>'),
+        ).fetch(),
+      /no items in feed/,
+    );
+  });
+});
+
+describe('default alerts configuration', () => {
+  it('configures no alerts source by default', () => {
+    // There is no source that is both free and correct, so a stock deploy
+    // gets none rather than a wrong one. The notice pages carry planned
+    // changes — stop relocations, roadworks, event closures — which are not
+    // disruptions; @AlertMPK is, and reaching it needs something the operator
+    // supplies. Serving the planned-changes page as if it were the alert feed
+    // is the "fake disruption is worse than a missing one" rule at the level
+    // of a whole source.
+    assert.deepEqual(config.alerts.pages, []);
+    assert.deepEqual(config.alerts.xBridge.bridges, []);
+  });
+
+  it('never defaults to a public third party', () => {
+    // Nitter was the default, was discontinued, and took /alerts down with it
+    // silently. Whichever public bridge replaces it in a default goes the same
+    // way. Every source here is opt-in for that reason.
+    const defaults = [...config.alerts.pages, ...config.alerts.xBridge.bridges];
+    assert.equal(defaults.length, 0, 'no upstream is depended on without being asked for');
+  });
+});
+
+describe('parseStructuredNotices', () => {
+  // Captured from the real notice list. Each notice states its lines and the
+  // dates it is in force, then its dated headline — the order matters, and
+  // the pairing here is the page's own: Kromera/Czajkowskiego and Brücknera
+  // are the same corridor (N, 128, 130, 242, 251), Partynice is 113/S7.
+  const NOTICES = `
+    <div class="notice">
+      <span>linie: N 128 130 242 251</span>
+      <span>obowiązuje: 03.09.2026 - 08.09.2026</span>
+      <p>05.09.2026r. - przywrócenie do ruchu zatoki autobusowej Kromera - Czajkowskiego (24146)</p>
+    </div>
+    <div class="notice">
+      <span>linie: N 128 130 242 251</span>
+      <span>obowiązuje: 03.09.2026 - 30.09.2026</span>
+      <p>05.09.2026r. - tymczasowa zmiana lokalizacji przystanku Brücknera (24105)</p>
+    </div>
+    <div class="notice">
+      <span>linie: 253</span>
+      <span>obowiązuje: 03.09.2026 - 04.10.2026</span>
+      <p>05.09.2026r. - przebudowa ul. Kamiennogórskiej</p>
+    </div>
+    <div class="notice">
+      <span>linie: 113 S7</span>
+      <span>obowiązuje: 06.09.2026 - 07.09.2026</span>
+      <p>06.09.2026r. - Wielka Wrocławska na Torze Wyścigów Konnych - Partynice.</p>
+    </div>
+    <div class="notice">
+      <span>linie: 6 7 12</span>
+      <span>obowiązuje: 05.09.2026 - 10.09.2026</span>
+      <p>05.09.2026r. - 61 Międzynarodowy Festiwal Wratislavia Cantans</p>
+    </div>`;
+
+  const PAGE = 'https://example.org/komunikaty';
+  // Inside every window above, so nothing is dropped as expired.
+  const DURING = Date.parse('2026-09-05T09:00:00Z');
+  const parse = (html = NOTICES, now = DURING) =>
+    parseStructuredNotices(html, PAGE, { now });
+
+  it('reads every notice on the page', () => {
+    assert.equal(parse().length, 5);
+  });
+
+  it('takes the affected lines from the page instead of guessing them', () => {
+    // This is the whole point of the format: extractAffectedLines() has to
+    // work out which numbers in a sentence are line numbers, and gets it
+    // wrong on dates. Here the page has already said.
+    assert.deepEqual(parse()[0].affected, ['N', '128', '130', '242', '251']);
+    assert.deepEqual(parse()[2].affected, ['253']);
+  });
+
+  it('keeps a letter line and a letter+digit line', () => {
+    assert.deepEqual(parse()[3].affected, ['113', 'S7']);
+  });
+
+  it('pairs each window with its own notice, not the next one', () => {
+    // A notice's text runs to the start of the next notice. Read greedily,
+    // Partynice's 06.09–07.09 window lands on the festival instead.
+    const [, , , partynice, festival] = parse();
+    assert.match(partynice.title, /Partynice/);
+    assert.deepEqual(partynice.affected, ['113', 'S7']);
+    assert.match(festival.title, /Wratislavia Cantans/);
+    assert.deepEqual(festival.affected, ['6', '7', '12']);
+  });
+
+  it('does not let the next notice bleed into this one', () => {
+    assert.doesNotMatch(parse()[0].title, /Brücknera|linie:/);
+  });
+
+  it('reads the publish date as the timestamp', () => {
+    assert.equal(new Date(parse()[0].timestamp).toISOString().slice(0, 10), '2026-09-05');
+  });
+
+  it('states the validity window in the text a rider reads', () => {
+    assert.match(parse()[0].content, /Obowiązuje 03\.09\.2026 – 08\.09\.2026\./);
+  });
+
+  it('drops a notice whose last day has passed', () => {
+    // The 03.09–08.09 and 06.09–07.09 windows are over on 2026-09-09; the
+    // three that run into October and the 05.09–10.09 festival are not. A
+    // finished closure at the top of /alerts sends people around a diversion
+    // that has been lifted.
+    const after = parseStructuredNotices(NOTICES, PAGE, { now: Date.parse('2026-09-09T09:00:00Z') });
+    assert.equal(after.length, 3);
+    assert.ok(!after.some((notice) => /Kromera|Partynice/.test(notice.title)));
+  });
+
+  it('keeps a notice on its final day', () => {
+    // Late evening in Wrocław is still 08.09 locally; comparing against a UTC
+    // instant would expire it early, on the evening people are reading it.
+    const lastEvening = Date.parse('2026-09-08T21:30:00Z');
+    const items = parseStructuredNotices(NOTICES, PAGE, { now: lastEvening });
+    assert.ok(items.some((notice) => /Kromera/.test(notice.title)));
+  });
+
+  it('gives each notice a stable id across refreshes', () => {
+    assert.deepEqual(
+      parse().map((notice) => notice.id),
+      parse().map((notice) => notice.id),
+    );
+    assert.equal(new Set(parse().map((notice) => notice.id)).size, 5);
+  });
+
+  it('returns nothing for a page that does not use the format', () => {
+    assert.deepEqual(parseStructuredNotices('<a href="/x">Objazd linii 4</a>', PAGE), []);
+    assert.deepEqual(parseStructuredNotices('', PAGE), []);
+    assert.deepEqual(parseStructuredNotices(null, PAGE), []);
   });
 });
 
@@ -563,6 +896,40 @@ describe('AlertsService dedup', () => {
     ]);
     const result = await service.refresh();
     assert.equal(result.length, 2, 'successful provider results used');
+  });
+});
+
+describe('AlertsService with a source that states its lines', () => {
+  it('believes the stated lines rather than re-deriving them', async () => {
+    // "Od 1 sierpnia" would have extractAffectedLines() reaching for line 1,
+    // and the known-line set cannot tell that day-of-month from the real
+    // line. A source that states its lines settles it.
+    const stated = {
+      id: 'n1',
+      title: 'Od 1 sierpnia zmiana tras tramwajów',
+      content: 'Od 1 sierpnia zmiana tras tramwajów. Obowiązuje 01.08.2026 – 30.09.2026.',
+      url: 'https://example.org/komunikaty',
+      timestamp: 1000,
+      source: 'https://example.org/komunikaty',
+      affected: ['4', '10'],
+    };
+    const service = new AlertsService(() => new Set(['1', '4', '10']), [
+      mockProvider('stated', [stated]),
+    ]);
+
+    const [alert] = await service.refresh();
+    assert.deepEqual(alert.affected, ['4', '10'], 'the page had already answered');
+    assert.deepEqual(alert.types, { 4: 'tram', 10: 'tram' }, 'types still derived centrally');
+  });
+
+  it('still extracts lines from a source that states none', async () => {
+    const service = new AlertsService(() => new Set(['4']), [
+      mockProvider('prose', [
+        mkItem({ id: 'p1', title: 'Linia 4 pojedzie objazdem od 25.07.2026', content: LONG_TEXT }),
+      ]),
+    ]);
+    const [alert] = await service.refresh();
+    assert.deepEqual(alert.affected, ['4']);
   });
 });
 
