@@ -6,6 +6,8 @@ const { describe, it } = require('node:test');
 const config = require('../src/config');
 const {
   AlertsService,
+  XBridgeProvider,
+  buildBridgeUrl,
   extractAffectedLines,
   fingerprint,
   normalizeText,
@@ -129,12 +131,14 @@ describe('parseFeed', () => {
   });
 });
 
-describe('parseFeed against a real Nitter RSS response', () => {
-  // Captured live from https://nitter.net/AlertMPK/rss — fixture kept close
-  // to the actual shape (attributed <guid>, CDATA description with an <a>
-  // wrapping the #AlertMPK hashtag) because that shape is what broke the old
-  // syndication.twitter.com scraper's ad-hoc regex parsing; this is exactly
-  // the kind of markup change parseFeed() has to keep tolerating.
+describe('parseFeed against a real X-bridge RSS response', () => {
+  // Captured live from https://nitter.net/AlertMPK/rss, back when Nitter was
+  // the bridge. Nitter is gone but the fixture is not stale: this is the
+  // shape any bridge republishing an X profile emits (attributed <guid>,
+  // CDATA description with an <a> wrapping the #AlertMPK hashtag), and that
+  // shape is what broke the old syndication.twitter.com scraper's ad-hoc
+  // regex parsing — exactly the kind of markup parseFeed() has to keep
+  // tolerating.
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
     <rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">
       <channel>
@@ -169,14 +173,14 @@ describe('parseFeed against a real Nitter RSS response', () => {
 });
 
 describe('toXPostUrl', () => {
-  it('rewrites a Nitter permalink to the equivalent x.com one', () => {
+  it('rewrites a bridge permalink to the equivalent x.com one', () => {
     assert.equal(
       toXPostUrl('https://nitter.net/AlertMPK/status/2085292635451724015#m'),
       'https://x.com/AlertMPK/status/2085292635451724015',
     );
   });
 
-  it('works no matter which instance served the feed', () => {
+  it('works no matter which bridge served the feed', () => {
     assert.equal(
       toXPostUrl('https://nitter.example.org/AlertMPK/status/1'),
       'https://x.com/AlertMPK/status/1',
@@ -187,6 +191,120 @@ describe('toXPostUrl', () => {
     assert.equal(toXPostUrl(null), null);
     assert.equal(toXPostUrl(undefined), null);
     assert.equal(toXPostUrl('not a url'), 'not a url');
+  });
+});
+
+describe('buildBridgeUrl', () => {
+  it('substitutes the username into a templated bridge URL', () => {
+    assert.equal(
+      buildBridgeUrl('https://rsshub.example.com/twitter/user/{username}', 'AlertMPK'),
+      'https://rsshub.example.com/twitter/user/AlertMPK',
+    );
+  });
+
+  it('falls back to the Nitter path shape for a bare base URL', () => {
+    // Nitter's public mirrors are gone, but a private one is still a valid
+    // bridge — an operator who has one should not have to rewrite its URL.
+    assert.equal(
+      buildBridgeUrl('https://mirror.example.org/', 'AlertMPK'),
+      'https://mirror.example.org/AlertMPK/rss',
+    );
+  });
+
+  it('escapes a username that is not URL-safe', () => {
+    assert.equal(
+      buildBridgeUrl('https://bridge.example.com/user/{username}', 'a b'),
+      'https://bridge.example.com/user/a%20b',
+    );
+  });
+});
+
+describe('XBridgeProvider', () => {
+  const rss = `<?xml version="1.0"?>
+    <rss version="2.0"><channel>
+      <item>
+        <title>#AlertMPK Objazd linii 4</title>
+        <description>#AlertMPK Objazd linii 4</description>
+        <guid isPermaLink="false">42</guid>
+        <link>https://bridge.example.com/AlertMPK/status/42#m</link>
+        <pubDate>Thu, 06 Aug 2026 09:11:21 GMT</pubDate>
+      </item>
+    </channel></rss>`;
+
+  const ok = (text) => ({ ok: true, status: 200, statusText: 'OK', text });
+
+  // The HTTP reader is injected (see XBridgeProvider's constructor) so bridge
+  // failover is exercised without a socket — the suite runs with no network.
+  const provider = (bridges, request = () => ok(rss)) =>
+    new XBridgeProvider({ username: 'AlertMPK', bridges, maxPosts: 10, timeoutMs: 50, request });
+
+  it('names itself after the account, not the software behind the bridge', () => {
+    assert.equal(provider(['https://bridge.example.com/user/{username}']).name, 'x-bridge:@AlertMPK');
+  });
+
+  it('throws a useful error when no bridge is configured', async () => {
+    await assert.rejects(() => provider([]).fetch(), /no RSS bridge configured/);
+  });
+
+  it('reads posts and rewrites their links to x.com', async () => {
+    const seen = [];
+    const items = await provider(['https://bridge.example.com/user/{username}'], (url) => {
+      seen.push(url);
+      return ok(rss);
+    }).fetch();
+
+    assert.deepEqual(seen, ['https://bridge.example.com/user/AlertMPK']);
+    assert.equal(items.length, 1);
+    assert.equal(items[0].url, 'https://x.com/AlertMPK/status/42');
+    assert.equal(items[0].content, '#AlertMPK Objazd linii 4');
+    // The account posts nothing but alerts, so a post carries no headline of
+    // its own — the content is the alert.
+    assert.equal(items[0].title, null);
+  });
+
+  it('falls through to the next bridge when the first one is down', async () => {
+    const seen = [];
+    const items = await provider(
+      ['https://dead.example.com/user/{username}', 'https://alive.example.com/user/{username}'],
+      (url) => {
+        seen.push(url);
+        if (url.includes('dead')) return { ok: false, status: 502, statusText: 'Bad Gateway', text: '' };
+        return ok(rss);
+      },
+    ).fetch();
+
+    assert.equal(seen.length, 2, 'both bridges tried, in order');
+    assert.equal(items.length, 1);
+  });
+
+  it('treats an empty feed as a failure, not as zero alerts', async () => {
+    // A discontinued bridge answers 200 with an empty channel rather than an
+    // error — that is how the Nitter source went silent with nothing in
+    // /health saying so. It has to read as a failed provider, so the previous
+    // list is kept and `lastError` explains the staleness.
+    await assert.rejects(
+      () =>
+        provider(['https://empty.example.com/user/{username}'], () =>
+          ok('<rss version="2.0"><channel/></rss>'),
+        ).fetch(),
+      /no items in feed/,
+    );
+  });
+});
+
+describe('default alerts configuration', () => {
+  it('ships a source that answers out of the box', () => {
+    // The Nitter source was the only default one, and when Nitter was
+    // discontinued a stock deploy had no alerts source at all — /alerts just
+    // stayed empty, which is the same silent failure the paid X API caused
+    // before it. A default page is what keeps that from repeating.
+    assert.ok(config.alerts.pages.length, 'at least one notice page is configured by default');
+  });
+
+  it('configures no X bridge by default', () => {
+    // Pointing the stock deploy at someone else's public bridge is how this
+    // broke the first time; a bridge is something an operator opts into.
+    assert.deepEqual(config.alerts.xBridge.bridges, []);
   });
 });
 

@@ -41,14 +41,20 @@ const VEHICLE_SOURCES = list(process.env.VEHICLE_POSITION_URLS, DEFAULTS.vehicle
 /**
  * Pages carrying live service disruptions.
  *
- * Empty by default — @AlertMPK on X is the sole default source (see
- * `nitter` below). `mpk.wroc.pl/komunikaty` was a guess and 404s, and
+ * The city's notice page is the default source, and out of the box the only
+ * one. It took that job from @AlertMPK-via-Nitter, which stopped being a
+ * source at all when Nitter was discontinued and its public mirrors went
+ * away — see `xBridge` below. This page is scraped rather than read as a
+ * feed (`parsePage()` in src/alerts.js), so it is the fragile part of the
+ * server; it fails soft, and `/health` says so under
+ * `alerts.providers[].lastError`.
+ *
+ * Adding pages is how this source gets redundancy, but only pages that carry
+ * dated disruptions: `mpk.wroc.pl/komunikaty` was a guess and 404s, and
  * `/o-mpk/aktualnosci` exists but is corporate news — adding it produced
- * "MPK kupuje nowe tramwaje" as a service alert. `ALERT_PAGE_URLS` still works
- * for anyone who wants to add `wroclaw.pl/komunikacja/zmiany-w-komunikacji` (or
- * another page) back as an extra source; before adding one, check that it
- * carries dated disruptions rather than press releases — `npm run doctor`
- * prints the headlines each one yields so that is easy to eyeball.
+ * "MPK kupuje nowe tramwaje" as a service alert. `npm run doctor` prints the
+ * headlines each configured page yields so that is easy to eyeball before
+ * trusting it.
  */
 const ALERT_PAGES = list(process.env.ALERT_PAGE_URLS, DEFAULTS.alertPages);
 
@@ -205,19 +211,23 @@ module.exports = {
     refreshIntervalMs: num(process.env.ALERTS_REFRESH_INTERVAL_MS, DEFAULTS.alerts.refreshIntervalMs),
     timeoutMs: num(process.env.ALERTS_TIMEOUT_MS, DEFAULTS.alerts.timeoutMs),
     maxItems: num(process.env.ALERTS_MAX_ITEMS, DEFAULTS.alerts.maxItems),
-    // The default alerts source: reads @AlertMPK's public posts through a
-    // Nitter mirror's RSS feed instead of the paid X API or scraping X's own
-    // markup — see NitterProvider in src/alerts.js. `instances` is a list,
-    // same pattern as every other multi-source config here (GTFS, vehicle
-    // positions), because public Nitter mirrors go down with no notice; add
-    // more via NITTER_INSTANCE_URLS. Set NITTER_ENABLED to false to turn this
-    // source off entirely.
-    nitter: {
-      enabled: bool(process.env.NITTER_ENABLED, DEFAULTS.alerts.nitter.enabled),
-      instances: list(process.env.NITTER_INSTANCE_URLS, DEFAULTS.alerts.nitter.instances),
-      username: process.env.NITTER_USERNAME || DEFAULTS.alerts.nitter.username,
-      maxPosts: num(process.env.NITTER_MAX_POSTS, DEFAULTS.alerts.nitter.maxPosts),
-      timeoutMs: num(process.env.NITTER_TIMEOUT_MS, DEFAULTS.alerts.nitter.timeoutMs),
+    // Optional extra source: @AlertMPK's public posts, read through whatever
+    // RSS bridge the operator has — see XBridgeProvider in src/alerts.js.
+    // Empty by default, so the provider is not created at all: this used to
+    // be hardwired to Nitter, and when Nitter was discontinued the default
+    // deploy was left with no alerts source that answers. Shipping another
+    // public bridge as the default would only repeat that, so a bridge is
+    // something you point at deliberately. Each entry is a URL template
+    // carrying {username} (e.g. https://rsshub.example.com/twitter/user/{username});
+    // entries are tried in order, same pattern as every other multi-source
+    // config here. Configuring ALERT_X_BRIDGE_URLS is what turns this on —
+    // ALERT_X_BRIDGE_ENABLED=false keeps it off without deleting the URLs.
+    xBridge: {
+      enabled: bool(process.env.ALERT_X_BRIDGE_ENABLED, DEFAULTS.alerts.xBridge.enabled),
+      bridges: list(process.env.ALERT_X_BRIDGE_URLS, DEFAULTS.alerts.xBridge.bridges),
+      username: process.env.ALERT_X_USERNAME || DEFAULTS.alerts.xBridge.username,
+      maxPosts: num(process.env.ALERT_X_MAX_POSTS, DEFAULTS.alerts.xBridge.maxPosts),
+      timeoutMs: num(process.env.ALERT_X_TIMEOUT_MS, DEFAULTS.alerts.xBridge.timeoutMs),
     },
   },
 
