@@ -9,6 +9,7 @@ const { createApp } = require('./src/app');
 const { AlertsService } = require('./src/alerts');
 const { GtfsStore } = require('./src/gtfs/store');
 const { KlosokService } = require('./src/klosok/service');
+const { RuntimeSettings } = require('./src/runtime-settings');
 const { StatsTracker } = require('./src/stats');
 const { VehicleTracker } = require('./src/vehicles');
 
@@ -27,6 +28,12 @@ const vehicles = new VehicleTracker(() => gtfs.lines, { gtfs });
 const alerts = new AlertsService(
   () => new Set([...gtfs.routesByLine.keys()].map((line) => line.toUpperCase())),
 );
+
+// The one setting the dashboard may change while running. Loaded before the
+// first refresh so an override applies to the very first batch of incidents
+// rather than to the second, five minutes later.
+const runtimeSettings = new RuntimeSettings({ cacheDir: config.stats.cacheDir, logger });
+runtimeSettings.load();
 
 // PT KŁOSOK is a live-position source with no timetable of its own: its buses
 // are matched against the Wrocław GTFS above, and it is merged into the MPK +
@@ -93,8 +100,34 @@ const loadGtfs = async (attempt = 0) => {
 };
 
 const start = () => {
-  const app = createApp({ gtfs, vehicles, alerts, klosok, stats, startedAt: new Date() });
+  const app = createApp({
+    gtfs,
+    vehicles,
+    alerts,
+    klosok,
+    stats,
+    runtimeSettings,
+    startedAt: new Date(),
+  });
   stats?.start();
+
+  // A stored override that disagrees with .env is announced rather than
+  // applied quietly. A setting that silently contradicts the environment is
+  // the shape of failure this project keeps re-learning (invariant 1), so the
+  // boot log says which model is really in use and where it came from.
+  const storedModel = runtimeSettings.values.aiModel;
+  if (storedModel) {
+    const envModel = config.aiAlerts[config.aiAlerts.requestedProvider]?.model ?? null;
+    const applied = alerts.setAiModel(storedModel);
+    if (!applied.ok) {
+      logger.warn(`Stored AI model "${storedModel}" rejected (${applied.error}); using .env`);
+    } else if (storedModel !== envModel) {
+      logger.warn(
+        `AI model overridden from the dashboard: ${storedModel} (.env says ${envModel ?? 'nothing'}) ` +
+          `— delete ${runtimeSettings.file} to go back`,
+      );
+    }
+  }
 
   if (!config.admin.token) {
     logger.warn('ADMIN_TOKEN is not set — /admin is disabled. Set it to enable the stats dashboard.');
