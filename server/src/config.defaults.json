@@ -7,7 +7,7 @@
   },
 
   "vehicleSources": ["https://mpk.wroc.pl/bus_position"],
-  "alertPages": ["https://www.wroclaw.pl/komunikacja/zmiany-w-komunikacji"],
+  "alertPages": [],
 
   "gtfs": {
     "catalogueUrl": "https://api.open-data.cui.wroclaw.pl/od2/6/",

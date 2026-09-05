@@ -220,13 +220,15 @@ Before the first submission you still need to, outside this repo:
 - Vehicle positions: `POST https://mpk.wroc.pl/bus_position`, supplemented by
   `GET https://open-data.cui.wroclaw.pl/hdb/db/14?download=json` (the city's own live
   vehicle table — merged onto the MPK fleet, see `.env.example` for the matching rules)
-- Disruptions: `wroclaw.pl/komunikacja/zmiany-w-komunikacji`, read as a feed if it
-  offers one and scraped otherwise — the default and, out of the box, only source
-  (`ALERT_PAGE_URLS`, which takes a list). `npm run scrape:alerts` prints what each
-  configured source actually yields
-- Disruptions (optional, extra source): `@AlertMPK` on X through an RSS bridge you
-  run, since the timeline API needs a paid tier (`ALERT_X_BRIDGE_URLS`, unset by
-  default) — see `server/.env.example`
+- Disruptions: `@AlertMPK` on X, the only account publishing live incidents. The
+  timeline API needs a paid tier and Nitter is gone, so it is read through an RSS
+  bridge you run (`ALERT_X_BRIDGE_URLS`). **Nothing is configured by default** — a
+  stock deploy serves no alerts until you set a source up
+- Disruptions (optional, extra source): the city's notice pages, e.g.
+  `wroclaw.pl/komunikacja/zmiany-w-komunikacji` (`ALERT_PAGE_URLS`). These carry
+  *planned* changes — stop relocations, roadworks, event closures — not incidents,
+  so they supplement `@AlertMPK` rather than replacing it. `npm run scrape:alerts`
+  prints what each configured source actually yields
 
 Check the terms of use of each source before deploying publicly.
 

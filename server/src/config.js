@@ -41,20 +41,23 @@ const VEHICLE_SOURCES = list(process.env.VEHICLE_POSITION_URLS, DEFAULTS.vehicle
 /**
  * Pages carrying live service disruptions.
  *
- * The city's notice page is the default source, and out of the box the only
- * one. It took that job from @AlertMPK-via-Nitter, which stopped being a
- * source at all when Nitter was discontinued and its public mirrors went
- * away — see `xBridge` below. This page is scraped rather than read as a
- * feed (`parsePage()` in src/alerts.js), so it is the fragile part of the
- * server; it fails soft, and `/health` says so under
- * `alerts.providers[].lastError`.
+ * Empty by default, and deliberately so: the city's notice pages publish
+ * *planned* changes — stop relocations, roadworks, event closures, each with
+ * its own `linie:` and `obowiązuje:` — and those are not disruptions. Serving
+ * them as `/alerts` is the "a fake disruption is worse than a missing one"
+ * rule applied to a whole source: it fills the screen with things that are
+ * not going wrong, and buries the one that is. `@AlertMPK` is the account
+ * that carries actual incidents; see `xBridge` below for how it is reached.
  *
- * Adding pages is how this source gets redundancy, but only pages that carry
- * dated disruptions: `mpk.wroc.pl/komunikaty` was a guess and 404s, and
- * `/o-mpk/aktualnosci` exists but is corporate news — adding it produced
- * "MPK kupuje nowe tramwaje" as a service alert. `npm run doctor` prints the
- * headlines each configured page yields so that is easy to eyeball before
- * trusting it.
+ * A page is still worth configuring as a *second* source when you want the
+ * planned changes too. Only add one that carries dated notices:
+ * `mpk.wroc.pl/komunikaty` was a guess and 404s, and `/o-mpk/aktualnosci`
+ * exists but is corporate news — adding it produced "MPK kupuje nowe
+ * tramwaje" as a service alert. `npm run doctor` prints what each configured
+ * page yields so that is easy to eyeball before trusting it. A page that
+ * states its lines and window is read by `parseStructuredNotices()`, one that
+ * does not is scraped by `parsePage()`; both fail soft into
+ * `alerts.providers[].lastError`.
  */
 const ALERT_PAGES = list(process.env.ALERT_PAGE_URLS, DEFAULTS.alertPages);
 

@@ -257,11 +257,18 @@ while an appearance change is being re-captured.
 
 ## Fragile by nature
 
-The default (and, out of the box, only) alerts source is
-`wroclaw.pl/komunikacja/zmiany-w-komunikacji`, a page verified to carry live
-disruptions, scraped by `parsePage()` in `server/src/alerts.js`. It is
-`ALERT_PAGES`' single default entry; `ALERT_PAGE_URLS` adds more, which is how
-this source gets redundancy. Only add a page carrying live disruptions:
+**There is no default alerts source, and that is a decision, not a gap.**
+`@AlertMPK` on X is the only thing publishing actual disruptions, and every
+route to it needs something the operator supplies (see the X section below).
+The obvious free substitute is not one: the city's notice pages
+(`wroclaw.pl/komunikacja/zmiany-w-komunikacji` and friends) carry *planned*
+changes — stop relocations, roadworks, event closures — and were briefly wired
+in as the default before that got caught. Filling `/alerts` with things that
+are not going wrong is the "a fake disruption is worse than a missing one"
+rule at the level of a whole source: it buries the one notice that matters.
+
+Those pages are still worth adding via `ALERT_PAGE_URLS` when you *want* the
+planned changes alongside the incidents. Only add one carrying dated notices:
 `mpk.wroc.pl/komunikaty` was a guess and 404s, and `/o-mpk/aktualnosci` exists
 but is corporate news. An HTML scrape is the most likely thing here to break.
 
@@ -333,13 +340,17 @@ was left with nothing that answers. **Do not put another public bridge back in
 default deploy will break again with nothing in the logs.
 
 So: `alerts.xBridge.bridges` is empty by default and the provider is not even
-constructed unless `ALERT_X_BRIDGE_URLS` names a bridge the operator actually
-has — the notice page above is what ships working. Entries are URL templates
-carrying `{username}` (RSSHub publishes `/twitter/user/<name>`, a Nitter
-mirror published `/<name>/rss`, a self-hosted bridge can be anything), tried
-in order, same pattern as every other multi-source config here (invariant 1);
-an entry with no placeholder is read as a Nitter-shaped base URL so a private
-mirror needs no rewrite. An empty feed is raised as a provider failure rather
+constructed unless `ALERT_X_BRIDGE_URLS` names a bridge — and the intended
+answer is **a bridge the operator runs**, not a public one. That is the whole
+lesson of the Nitter outage restated as configuration: a bridge you host
+cannot be discontinued out from under you, and it is the reason this source
+ships unset rather than pointed somewhere convenient. `server/.env.example`
+carries the docker one-liner. Entries are URL templates carrying `{username}`
+(RSSHub publishes `/twitter/user/<name>`, a Nitter mirror published
+`/<name>/rss`, a self-hosted bridge can be anything), tried in order, same
+pattern as every other multi-source config here (invariant 1); an entry with
+no placeholder is read as a Nitter-shaped base URL so a private mirror needs
+no rewrite. An empty feed is raised as a provider failure rather
 than accepted as zero alerts, so `/health` says so. `toXPostUrl()` rewrites
 each post's permalink from the bridge's own domain to `x.com`, so a link
 handed to a user still resolves after that bridge goes away.
