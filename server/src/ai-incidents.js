@@ -8,7 +8,56 @@ const INCIDENT_SCHEMA_VERSION = 1;
 const DEFAULT_WINDOW_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_MAX_GROUP_SIZE = 30;
 
+/**
+ * Phrases that announce the end of a disruption and can mean nothing else.
+ *
+ * `@AlertMPK`'s own house style ("ul. Reymonta - ruch przywrócony"), which is
+ * why this was once the whole test.
+ */
 const RESTORED_WORDS = /\b(ruch\s+(?:przywr[oó]con[oy]|normalny)|wznowiono|przywr[oó]con[oy]|przywr[oó]cono|kursowanie\s+wznowione|kursuj[ąa]\s+normalnie)/i;
+
+/**
+ * Vehicles going back to what they normally do.
+ *
+ * "Autobusy wracają do obsługi przystanku", "…do realizacji stałych
+ * przystanków", "tramwaje wracają na swoje stałe trasy przejazdu" — the
+ * account says this at least as often as it says "przywrócony", and none of
+ * it matched, so a finished closure was published as `active`. The target of
+ * the return has to be named: a bare "wracają" could just as well put a line
+ * back onto a diversion.
+ */
+const RETURNING_TO_NORMAL =
+  /\bwraca(?:j[ąa])?\s+(?:na|do)\s+(?:swoj\w*\s+)?(?:sta[łl]\w*|obs[łl]ug\w*|realizacj\w*|tras\w*|przystank\w*|rozk[łl]ad\w*)/iu;
+
+/**
+ * The works or the fault being over — "Naprawa … zakończona", "Roboty drogowe
+ * … zakończone", "awaria usunięta".
+ *
+ * Guarded on purpose. `zakończone` alone just as easily ends a *service*
+ * ("kursowanie linii 100 zakończone"), which is a disruption rather than a
+ * restoration, so the adjectival form only counts in a text that also names
+ * the works or the fault. The noun `zakończenie` is excluded by the same
+ * token — `zakończen-` never matches `zakończon-`.
+ */
+const ENDED_WORDS = /\b(zakończon[aeoy]|usuni[eę]t[aeoy])\b/iu;
+const WORKS_WORDS = /\b(naprawa|naprawy|roboty|prace|remont\w*|awari\w*|usterk\w*|utrudnieni\w*|objazd\w*)/iu;
+
+/**
+ * Does this text say the disruption is over?
+ *
+ * Kept as a function rather than one larger alternation because the third
+ * rule needs two matches in the same text, and because "a fake disruption is
+ * worse than a missing one" cuts both ways here: an incident still flagged
+ * `active` after the street reopened sends people around a closure that is
+ * not there any more.
+ *
+ * @param {string} text
+ * @returns {boolean}
+ */
+const isRestored = (text) =>
+  RESTORED_WORDS.test(text) ||
+  RETURNING_TO_NORMAL.test(text) ||
+  (ENDED_WORDS.test(text) && WORKS_WORDS.test(text));
 const UPDATE_WORDS = /\b(aktualizacja|aktualnie|update|zmiana|dalej|nadal)\b/i;
 const REPLACEMENT_WORDS = /\b(komunikacj[\p{L}]*\s+zast[eę]pcz[\p{L}]*|zast[eę]pcz[\p{L}]*\s+komunikacj[\p{L}]*|autobus[\p{L}]*\s+zast[eę]pcz[\p{L}]*)/iu;
 const DIVERSION_WORDS = /\b(objazd|objazdem|zmian[\p{L}]*\s+tras[\p{L}]*|skierowan[\p{L}]*\s+objazd)/iu;
@@ -116,7 +165,7 @@ const clusterAlerts = (alerts, { windowMs = DEFAULT_WINDOW_MS, maxGroupSize = DE
     const timestamp = asTimestamp(alert.timestamp);
     const lines = new Set(uniqueStrings(alert.affected).map((line) => line.toUpperCase()));
     const locations = locationTokensForAlert(alert);
-    const isFollowUp = UPDATE_WORDS.test(textForAlert(alert)) || RESTORED_WORDS.test(textForAlert(alert));
+    const isFollowUp = UPDATE_WORDS.test(textForAlert(alert)) || isRestored(textForAlert(alert));
     let best = null;
     let bestScore = -1;
 
@@ -178,7 +227,7 @@ const incidentIdForAlerts = (alerts) => {
 
 const classifyFallbackEvent = (alert) => {
   const text = textForAlert(alert);
-  if (RESTORED_WORDS.test(text)) return 'resolved';
+  if (isRestored(text)) return 'resolved';
   if (REPLACEMENT_WORDS.test(text)) return 'replacement_bus';
   if (UPDATE_WORDS.test(text)) return 'update';
   if (DIVERSION_WORDS.test(text)) return 'diversion';
@@ -197,7 +246,7 @@ const fallbackIncidentForGroup = (alerts, error = 'AI disabled') => {
     types[line] = sourceType ?? lineToType(line);
   }
   const combinedText = ordered.map(textForAlert).join(' ');
-  const resolved = ordered.some((alert) => RESTORED_WORDS.test(textForAlert(alert)));
+  const resolved = ordered.some((alert) => isRestored(textForAlert(alert)));
   const severity = MAJOR_WORDS.test(combinedText) || affected.length >= 4
     ? 'major'
     : affected.length >= 2 || DISRUPTION_WORDS.test(combinedText)
@@ -340,7 +389,10 @@ const normalizeIncidentPayloadOrThrow = (payload, alerts, metadata = {}) => {
     return {
       schemaVersion: INCIDENT_SCHEMA_VERSION,
       id: incidentIdForAlerts(incidentAlerts),
-      status: incidentAlerts.some((alert) => RESTORED_WORDS.test(textForAlert(alert)))
+      // The model's own status only stands where this says nothing: a text
+      // that announces the end of the disruption overrides an `active` the
+      // model returned anyway, which is exactly what it kept doing.
+      status: incidentAlerts.some((alert) => isRestored(textForAlert(alert)))
         ? 'resolved'
         : candidate.status,
       severity: candidate.severity,
