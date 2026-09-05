@@ -294,18 +294,24 @@ describe('XBridgeProvider', () => {
 });
 
 describe('default alerts configuration', () => {
-  it('ships a source that answers out of the box', () => {
-    // The Nitter source was the only default one, and when Nitter was
-    // discontinued a stock deploy had no alerts source at all — /alerts just
-    // stayed empty, which is the same silent failure the paid X API caused
-    // before it. A default page is what keeps that from repeating.
-    assert.ok(config.alerts.pages.length, 'at least one notice page is configured by default');
+  it('configures no alerts source by default', () => {
+    // There is no source that is both free and correct, so a stock deploy
+    // gets none rather than a wrong one. The notice pages carry planned
+    // changes — stop relocations, roadworks, event closures — which are not
+    // disruptions; @AlertMPK is, and reaching it needs something the operator
+    // supplies. Serving the planned-changes page as if it were the alert feed
+    // is the "fake disruption is worse than a missing one" rule at the level
+    // of a whole source.
+    assert.deepEqual(config.alerts.pages, []);
+    assert.deepEqual(config.alerts.xBridge.bridges, []);
   });
 
-  it('configures no X bridge by default', () => {
-    // Pointing the stock deploy at someone else's public bridge is how this
-    // broke the first time; a bridge is something an operator opts into.
-    assert.deepEqual(config.alerts.xBridge.bridges, []);
+  it('never defaults to a public third party', () => {
+    // Nitter was the default, was discontinued, and took /alerts down with it
+    // silently. Whichever public bridge replaces it in a default goes the same
+    // way. Every source here is opt-in for that reason.
+    const defaults = [...config.alerts.pages, ...config.alerts.xBridge.bridges];
+    assert.equal(defaults.length, 0, 'no upstream is depended on without being asked for');
   });
 });
 
