@@ -78,7 +78,12 @@ their own copy of the same `Platform.select` shadow.
   invisible. `useMapChrome()` picks the material from what the map is drawing;
   `MapChrome` in `theme.ts` carries the tokens, and its alphas are set by the
   *worst-case* backdrop (a sunlit river under the dark material, night imagery
-  under the light one), not by the average one.
+  under the light one), not by the average one. The OSM basemap is the same
+  argument upside down: OpenStreetMap ships one raster style and it is light,
+  and a native `UrlTile` takes no filter, so a dark-scheme phone on OSM is
+  looking at a light map and `useMapChrome()` answers `light` for it. The
+  Leaflet page is exempt — it darkens the tiles in CSS (`--tile-filter`), which
+  is why the check is `Platform.OS !== 'web'`.
 - **`Glass` has no transparent variant.** `chrome` floats over the map and holds
   text, `control` is a map button, `panel` sits inside a sheet. The `clear`
   variant this replaced is the direct cause of the unreadable HUD.
