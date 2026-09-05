@@ -368,6 +368,48 @@ dedup treats the archived copy as the original and keeps its id and URL.
 `ALERTS_ARCHIVE_DAYS` ages the rest out. It is a cache, not a database: a
 corrupt or unwritable file costs the history and never the refresh.
 
+**A post has no title, so one string must not be printed as three fields.**
+The deterministic incident used the post for the incident title (cut at 120),
+for the timeline entry's title (cut at 120 again) and for that entry's detail
+(whole), and the summary is the same post once more — so an incident detail
+screen showed one AlertMPK notice three times over. The client's own
+`detail !== title` guard did not catch it, because a truncation is not equal
+to what it truncates. `splitHeadline()` in `server/src/ai-incidents.js` is the
+fix: the first sentence is the headline and the rest is the detail, so every
+word is served exactly once. It refuses to break on `ul.`, `godz.` and the
+other Polish abbreviations, which end a token and not a sentence — breaking
+there gives a two-word headline with the whole notice underneath, which is the
+same bug in a hat. On the app side, `IncidentDetail` drops "Stan obecny"
+entirely when a single timeline entry already says it.
+
+**A model chain is what a free tier needs.** `OPENROUTER_MODEL` (and the
+dashboard's field, and any provider's model setting) takes `a,b,c`, tried in
+order per request. Free models rate-limit (429), get retired without warning
+(404 "no endpoints found that support JSON mode"), and are slow enough to hit
+the timeout — and each of those turned a whole refresh's narratives
+deterministic when a second model would have answered in a second. What does
+*not* advance the chain is 401/403: a bad key is the same answer for every
+model behind it, and walking the chain turns one rejection into five, all
+logged as if the models were at fault. A failed model is skipped for
+`MODEL_COOLDOWN_MS` and then tried again rather than demoted for good, because
+a rate limit lapses and the head of the chain is the model the operator chose.
+Two consequences to keep in mind: the timeout is *per attempt*, so a long
+`AI_ALERTS_TIMEOUT_MS` multiplies by the length of the chain, and the model
+that answered need not be the first — `/health` and the dashboard report
+`provider.activeModel`, since naming the wrong one sends you tuning a model
+that never ran.
+
+**A cluster that generated nothing cached nothing, so it never self-heals.**
+The per-cluster AI cache is keyed on the cluster's own alerts, so an incident
+whose narrative failed — the provider was down, the model timed out — stays
+deterministic until a *new* post changes that cluster. The refresh cycle does
+re-try it, but only on its own schedule and without saying so.
+`AlertsService.regenerateIncidents()`, behind `POST /admin/api/ai/reparse` and
+the dashboard's "Przetwórz ponownie", is that retry on demand, which is what
+you want right after fixing the thing that broke. It is cheap for the same
+reason it is needed: clusters that did generate come from the cache, so a
+re-parse only pays for the ones that failed.
+
 **A deploy whose only configured alerts sources are down gets zero alerts
 until someone notices.** `npm run scrape:alerts` (and `npm run doctor`, which
 checks every configured source) are the manual, non-test ways to check the

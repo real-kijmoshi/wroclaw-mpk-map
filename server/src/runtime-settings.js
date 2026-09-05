@@ -25,7 +25,7 @@ const MODEL_MAX_LENGTH = 120;
 
 /**
  * A model id: `nvidia/nemotron-3.5-lightning:free`, `openai/gpt-4o-mini`,
- * `qwen3:8b`.
+ * `qwen3:8b`. Each entry of a chain is matched against this on its own.
  *
  * Word-ish segments joined by single `/` or `:` separators, each of which must
  * be followed by something. Simply allowing those characters anywhere — the
@@ -39,24 +39,43 @@ const MODEL_MAX_LENGTH = 120;
  */
 const MODEL_PATTERN = /^[A-Za-z0-9][\w.-]*(?:[/:][\w.-]+)*$/;
 
+/** As many models as the provider chain accepts; see ai-provider.js. */
+const MAX_MODELS = 5;
+
 /**
+ * Validate one model id, or a comma-separated fallback chain of them.
+ *
+ * The chain exists because free tiers rate-limit: `a,b,c` is tried in order
+ * per request, so a 429 or a timeout on the first costs a few seconds rather
+ * than the whole refresh's narratives. Every entry goes through the same
+ * pattern as a single model — a list is not a way in for something a lone
+ * value would have been rejected for.
+ *
  * @param {unknown} value
  * @returns {{ ok: true, value: string } | { ok: false, error: string }}
  */
 const validateModel = (value) => {
   if (typeof value !== 'string') return { ok: false, error: 'model must be a string' };
-  const trimmed = value.trim();
-  if (!trimmed) return { ok: false, error: 'model must not be empty' };
-  if (trimmed.length > MODEL_MAX_LENGTH) {
-    return { ok: false, error: `model must be at most ${MODEL_MAX_LENGTH} characters` };
+  const entries = value.split(',').map((entry) => entry.trim()).filter(Boolean);
+  if (!entries.length) return { ok: false, error: 'model must not be empty' };
+  if (entries.length > MAX_MODELS) {
+    return { ok: false, error: `at most ${MAX_MODELS} models may be listed` };
   }
-  if (!MODEL_PATTERN.test(trimmed)) {
-    return {
-      ok: false,
-      error: 'model may only contain letters, digits and . _ - separated by / or :',
-    };
+
+  for (const entry of entries) {
+    if (entry.length > MODEL_MAX_LENGTH) {
+      return { ok: false, error: `model must be at most ${MODEL_MAX_LENGTH} characters` };
+    }
+    if (!MODEL_PATTERN.test(entry)) {
+      return {
+        ok: false,
+        error: 'model may only contain letters, digits and . _ - separated by / or :',
+      };
+    }
   }
-  return { ok: true, value: trimmed };
+
+  // Normalised: whatever spacing was typed, the file and /health show one form.
+  return { ok: true, value: [...new Set(entries)].join(',') };
 };
 
 class RuntimeSettings {
