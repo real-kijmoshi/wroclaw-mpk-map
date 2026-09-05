@@ -57,14 +57,57 @@ const parseJsonObject = (text) => {
 
 const stripTrailingSlash = (value) => String(value).replace(/\/+$/, '');
 
+/** Strip control characters and cap length; used on anything upstream sends. */
+const oneLine = (value, limit) =>
+  String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .replace(/[^\x20-\x7E -￿]/g, '')
+    .trim()
+    .slice(0, limit);
+
 const safeStatus = (response) => {
   const status = Number.isInteger(response?.status) ? response.status : 'unknown';
-  const text = String(response?.statusText || '')
-    .replace(/[\r\n\t]+/g, ' ')
-    .replace(/[^\x20-\x7E]/g, '')
-    .trim()
-    .slice(0, 80);
+  const text = oneLine(response?.statusText, 80);
   return text ? `HTTP ${status} ${text}` : `HTTP ${status}`;
+};
+
+/**
+ * The reason the provider actually gave, not just the status line.
+ *
+ * A hosted provider puts the useful part in the response body — "No endpoints
+ * found that support JSON mode", "Insufficient credits", "User not found" —
+ * while the status alone is an undifferentiated 404 or 401. Reporting only
+ * the code sent an operator hunting through config for a problem the response
+ * had already named, so `/health` gets the message too.
+ *
+ * The body is upstream text, so it is capped and stripped the same way every
+ * other foreign string in this project is. Nothing here echoes the request,
+ * so the key cannot come back out this way.
+ *
+ * @param {Response} response  an already-failed response, body unread
+ * @returns {Promise<string>}
+ */
+const describeFailure = async (response) => {
+  const status = safeStatus(response);
+
+  let body = '';
+  try {
+    body = await response.text();
+  } catch {
+    return status;
+  }
+
+  let detail = '';
+  try {
+    const parsed = JSON.parse(body);
+    detail = parsed?.error?.message ?? parsed?.error ?? parsed?.message ?? '';
+    if (detail && typeof detail !== 'string') detail = JSON.stringify(detail);
+  } catch {
+    detail = body;
+  }
+
+  const message = oneLine(detail, 200);
+  return message ? `${status} — ${message}` : status;
 };
 
 const parseHostedEnvelope = async (response) => {
@@ -199,7 +242,7 @@ const createAiProvider = (config, logger = null) => {
 
       if (!response.ok) {
         throw new AiProviderError(
-          `AI provider request failed: ${safeStatus(response)}`,
+          `AI provider request failed: ${await describeFailure(response)}`,
           'http_error',
         );
       }
