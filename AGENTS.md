@@ -32,7 +32,8 @@ curl localhost:3000/health   # says what actually loaded
 # app
 cd wroclive && npm install
 npm run lint
-npm run typecheck   # tsc --noEmit
+npm test            # node --test over src/lib; no network, no framework
+npm run typecheck   # the app, then test/tsconfig.json
 npx expo export --platform web --output-dir dist   # real compile + preview build
 npx expo start
 npx expo-doctor              # run after any dependency change

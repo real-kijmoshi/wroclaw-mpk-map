@@ -15,14 +15,31 @@ for iOS, Android and web, reading the API in `../server`. It was previously the
 ```bash
 npm install
 npm run lint
-npm run typecheck    # tsc --noEmit
+npm test             # node --test over src/lib; no network, no framework
+npm run typecheck    # the app, then test/tsconfig.json
 npx expo export --platform web --output-dir dist   # compile check + working preview
 npx expo start
 npx expo-doctor              # run after any dependency change
 npx expo install --fix       # pins expo-* to the SDK
 ```
 
-CI runs lint, typecheck and the web export (see `.github/workflows/ci.yml`).
+CI runs lint, typecheck, the tests and the web export (see
+`.github/workflows/ci.yml`).
+
+**The tests run the app's own modules, not copies of them.** Node 22 strips
+TypeScript itself, so `test/` needs no framework and no build step — the same
+`node --test` the server uses. `test/loader.mjs` supplies the two things Metro
+does that Node does not (extensionless imports, the `@/` alias) and stubs
+`expo-constants`; keep that stub list short, because a module needing half of
+React Native mocked out is saying its logic has not been separated from its
+view yet. `test/` has its own tsconfig: `@types/node` in the root config would
+hand React Native code Node's `setTimeout`, so the root excludes `test/`.
+
+What is worth pinning there is the logic behind the invariants on this list —
+the 503 retry, `normaliseShape`, `plural()`, the marker solver and the bucketed
+heading. The palette test *computes* the WCAG ratio rather than comparing the
+table to the browser map's copy, which `server/test/map.test.js` already does:
+a comparison proves the two agree, not that either is legible.
 Every app request goes through `apiGet()` in `src/lib/api.ts`, which retries the
 server's 503 cold start and validates every payload — do not call `fetch` from a
 component.
