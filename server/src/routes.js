@@ -7,6 +7,7 @@ const path = require('node:path');
 const config = require('./config');
 const { LruCache } = require('./cache');
 const { VehicleDetailCache } = require('./vehicle-detail-cache');
+const { sharedRoster } = require('./fleet');
 const { simplify } = require('./gtfs/geo');
 const { CATEGORIES } = require('./lines');
 const { describeVehicle } = require('./progress');
@@ -24,6 +25,9 @@ const vehicleDetailCache = new VehicleDetailCache({
   ttlMs: config.cache.vehicleDetailTtlMs,
 });
 const WIRE_SHAPE_SIMPLIFY_METERS = 8;
+// Read once here so /health can report the roster the live providers are
+// actually using — they go through the same singleton.
+const fleetRoster = sharedRoster();
 
 /** Cache-Control helper: timetable data is stable, vehicle data is not. */
 const cacheFor = (seconds) => (req, res, next) => {
@@ -637,6 +641,17 @@ const createRouter = ({
         total: Object.values(gtfs.lines).flat().length,
         trams: gtfs.lines.allTrams.length,
         buses: gtfs.lines.allBuses.length,
+      },
+      // A roster that silently loaded nothing looks exactly like a fleet with
+      // no attributes worth stating, so /health says which file answered and
+      // what it refused to read — the first thing to check when every vehicle
+      // comes back without a model.
+      fleet: {
+        enabled: config.fleet.enabled,
+        path: fleetRoster.path,
+        entries: fleetRoster.size,
+        ignoredEntries: fleetRoster.warnings.length,
+        lastError: fleetRoster.warnings[0] ?? null,
       },
       shapeCacheEntries: shapeCache.size,
       vehicleDetailCacheEntries: vehicleDetailCache.size,

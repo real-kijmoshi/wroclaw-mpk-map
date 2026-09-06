@@ -22,6 +22,21 @@ describe('GtfsStore', () => {
     assert.deepEqual(store.lines.busNight, ['240']);
   });
 
+  /**
+   * `wheelchair_accessible` is the one accessibility answer the timetable
+   * itself gives, and 0 means "nobody filled this in" — reading it as false
+   * would tell a rider a run has no wheelchair space on the strength of an
+   * empty column.
+   */
+  it('reads wheelchair_accessible as a tri-state', () => {
+    const trip = (id) => store.trips[store.tripIndexById.get(id)];
+
+    assert.equal(trip('t4a').wheelchairAccessible, true, '1 is accessible');
+    assert.equal(trip('t4a2').wheelchairAccessible, false, '2 is not accessible');
+    assert.equal(trip('t4b').wheelchairAccessible, null, '0 states nothing');
+    assert.equal(trip('t128').wheelchairAccessible, null, 'a blank states nothing');
+  });
+
   it('builds one variant per shape, most used first', () => {
     const variants = store.getVariants('4');
     assert.equal(variants.length, 2);

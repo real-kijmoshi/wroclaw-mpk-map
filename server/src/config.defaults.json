@@ -91,6 +91,11 @@
     }
   },
 
+  "fleet": {
+    "enabled": true,
+    "rosterPath": ""
+  },
+
   "cache": {
     "shapeEntries": 200,
     "vehicleDetailEntries": 512,

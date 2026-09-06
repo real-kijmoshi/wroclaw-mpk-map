@@ -197,6 +197,41 @@ describe('VehicleTracker against a stand-in endpoint', () => {
     assert.equal(tracker.snapshot.stale, true);
   });
 
+  /**
+   * MPK's own feed carries no side number, so a vehicle only learns what it is
+   * once an Open Data record is merged onto it. Everything else stays without a
+   * `fleet` block rather than carrying a row of nulls on every poll.
+   */
+  it('attaches roster attributes to a vehicle that has a side number', async () => {
+    const tracker = await trackerFor((body) =>
+      body.includes('busList')
+        ? [{ name: '4', type: 'tram', x: 51.11, y: 17.03, k: 11 }]
+        : [],
+    );
+
+    await tracker.poll();
+    assert.equal(tracker.snapshot.locations[0].fleet, undefined, 'nothing known from MPK alone');
+
+    tracker.openDataFleet.set('open-data:2915', {
+      id: 'open-data:2915',
+      line: '4',
+      type: 'tram',
+      lat: 51.11,
+      lon: 17.03,
+      vehicleNumber: 2915,
+      brigade: '1',
+      positionUpdatedAt: new Date().toISOString(),
+      updatedAt: Date.now(),
+    });
+    await tracker.poll();
+
+    const [vehicle] = tracker.snapshot.locations;
+    assert.equal(vehicle.vehicleNumber, 2915);
+    assert.equal(vehicle.fleet.model, 'Moderus Beta MF 24 AC');
+    assert.equal(vehicle.fleet.airConditioning, true);
+    assert.equal(vehicle.fleet.wheelchair, true);
+  });
+
   it('adds a heading once a vehicle has visibly moved', async () => {
     let step = 0;
     const tracker = await trackerFor(() => {
