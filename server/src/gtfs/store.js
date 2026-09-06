@@ -45,6 +45,22 @@ const sameBoardingArea = (a, b) => {
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 /**
+ * GTFS `wheelchair_accessible` as a tri-state.
+ *
+ * The column encodes 1 accessible, 2 not, and 0 (or an absent column)
+ * explicitly means "no information". Reading 0 as false would state
+ * that a run has no wheelchair space on the strength of a field nobody filled
+ * in, so it maps to null along with everything unparseable.
+ */
+const parseWheelchair = (value) => {
+  if (value === undefined || value === null) return null;
+  const code = String(value).trim();
+  if (code === '1') return true;
+  if (code === '2') return false;
+  return null;
+};
+
+/**
  * How much a variant running the wrong way is penalised when matching a
  * vehicle, in metres of apparent extra distance.
  *
@@ -445,6 +461,12 @@ class GtfsStore {
         headsign: row.trip_headsign || null,
         serviceId: row.service_id || null,
         directionId: row.direction_id === undefined ? null : Number.parseInt(row.direction_id, 10),
+        // GTFS's own answer to "can a wheelchair board this run": 1 yes, 2 no,
+        // 0/absent no information. Kept as a tri-state rather than collapsed
+        // to a boolean, because "the feed does not say" and "the feed says no"
+        // send a rider to two different places. Optional in the spec and
+        // absent from some snapshots, so null is the common case.
+        wheelchairAccessible: parseWheelchair(row.wheelchair_accessible),
         // Subcontractor fleets are matched to their runs through these: the
         // Wrocław feed is the authority on its own buses, but Kłosok's live
         // GTFS-RT positions identify a bus by vehicle or brigade rather than

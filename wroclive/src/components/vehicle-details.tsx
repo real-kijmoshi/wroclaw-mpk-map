@@ -5,7 +5,7 @@ import { LineBadge } from './line-badge';
 import { ThemedText } from './themed-text';
 import { Motion, Radius, Space } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
-import type { VehicleDetail } from '@/lib/api';
+import type { Vehicle, VehicleDetail, VehicleTripDetail } from '@/lib/api';
 import { etaParts, formatDelay, formatScheduled } from '@/lib/format';
 import { colorFor } from '@/lib/lines';
 
@@ -148,6 +148,8 @@ export function VehicleDetails({ detail, loading, error, onOpenRoute }: VehicleD
         )}
       </View>
 
+      <VehicleAmenities vehicle={vehicle} trip={trip} />
+
       {trip && !trip.onRoute && (
         <ThemedText type="footnote" themeColor="textSecondary">
           Pojazd jest poza trasą — możliwy objazd. Lista przystanków może być niedokładna.
@@ -229,6 +231,109 @@ export function VehicleDetails({ detail, loading, error, onOpenRoute }: VehicleD
   );
 }
 
+const LOW_FLOOR_LABEL = { full: 'pełna', partial: 'częściowa', none: 'brak' } as const;
+
+/** `state` is the tri-state the row is really about; `value` is how it reads. */
+type Amenity = {
+  icon: 'enter-outline' | 'accessibility-outline' | 'snow-outline';
+  label: string;
+  value: string;
+  state: boolean | null;
+};
+
+/**
+ * What this vehicle is, and what a rider needs to know before it pulls up:
+ * whether the floor is low, whether a wheelchair gets on, whether the saloon
+ * is air conditioned.
+ *
+ * None of it comes from a live feed — the server reads it out of a roster
+ * keyed on the side number, and the timetable contributes its own
+ * `wheelchair_accessible` for the matched run. So the important state here is
+ * the third one: `null` is "nie wiadomo", never "nie". Sending someone to a
+ * stop expecting a ramp that is not there is worse than telling them nothing,
+ * so an unknown reads as unknown and looks it. The whole card is dropped when
+ * nothing at all is known, rather than filling the sheet with three
+ * shrugs — which is most vehicles, since MPK's feed carries no side number
+ * until an Open Data record is merged onto it.
+ */
+function VehicleAmenities({ vehicle, trip }: { vehicle: Vehicle; trip: VehicleTripDetail | null }) {
+  const theme = useTheme();
+  const fleet = vehicle.fleet ?? null;
+
+  // The roster is about the vehicle, the timetable about the run it is on. The
+  // roster wins when both speak, because it describes the physical vehicle
+  // that is actually on the street right now.
+  const wheelchair = fleet?.wheelchair ?? trip?.wheelchairAccessible ?? null;
+  const lowFloor = fleet?.lowFloor ?? null;
+  const airConditioning = fleet?.airConditioning ?? null;
+
+  const rows: Amenity[] = [
+    {
+      icon: 'enter-outline',
+      label: 'Niska podłoga',
+      value: lowFloor ? LOW_FLOOR_LABEL[lowFloor] : 'brak danych',
+      state: lowFloor ? lowFloor !== 'none' : null,
+    },
+    {
+      icon: 'accessibility-outline',
+      label: 'Miejsce dla wózka',
+      value: wheelchair === null ? 'brak danych' : wheelchair ? 'tak' : 'nie',
+      state: wheelchair,
+    },
+    {
+      icon: 'snow-outline',
+      label: 'Klimatyzacja',
+      value: airConditioning === null ? 'brak danych' : airConditioning ? 'tak' : 'nie',
+      state: airConditioning,
+    },
+  ];
+
+  const stated = rows.filter((row) => row.state !== null);
+  if (!fleet?.model && !vehicle.vehicleNumber && !stated.length) return null;
+
+  const heading = fleet?.model ?? 'Model nieznany';
+  const subtitle = [vehicle.vehicleNumber ? `nr ${vehicle.vehicleNumber}` : null, fleet?.years]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <View style={[styles.amenities, { backgroundColor: theme.backgroundCard }]}>
+      <View style={styles.amenitiesHead}>
+        <ThemedText type="caption" themeColor="textSecondary">
+          POJAZD
+        </ThemedText>
+        <ThemedText type="headline" numberOfLines={1}>
+          {heading}
+        </ThemedText>
+        {!!subtitle && (
+          <ThemedText type="footnote" themeColor="textSecondary" numberOfLines={1}>
+            {subtitle}
+          </ThemedText>
+        )}
+      </View>
+
+      {rows.map((row) => (
+        <View key={row.label} style={styles.amenityRow}>
+          <Ionicons
+            name={row.icon}
+            size={18}
+            color={row.state === true ? theme.success : theme.textTertiary}
+          />
+          <ThemedText type="callout" style={styles.amenityLabel} numberOfLines={1}>
+            {row.label}
+          </ThemedText>
+          <ThemedText
+            type="callout"
+            weight={row.state === null ? 'regular' : 'semibold'}
+            themeColor={row.state === null ? 'textTertiary' : 'textSecondary'}>
+            {row.value}
+          </ThemedText>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 /** The one way out, shared by both selection headers. */
 export function CloseButton({ onPress, label }: { onPress: () => void; label: string }) {
   const theme = useTheme();
@@ -276,6 +381,10 @@ const styles = StyleSheet.create({
   nextEtaValue: { fontVariant: ['tabular-nums'] },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: Space.sm, paddingTop: 2 },
   metaDot: { width: 3, height: 3, borderRadius: Radius.pill },
+  amenities: { borderRadius: Radius.lg, paddingHorizontal: Space.lg, paddingVertical: Space.md, gap: 2 },
+  amenitiesHead: { gap: 1, paddingBottom: Space.xs, minWidth: 0 },
+  amenityRow: { flexDirection: 'row', alignItems: 'center', gap: Space.md, minHeight: 34 },
+  amenityLabel: { flex: 1, minWidth: 0 },
   timeline: { borderRadius: Radius.lg, paddingHorizontal: Space.lg, paddingVertical: Space.xs },
   stopRow: { flexDirection: 'row', alignItems: 'center', gap: Space.md, minHeight: 48 },
   rail: { width: 12, alignItems: 'center', alignSelf: 'stretch' },

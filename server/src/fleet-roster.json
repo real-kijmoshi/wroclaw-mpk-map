@@ -1,0 +1,90 @@
+{
+  "$comment": [
+    "Side number (Nr_Boczny) -> what that vehicle actually is.",
+    "",
+    "No upstream feed carries this. MPK's bus_position, the city's Open Data",
+    "table 14 and Kłosok's GTFS-RT all publish a side number and nothing about",
+    "the vehicle wearing it, so model / low floor / air conditioning can only",
+    "come from a roster like this one. That makes the file the one place in the",
+    "server where a wrong entry is served as fact, and the rule for it is the",
+    "same as everywhere else here: an unknown attribute is null, never a guess.",
+    "A rider who boards expecting a ramp that is not there is worse off than",
+    "one who was told nothing.",
+    "",
+    "Seeded with the tram families whose number ranges are published; the bus",
+    "fleet is deliberately empty because its numbering could not be verified",
+    "and it is being replaced wholesale (200 Conecto from 2026). Extend it, or",
+    "point FLEET_ROSTER_PATH at your own file to replace this one entirely.",
+    "",
+    "Entry shape (see src/fleet.js for the validator):",
+    "  kind             'tram' | 'bus' — guards against a bus and a tram that",
+    "                   share a side number resolving to each other.",
+    "  from, to         inclusive numeric side-number range, or",
+    "  numbers          explicit list of side numbers.",
+    "  model            what to print. Required.",
+    "  lowFloor         'full' | 'partial' | 'none' | null",
+    "  wheelchair       true | false | null — is there a wheelchair space with",
+    "                   a way in (ramp or a low-floor door)?",
+    "  airConditioning  true | false | null — saloon air conditioning; a cab-only",
+    "                   unit is false, because the rider is not in the cab.",
+    "  years            delivery years, free text, or null",
+    "  source           where the entry was checked, or null"
+  ],
+  "entries": [
+    {
+      "kind": "tram",
+      "from": 2801,
+      "to": 2822,
+      "model": "Moderus Beta MF 19 AC",
+      "lowFloor": "partial",
+      "wheelchair": true,
+      "airConditioning": true,
+      "years": null,
+      "source": "https://wroclawskakomunikacja.pl/29-teksty-podstron/7-tramwaje"
+    },
+    {
+      "kind": "tram",
+      "from": 2901,
+      "to": 2940,
+      "model": "Moderus Beta MF 24 AC",
+      "lowFloor": "partial",
+      "wheelchair": true,
+      "airConditioning": true,
+      "years": null,
+      "source": "https://wroclawskakomunikacja.pl/29-teksty-podstron/7-tramwaje"
+    },
+    {
+      "kind": "tram",
+      "from": 3001,
+      "to": 3017,
+      "model": "Škoda 16T",
+      "lowFloor": "partial",
+      "wheelchair": true,
+      "airConditioning": null,
+      "years": null,
+      "source": "https://wroclawskakomunikacja.pl/tramwaje-pojazdy-wspolczesne/143-skoda-16t"
+    },
+    {
+      "kind": "tram",
+      "from": 3101,
+      "to": 3131,
+      "model": "Škoda 19T",
+      "lowFloor": "partial",
+      "wheelchair": true,
+      "airConditioning": null,
+      "years": null,
+      "source": "https://wroclawskakomunikacja.pl/tramwaje-pojazdy-wspolczesne/1835-skoda-19t"
+    },
+    {
+      "kind": "tram",
+      "from": 3401,
+      "to": 3408,
+      "model": "Pesa Twist 2010NW",
+      "lowFloor": "full",
+      "wheelchair": true,
+      "airConditioning": true,
+      "years": null,
+      "source": "https://wroclawskakomunikacja.pl/29-teksty-podstron/7-tramwaje"
+    }
+  ]
+}

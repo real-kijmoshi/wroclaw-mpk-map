@@ -351,6 +351,13 @@ describe('HTTP API', () => {
     assert.deepEqual(body.klosok, { enabled: false }, 'Kłosok is reported even when disabled');
     assert.deepEqual(body.alerts.aiIncidents, fakeAlerts.incidentStatus);
     assert.equal('aiAlerts' in body, false, 'AI status is nested in the alerts health block');
+    // A roster that silently read nothing looks exactly like a fleet with no
+    // attributes worth stating, so /health has to name the file and its count.
+    assert.equal(body.fleet.enabled, true);
+    assert.match(body.fleet.path, /fleet-roster\.json$/);
+    assert.ok(body.fleet.entries > 0);
+    assert.equal(body.fleet.ignoredEntries, 0);
+    assert.equal(body.fleet.lastError, null);
     // Both vehicle sources and the merge stats are part of the report.
     assert.equal(body.vehicles.openData.source, 'https://open-data.cui.wroclaw.pl/hdb/db/14?download=json');
     assert.equal(body.vehicles.stats.total, 2);

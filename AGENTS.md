@@ -286,6 +286,32 @@ native surface an OSM basemap stays light in both schemes and
 the other direction: the chrome follows what the map is *drawing*, never what
 the phone is set to.
 
+**22. What a vehicle *is* comes from a roster, and unknown stays unknown.**
+No live feed says what model a vehicle is, whether its floor is low, whether a
+wheelchair gets on or whether the saloon is air conditioned. MPK's
+`bus_position`, the city's Open Data table 14 and Kłosok's GTFS-RT all publish a
+side number (`Nr_Boczny`) and stop there. So `server/src/fleet.js` looks that
+number up in `server/src/fleet-roster.json` — which makes it the one place in
+the server that states something no feed ever told it, and the reason every
+attribute is a tri-state rather than a boolean. `null` means the roster does not
+say and must render as "brak danych" on both clients; reading a missing field as
+"nie" tells a rider there is no ramp on the strength of a blank cell, and
+reading it as "tak" sends them to a stop they cannot board at. That is "a fake
+disruption is worse than a missing one" applied to a vehicle.
+
+Three consequences. `FLEET_ROSTER_PATH` **replaces** the bundled roster rather
+than extending it — an operator running another fleet must never have Wrocław's
+models stated for their side numbers — and a missing or malformed file costs the
+attributes, never the boot (`/health.fleet` says what loaded and what it
+ignored). The lookup is matched on tram/bus as well as on the number, because
+the two series are independent and nothing stops them from colliding. And the
+timetable's own `wheelchair_accessible` is read from `trips.txt` alongside it,
+but only from the *matched* run: borrowing another departure's accessibility is
+invariant 18's mistake in a different costume. The bus half of the roster is
+deliberately empty — the numbering could not be verified against the live feed,
+and the fleet is being replaced wholesale, so it says nothing rather than
+guessing.
+
 ## Fragile by nature
 
 **There is no default alerts source, and that is a decision, not a gap.**

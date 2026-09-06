@@ -273,6 +273,18 @@ module.exports = {
     },
   },
 
+  fleet: {
+    // What a side number is attached to — model, low floor, wheelchair space,
+    // air conditioning. No live feed carries any of it (see src/fleet.js), so
+    // it comes from a roster file and is null for anything the roster does not
+    // name. Turn it off to serve no vehicle attributes at all.
+    enabled: bool(process.env.FLEET_ENABLED, DEFAULTS.fleet.enabled),
+    // Replaces the bundled Wrocław roster rather than adding to it: an operator
+    // running a different fleet must not have this one's models stated for
+    // their vehicles.
+    rosterPath: process.env.FLEET_ROSTER_PATH || DEFAULTS.fleet.rosterPath,
+  },
+
   cache: {
     // Number of route-shape responses kept in memory.
     shapeEntries: num(process.env.SHAPE_CACHE_ENTRIES, DEFAULTS.cache.shapeEntries),

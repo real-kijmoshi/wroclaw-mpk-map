@@ -41,13 +41,15 @@ const buildFixtureZip = ({
       '240,240,NIGHT,3,',
     ].join('\n'),
 
+    // `wheelchair_accessible` is optional in GTFS and the three codes have to
+    // survive the round trip: 1 accessible, 2 not, 0/blank no information.
     'trips.txt': [
-      'route_id,service_id,trip_id,trip_headsign,direction_id,shape_id',
-      '4,WEEKDAY,t4a,OPORÓW,0,s4a',
-      '4,WEEKDAY,t4a2,OPORÓW,0,s4a',
-      '4,WEEKDAY,t4b,BISKUPIN,1,s4b',
-      '128,WEEKDAY,t128,KRZYKI,0,s128',
-      '240,WEEKEND,tn1,NOC,0,sn1',
+      'route_id,service_id,trip_id,trip_headsign,direction_id,shape_id,wheelchair_accessible',
+      '4,WEEKDAY,t4a,OPORÓW,0,s4a,1',
+      '4,WEEKDAY,t4a2,OPORÓW,0,s4a,2',
+      '4,WEEKDAY,t4b,BISKUPIN,1,s4b,0',
+      '128,WEEKDAY,t128,KRZYKI,0,s128,',
+      '240,WEEKEND,tn1,NOC,0,sn1,1',
     ].join('\n'),
 
     'stops.txt': [

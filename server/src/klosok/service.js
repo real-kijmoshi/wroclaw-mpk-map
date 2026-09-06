@@ -3,6 +3,7 @@
 const config = require('../config');
 const logger = require('../logger');
 const { distanceMeters } = require('../gtfs/geo');
+const { UNKNOWN: FLEET_UNKNOWN, sharedRoster } = require('../fleet');
 const { lineToType } = require('../lines');
 const { fetchKlosokFeed } = require('./fetch');
 const { parseRealtime, resolveEnrichment } = require('./realtime');
@@ -290,14 +291,26 @@ class KlosokService {
    * GPS.
    */
   #enrich(vehicle, enrichment) {
+    // The line's category decides the marker colour, exactly as on the Wrocław
+    // side — a 9xx zone line must render pink, never the plain red every
+    // vehicle would get from its initial `type: 'bus'`.
+    const type = enrichment.line ? lineToType(enrichment.line) : vehicle.type;
+
+    // Model / low floor / wheelchair / air conditioning for this side number,
+    // as a shared frozen object (see src/fleet.js). Derived from fields that
+    // already participate in the revision comparison below, so it needs no
+    // entry of its own in KLOSOK_MAP_FIELDS or KLOSOK_FULL_EXTRA_FIELDS — and
+    // it must not get one, since it is not in the map format at all. It is
+    // omitted entirely when the roster does not know the number, which is the
+    // usual case for a subcontractor fleet the bundled roster does not cover.
+    const fleet = sharedRoster().describe(vehicle.vehicleNumber, type);
+
     return {
       ...vehicle,
+      ...(fleet !== FLEET_UNKNOWN ? { fleet } : {}),
       operator: enrichment.agencyName ?? OPERATOR,
       line: enrichment.line,
-      // The line's category decides the marker colour, exactly as on the
-      // Wrocław side — a 9xx zone line must render pink, never the plain red
-      // every vehicle would get from its initial `type: 'bus'`.
-      type: enrichment.line ? lineToType(enrichment.line) : vehicle.type,
+      type,
       // The trip headsign when the run is known; the operator's own label
       // destination when only the line is. Never invented.
       destination: enrichment.destination ?? enrichment.headsign,

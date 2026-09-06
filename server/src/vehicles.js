@@ -4,6 +4,7 @@ const { performance } = require('node:perf_hooks');
 
 const config = require('./config');
 const logger = require('./logger');
+const { UNKNOWN: FLEET_UNKNOWN, sharedRoster } = require('./fleet');
 const { fetchWithTimeout, tryEachSource, SourceHealth } = require('./http');
 const { lineToType } = require('./lines');
 const { Metric } = require('./metrics');
@@ -289,9 +290,17 @@ class VehicleTracker {
   #rebuildSnapshot({ source, stale }) {
    const cutoff = Date.now() - config.vehicles.staleAfterMs;
    const vehicles = [];
+   const roster = sharedRoster();
    this.nextStopIndex = new Map();
    for (const vehicle of this.fleet.values()) {
      if (vehicle.updatedAt < cutoff) continue;
+     // What the side number is attached to: model, low floor, wheelchair
+     // space, air conditioning. A shared frozen object per model, so this is a
+     // map lookup rather than an allocation for each of several hundred
+     // vehicles, six times a minute. It is derived from `vehicleNumber` and
+     // `type`, both already compared below, so it needs no place of its own in
+     // the content-change check.
+     const fleet = roster.describe(vehicle.vehicleNumber, vehicle.type);
      vehicles.push({
         id: vehicle.id,
         line: vehicle.line,
@@ -313,6 +322,10 @@ class VehicleTracker {
         ...(vehicle.positionUpdatedAt !== undefined
           ? { positionUpdatedAt: vehicle.positionUpdatedAt }
          : {}),
+        // Omitted rather than sent as a row of nulls: MPK's own feed carries no
+        // side number until an Open Data record is merged in, so most of the
+        // fleet has nothing to say here on a cold start.
+        ...(fleet !== FLEET_UNKNOWN ? { fleet } : {}),
        });
 
       // Index live vehicles by their current next stop, so /stop/:id/departures

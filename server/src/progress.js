@@ -429,6 +429,11 @@ const describeVehicle = (
     serviceDay: null,
     delaySeconds: null,
     scheduleMatched: false,
+    // From the matched run's `wheelchair_accessible`, and only from it. The
+    // variant's other trips are other departures — possibly other vehicles —
+    // so borrowing their accessibility is the same mistake as borrowing their
+    // times (see the run-matching note above). Unmatched stays null.
+    wheelchairAccessible: null,
     atStop: null,
     previousStops: [],
     previousStop: null,
@@ -467,6 +472,7 @@ const describeVehicle = (
     described.serviceDay = run.serviceDay;
     described.delaySeconds = run.delaySeconds;
     described.scheduleMatched = true;
+    described.wheelchairAccessible = run.trip.wheelchairAccessible ?? null;
     if (run.trip.headsign) described.headsign = run.trip.headsign;
   }
 

@@ -155,6 +155,27 @@ export type VehicleTrip = {
   nextStop: StopRef | null;
 };
 
+/**
+ * What the vehicle wearing this side number actually is.
+ *
+ * Served from the server's fleet roster (`server/src/fleet-roster.json`), which
+ * is the only thing that knows — no live feed carries a model or its equipment.
+ * Every field is independently unknown, and `null` means the roster does not
+ * say: it must render as "no information", never as "no". A rider who boards
+ * expecting a ramp that is not there is worse off than one who was told
+ * nothing. The whole block is absent for a vehicle with no side number, which
+ * is most of the MPK fleet until an Open Data record is merged onto it.
+ */
+export type VehicleFleetInfo = {
+  model: string | null;
+  kind: 'tram' | 'bus' | null;
+  lowFloor: 'full' | 'partial' | 'none' | null;
+  wheelchair: boolean | null;
+  airConditioning: boolean | null;
+  years: string | null;
+  source: string | null;
+};
+
 export type Vehicle = {
   id: string;
   line: string;
@@ -172,6 +193,9 @@ export type Vehicle = {
   delaySeconds?: number | null;
   occupancyStatus?: string | null;
   occupancyPercentage?: number | null;
+  /** Side number (`Nr_Boczny`); the key the fleet roster below is looked up by. */
+  vehicleNumber?: string | null;
+  fleet?: VehicleFleetInfo | null;
 };
 
 /** The deliberately small vehicle record repeated on every map refresh. */
@@ -214,6 +238,13 @@ export type VehicleTripDetail = {
   shapeIndex: number | null;
   delaySeconds: number | null;
   scheduleMatched: boolean;
+  /**
+   * `wheelchair_accessible` from the matched run in the timetable, and null
+   * whenever no run matched — the server never borrows another departure's
+   * answer, the same rule that keeps it from borrowing another departure's
+   * times.
+   */
+  wheelchairAccessible: boolean | null;
   atStop: { id: string; name: string; distanceMeters: number } | null;
   previousStops: TripStop[];
   previousStop: TripStop | null;
@@ -394,6 +425,38 @@ const optionalString = (value: unknown): string | null | undefined =>
   typeof value === 'string' ? value : undefined;
 const optionalNumber = (value: unknown): number | null | undefined =>
   Number.isFinite(value) ? (value as number) : undefined;
+
+const LOW_FLOOR = ['full', 'partial', 'none'] as const;
+
+/**
+ * The vehicle's own attributes, read defensively like every other payload here.
+ *
+ * The distinction that has to survive is `false` versus "not stated": a
+ * boolean is kept only when it really is one, and anything else — a missing
+ * field, a string, a number the server should not have sent — becomes `null`,
+ * which the UI renders as "no information" rather than as "no".
+ */
+function normaliseFleet(value: unknown): VehicleFleetInfo | null {
+  if (!isRecord(value)) return null;
+  const triState = (raw: unknown) => (typeof raw === 'boolean' ? raw : null);
+  const lowFloor = LOW_FLOOR.find((option) => option === value.lowFloor) ?? null;
+  const kind = value.kind === 'tram' || value.kind === 'bus' ? value.kind : null;
+
+  const fleet: VehicleFleetInfo = {
+    model: typeof value.model === 'string' && value.model ? value.model : null,
+    kind,
+    lowFloor,
+    wheelchair: triState(value.wheelchair),
+    airConditioning: triState(value.airConditioning),
+    years: typeof value.years === 'string' && value.years ? value.years : null,
+    source: typeof value.source === 'string' && value.source ? value.source : null,
+  };
+
+  // A block where every field came back unknown says nothing the absent block
+  // does not, so it is dropped and the UI has one empty case to handle.
+  const known = Object.values(fleet).some((field) => field !== null);
+  return known ? fleet : null;
+}
 
 export function normaliseLocations(payload: unknown): Locations {
   if (!isRecord(payload) || !Array.isArray(payload.locations)) {
@@ -731,6 +794,15 @@ function normaliseVehicle(value: unknown): Vehicle {
     delaySeconds: optionalNumber(record.delaySeconds),
     occupancyStatus: optionalString(record.occupancyStatus),
     occupancyPercentage: optionalNumber(record.occupancyPercentage),
+    // Open Data serves the side number as a number and Kłosok as a slice of
+    // its vehicle label, so both shapes arrive here and both read as text.
+    vehicleNumber:
+      typeof record.vehicleNumber === 'string' && record.vehicleNumber
+        ? record.vehicleNumber
+        : Number.isFinite(record.vehicleNumber)
+          ? String(record.vehicleNumber)
+          : undefined,
+    fleet: normaliseFleet(record.fleet),
   };
 }
 
