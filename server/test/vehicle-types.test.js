@@ -122,6 +122,40 @@ describe('vehicle_types.txt', () => {
     assert.equal(types.get('A').airConditioning, false);
   });
 
+  /**
+   * A municipal `vehicle_types.txt` is at least as likely to hold a fare or
+   * traction class ("Tramwaj") as a model ("Moderus Beta MF 24 AC"). Printing
+   * the first gives a rider a card reading "POJAZD / Tramwaj", which looks like
+   * an answer and is worse than the honest "Model nieznany" they get from a
+   * feed with no table at all.
+   */
+  it('refuses to print a bare category as a model', () => {
+    const types = typesFrom(
+      [
+        'vehicle_type_id,vehicle_type_name',
+        '1,Tramwaj',
+        '2,AUTOBUS',
+        '3,Autobus przegubowy',
+        '4,Moderus Beta MF 24 AC',
+      ].join('\n'),
+    );
+
+    assert.equal(types.get('1').model, null);
+    assert.equal(types.get('2').model, null, 'case and spacing do not smuggle one through');
+    // Not a bare category — it says something real about the vehicle arriving.
+    assert.equal(types.get('3').model, 'Autobus przegubowy');
+    assert.equal(types.get('4').model, 'Moderus Beta MF 24 AC');
+  });
+
+  /** A rejected name is still read for what it says about the floor. */
+  it('still reads a category name for its adjectives', () => {
+    const types = typesFrom(
+      ['vehicle_type_id,vehicle_type_name', '1,Tramwaj niskopodłogowy'].join('\n'),
+    );
+    assert.equal(types.get('1').lowFloor, 'full');
+    assert.equal(types.get('1').wheelchair, true);
+  });
+
   it('hands out frozen, shared attribute objects', () => {
     const types = typesFrom(['vehicle_type_id,vehicle_type_name', 'A,Pesa Twist'].join('\n'));
     assert.equal(Object.isFrozen(types.get('A')), true);
@@ -173,6 +207,32 @@ describe('GtfsStore vehicle types', () => {
       assert.equal(store.getVehicleType('8123'), null);
       assert.equal(store.getVehicleType(null), null);
     });
+  });
+
+  /**
+   * Which trips column points at the type table is a publishing convention too,
+   * so a single guessed name would silently join nothing on a feed that spells
+   * it differently.
+   */
+  it('joins on whichever trips column resolves to a type', async () => {
+    const zip = new AdmZip(buildFixtureZip());
+    zip.addFile(
+      'trips.txt',
+      Buffer.from(
+        [
+          'route_id,service_id,trip_id,trip_headsign,direction_id,shape_id,vehicle_type_id',
+          '4,WEEKDAY,t4a,OPORÓW,0,s4a,VT1',
+        ].join('\n'),
+        'utf8',
+      ),
+      '',
+      undefined,
+      true,
+    );
+
+    const store = new GtfsStore();
+    await store.build(zip.toBuffer());
+    assert.equal(store.trips[store.tripIndexById.get('t4a')].vehicleTypeId, 'VT1');
   });
 
   it('builds a feed with no type table exactly as before', async () => {
