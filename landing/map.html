@@ -944,7 +944,12 @@
 
         const HIDDEN_CATEGORIES = new Set(['allBuses', 'allTrams']);
         const STORAGE_KEY = 'wromapa.selectedLines';
-        const VEHICLE_REFRESH_MS = 10000;
+        // Kept in step with REFRESH_MS.vehicles in wroclive/src/lib/config.ts and
+        // with vehicles.pollIntervalMs: each stage of the chain adds its whole
+        // interval to how far behind a marker sits, so a slow client poll undoes
+        // a fast server one. Unlike the app this page has no ETag cache of its
+        // own — /locations is no-store, so every poll here is a full payload.
+        const VEHICLE_REFRESH_MS = 5000;
         const ALERT_REFRESH_MS = 5 * 60000;
         const DEPARTURE_REFRESH_MS = 30000;
 

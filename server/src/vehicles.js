@@ -228,6 +228,18 @@ class VehicleTracker {
       snapshotBuildMs: new Metric(),
       incomingVehicleCount: new Metric(),
       acceptedVehicleCount: new Metric(),
+      /**
+       * How many accepted vehicles actually reported a new position since the
+       * previous poll. This is the only thing that says whether polling faster
+       * is buying anything: MPK publishes no timestamp on `bus_position`, so
+       * the movement rate is the sole evidence of its real refresh rate. Close
+       * to `acceptedVehicleCount` means the feed is ahead of us and the
+       * interval could go lower still; a small fraction means we are asking
+       * more often than the city updates and the extra requests are waste.
+       * Read it in /health next to `acceptedVehicleCount` before changing
+       * `VEHICLE_POLL_INTERVAL_MS` in either direction.
+       */
+      movedVehicleCount: new Metric(),
       descriptionsReused: new Metric(),
       descriptionsRecomputed: new Metric(),
     };
@@ -565,6 +577,7 @@ class VehicleTracker {
       const now = Date.now();
       const normalizeStart = performance.now();
       let accepted = 0;
+      let moved = 0;
 
       for (const row of rows) {
         const vehicle = normalizeVehicle(row);
@@ -577,12 +590,19 @@ class VehicleTracker {
           heading = Math.round(bearing(previous.lat, previous.lon, vehicle.lat, vehicle.lon));
         }
 
+        // An exact coordinate comparison, not a distance threshold: the question
+        // is whether upstream published a new fix at all, and a vehicle standing
+        // at a stop repeats its previous one to the decimal. A vehicle seen for
+        // the first time has nothing to compare against and is not counted.
+        if (previous && (previous.lat !== vehicle.lat || previous.lon !== vehicle.lon)) moved += 1;
+
         vehicle.vehicleNumber = vehicle.vehicleNumber?.toUpperCase?.();
 
         this.mpkFleet.set(vehicle.id, { ...vehicle, heading, updatedAt: now });
       }
       perf.normalizationMs.record(performance.now() - normalizeStart);
       perf.acceptedVehicleCount.record(accepted);
+      perf.movedVehicleCount.record(moved);
 
       // Drop vehicles that stopped reporting a while ago.
       const cutoff = now - config.vehicles.staleAfterMs * 2;

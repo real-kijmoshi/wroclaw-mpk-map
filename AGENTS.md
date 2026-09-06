@@ -286,6 +286,39 @@ native surface an OSM basemap stays light in both schemes and
 the other direction: the chrome follows what the map is *drawing*, never what
 the phone is set to.
 
+**22. Staleness is the sum of the chain, so the polls move together.**
+A fix waits out the server's interval before the server has it, then the
+client's interval before the screen does — so two ten-second polls put the
+marker an average ten seconds and a worst-case twenty behind the bus, which at
+city speed is one to two hundred metres of street and reads as the map being
+broken rather than late. Halving one link alone buys half of that and looks like
+the whole fix. Four numbers are therefore pinned to each other and retuned
+together: `vehicles.pollIntervalMs`, `REFRESH_MS.vehicles` in
+`wroclive/src/lib/config.ts`, `VEHICLE_REFRESH_MS` in `server/views/map.html`
+(invariant 19), and `stats.clientPollIntervalMs` — which is not a poll but the
+rate one map poll is converted into time-spent-watching, and left behind at the
+old value simply reports twice the audience. `test/map.test.js` compares all
+four the way it compares the palette.
+
+The client side of that is close to free: `/locations` carries a strong ETag and
+`apiGet()` sends it back, so an app poll landing between two server polls is a
+304 and a few header bytes. The server side is not — it is a request against the
+city's own server every interval — and MPK's `bus_position` publishes no
+timestamp, so there is no way to read its real refresh rate off the payload.
+`performance.vehicles.movedVehicleCount` in `/health` is the substitute: the
+count of vehicles that reported a *new* coordinate this poll, against
+`acceptedVehicleCount`. A small fraction means we are asking faster than the
+city updates and the extra requests buy nothing. Check it before moving
+`VEHICLE_POLL_INTERVAL_MS` in either direction. Note that `/map` has no ETag
+cache of its own (`/locations` is `no-store`, and that page does not ask for
+`?format=map`), so its polls are full payloads every time.
+
+Do not close the remaining gap by extrapolating a vehicle forward along its
+heading between polls. It would look live and would be invented: a marker
+dead-reckoned through a junction the bus is still sitting short of is invariant
+18's "confident wrong answer" as a moving picture, and nothing on screen would
+say which part of it was measured.
+
 ## Fragile by nature
 
 **There is no default alerts source, and that is a decision, not a gap.**

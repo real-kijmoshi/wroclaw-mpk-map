@@ -13,6 +13,7 @@ const { createApp } = require('../src/app');
 const { RuntimeSettings, validateModel } = require('../src/runtime-settings');
 const { GtfsStore } = require('../src/gtfs/store');
 const { StatsTracker } = require('../src/stats');
+const DEFAULTS = require('../src/config.defaults.json');
 const { buildFixtureZip } = require('./fixtures/gtfs');
 
 const fakeVehicles = {
@@ -180,7 +181,11 @@ describe('Admin dashboard', () => {
 
     const { status, body } = await get('/admin/api/stats', { token: 'test-admin-secret' });
     assert.equal(status, 200);
-    assert.equal(body.activeClientHoursToday, 1 / 360, 'one poll represents ten active seconds');
+    assert.equal(
+      body.activeClientHoursToday,
+      DEFAULTS.stats.clientPollIntervalMs / 3_600_000,
+      'one map poll represents one client-poll interval of watching',
+    );
     assert.equal(body.requestsToday, 3, '/health and /admin itself are not counted');
     // Different vehicle ids land in the same /vehicle/:id bucket.
     assert.deepEqual(body.topEndpointsToday, [

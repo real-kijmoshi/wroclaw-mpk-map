@@ -294,6 +294,7 @@ describe('VehicleTracker against a stand-in endpoint', () => {
       'snapshotBuildMs',
       'incomingVehicleCount',
       'acceptedVehicleCount',
+      'movedVehicleCount',
       'descriptionsReused',
       'descriptionsRecomputed',
     ]) {
@@ -306,6 +307,41 @@ describe('VehicleTracker against a stand-in endpoint', () => {
 
     await tracker.poll();
     assert.equal(tracker.performanceSnapshot().totalPollMs.count, 2, 'metrics accumulate');
+  });
+
+  /**
+   * `bus_position` carries no timestamp, so the share of vehicles that reported
+   * a new coordinate is the only evidence of how often the feed behind it
+   * actually refreshes — and therefore the only way to tell whether the poll
+   * interval is buying fresher fixes or just costing the city requests. It has
+   * to count a repeated coordinate as *not* moved, which is exactly what a
+   * vehicle waiting at a stop sends.
+   */
+  it('counts how many vehicles reported a new position since the last poll', async () => {
+    let rows = [
+      { name: '4', type: 'tram', x: 51.11, y: 17.03, k: 1 },
+      { name: '4', type: 'tram', x: 51.12, y: 17.04, k: 2 },
+    ];
+    const tracker = await trackerFor(() => rows);
+
+    await tracker.poll();
+    assert.equal(
+      tracker.performanceSnapshot().movedVehicleCount.latest,
+      0,
+      'a vehicle seen for the first time has no previous fix to differ from',
+    );
+
+    // One vehicle moves; the other repeats its coordinate exactly, the way a
+    // vehicle standing at a stop does.
+    rows = [
+      { name: '4', type: 'tram', x: 51.115, y: 17.035, k: 1 },
+      { name: '4', type: 'tram', x: 51.12, y: 17.04, k: 2 },
+    ];
+    await tracker.poll();
+
+    const snap = tracker.performanceSnapshot();
+    assert.equal(snap.acceptedVehicleCount.latest, 2);
+    assert.equal(snap.movedVehicleCount.latest, 1, 'a repeated coordinate is not a new fix');
   });
 
   it('never runs a poll while the previous one is still running', async () => {

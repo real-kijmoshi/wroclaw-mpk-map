@@ -7,6 +7,16 @@ const path = require('node:path');
 const { describe, it } = require('node:test');
 
 const { StatsTracker, dayKey, hourOf } = require('../src/stats');
+const DEFAULTS = require('../src/config.defaults.json');
+
+/**
+ * What N map polls are worth in client-hours, at whatever the client poll
+ * interval currently is. Written as the conversion rather than the fraction it
+ * happens to produce today: the interval tracks the app's own vehicle poll and
+ * is expected to be retuned, and these tests are about the counting, not about
+ * that number. The number itself is pinned once, against the app, below.
+ */
+const hoursFor = (polls) => (polls * DEFAULTS.stats.clientPollIntervalMs) / 3_600_000;
 
 // A stable day boundary: these UTC instants all fall inside Europe/Warsaw day
 // (2026-08-0N) because Warsaw is UTC+2 in August.
@@ -27,7 +37,7 @@ describe('StatsTracker', () => {
     stats.record(fakeReq('/vehicle/4-1'));
 
     const snapshot = stats.snapshot();
-    assert.equal(snapshot.activeClientHoursToday, 1 / 60);
+    assert.equal(snapshot.activeClientHoursToday, hoursFor(6));
     assert.equal(snapshot.requestsToday, 7);
     assert.deepEqual(snapshot.topEndpointsToday, [
       { endpoint: '/locations', count: 6 },
@@ -66,9 +76,9 @@ describe('StatsTracker', () => {
 
     const snapshot = stats.snapshot();
     assert.equal(snapshot.today, '2026-08-02');
-    assert.equal(snapshot.activeClientHoursToday, 1 / 30);
-    assert.equal(snapshot.activeClientHours7d, 1 / 20);
-    assert.equal(snapshot.activeClientHours30d, 1 / 20);
+    assert.equal(snapshot.activeClientHoursToday, hoursFor(12));
+    assert.equal(snapshot.activeClientHours7d, hoursFor(18));
+    assert.equal(snapshot.activeClientHours30d, hoursFor(18));
     assert.equal(snapshot.requestsToday, 12);
     assert.equal(snapshot.requests7d, 18);
     assert.equal(snapshot.requests30d, 18);
@@ -86,8 +96,8 @@ describe('StatsTracker', () => {
 
     const snapshot = stats.snapshot();
     assert.equal(stats.days.size, 3);
-    assert.equal(snapshot.activeClientHoursToday, 1 / 360, 'only day 5 is today');
-    assert.equal(snapshot.activeClientHours30d, 3 / 360, 'the two pruned days no longer count');
+    assert.equal(snapshot.activeClientHoursToday, hoursFor(1), 'only day 5 is today');
+    assert.equal(snapshot.activeClientHours30d, hoursFor(3), 'the two pruned days no longer count');
     assert.equal(snapshot.daily.length, 3);
     assert.deepEqual(snapshot.daily[0].date, '2026-08-03');
   });
@@ -136,14 +146,14 @@ describe('StatsTracker', () => {
 
     current = atDay(2);
     const second = new StatsTracker({ file, now });
-    assert.equal(second.snapshot().activeClientHours30d, 1 / 360, 'loaded from disk');
+    assert.equal(second.snapshot().activeClientHours30d, hoursFor(1), 'loaded from disk');
     assert.equal(second.snapshot().requests30d, 2);
     assert.equal(second.snapshot().requestsToday, 0, 'the requests were on day 1, not today');
     assert.deepEqual(second.snapshot().daily[0], {
       date: '2026-08-01',
       requests: 2,
       mapPolls: 1,
-      activeClientHours: 1 / 360,
+      activeClientHours: hoursFor(1),
     });
     const persisted = fs.readFileSync(file, 'utf8');
     assert.equal(persisted.includes('10.0.0.'), false);
@@ -170,7 +180,7 @@ describe('StatsTracker', () => {
     fs.writeFileSync(file, '{ not json');
     const stats = new StatsTracker({ file, now: () => atDay(7) });
     stats.record(fakeReq('/locations', { format: 'map' }));
-    assert.equal(stats.snapshot().activeClientHoursToday, 1 / 360);
+    assert.equal(stats.snapshot().activeClientHoursToday, hoursFor(1));
     assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).schemaVersion, 2);
   });
 

@@ -14,6 +14,7 @@ const LANDING_MAP_HTML = path.join(__dirname, '..', '..', 'landing', 'map.html')
 const APP_MAP_HTML = path.join(__dirname, '..', '..', 'wroclive', 'src', 'lib', 'map-html.ts');
 const APP_PALETTE = path.join(__dirname, '..', '..', 'wroclive', 'src', 'lib', 'lines.ts');
 const APP_MARKER = path.join(__dirname, '..', '..', 'wroclive', 'src', 'lib', 'vehicle-marker.ts');
+const APP_CONFIG = path.join(__dirname, '..', '..', 'wroclive', 'src', 'lib', 'config.ts');
 
 const readMap = () => fs.readFileSync(MAP_HTML, 'utf8');
 
@@ -150,6 +151,32 @@ describe('browser map', () => {
   it('keeps the landing copy identical to the served page', () => {
     const landing = fs.readFileSync(LANDING_MAP_HTML, 'utf8');
     assert.equal(landing, readMap());
+  });
+
+  /**
+   * How far behind a marker sits is the sum of the whole chain, not the slowest
+   * link: the server's wait for a new fix, then the client's wait to ask for it.
+   * Halving one and leaving the other is half a fix, and nothing on screen says
+   * which half is missing — so the four numbers are pinned to each other rather
+   * than to a literal, and retuning means retuning all of them.
+   *
+   * `stats.clientPollIntervalMs` is in here because it is not a poll at all: it
+   * is how one map poll is converted into time spent watching. Left behind at
+   * twice the client's real interval it does not lag anything — it just reports
+   * twice the audience, which is the kind of wrong nobody goes looking for.
+   */
+  it('polls upstream and from every client at the same interval', () => {
+    const { vehicles, stats } = require('../src/config.defaults.json');
+    const page = readConstants(MAP_HTML, ['VEHICLE_REFRESH_MS']);
+
+    const appSource = fs.readFileSync(APP_CONFIG, 'utf8');
+    const appMatch = /vehicles:\s*([0-9_]+)/.exec(appSource);
+    assert.ok(appMatch, 'REFRESH_MS.vehicles not found in the app config');
+    const appInterval = Number(appMatch[1].replace(/_/g, ''));
+
+    assert.equal(appInterval, vehicles.pollIntervalMs, 'app poll vs server poll');
+    assert.equal(page.VEHICLE_REFRESH_MS, vehicles.pollIntervalMs, '/map poll vs server poll');
+    assert.equal(stats.clientPollIntervalMs, appInterval, 'client-hours conversion vs app poll');
   });
 
   /**

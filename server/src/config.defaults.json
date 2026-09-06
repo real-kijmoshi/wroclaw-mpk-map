@@ -33,7 +33,7 @@
   },
 
   "vehicles": {
-    "pollIntervalMs": 10000,
+    "pollIntervalMs": 5000,
     "timeoutMs": 10000,
     "staleAfterMs": 120000,
     "openDataUrl": "https://open-data.cui.wroclaw.pl/hdb/db/14?download=json",
@@ -106,7 +106,7 @@
     "cacheDir": "data",
     "saveIntervalMs": 300000,
     "daysToKeep": 31,
-    "clientPollIntervalMs": 10000,
+    "clientPollIntervalMs": 5000,
     "timeZone": "Europe/Warsaw"
   },
 

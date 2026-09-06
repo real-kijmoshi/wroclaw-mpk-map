@@ -4,8 +4,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const logger = require('./logger');
+const DEFAULTS = require('./config.defaults.json');
 
 const DEFAULT_TIMEZONE = 'Europe/Warsaw';
+/**
+ * Taken from the defaults file rather than written out again, so retuning the
+ * client poll cannot leave a second copy of the old number behind here — a
+ * tracker built without options would then convert polls to hours at one rate
+ * while the configured one used another.
+ */
+const DEFAULT_CLIENT_POLL_INTERVAL_MS = DEFAULTS.stats.clientPollIntervalMs;
 const SCHEMA_VERSION = 2;
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -44,7 +52,7 @@ class StatsTracker {
     daysToKeep = 31,
     saveIntervalMs = 300_000,
     timeZone = DEFAULT_TIMEZONE,
-    clientPollIntervalMs = 10_000,
+    clientPollIntervalMs = DEFAULT_CLIENT_POLL_INTERVAL_MS,
     now = () => new Date(),
   } = {}) {
     this.file = file;
@@ -114,6 +122,11 @@ class StatsTracker {
 
     const requestsIn = (keys) => keys.reduce((sum, key) => sum + this.days.get(key).requests, 0);
     const mapPollsIn = (keys) => keys.reduce((sum, key) => sum + this.days.get(key).mapPolls, 0);
+    // One map poll stands for one client-poll interval of somebody watching the
+    // map, so this figure is only true while `clientPollIntervalMs` matches what
+    // the clients actually do (REFRESH_MS.vehicles in the app, VEHICLE_REFRESH_MS
+    // in views/map.html). Halving the client poll without halving this reads as
+    // twice the audience overnight; `test/stats.test.js` pins the two together.
     const activeClientHours = (polls) => (polls * this.clientPollIntervalMs) / HOUR_MS;
     const lastDays = (n) => recent.slice(-n);
 
