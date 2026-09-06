@@ -43,13 +43,29 @@ const buildFixtureZip = ({
 
     // `wheelchair_accessible` is optional in GTFS and the three codes have to
     // survive the round trip: 1 accessible, 2 not, 0/blank no information.
+    //
+    // `vehicle_id` is one of this feed's extra columns and does double duty:
+    // t4a/t4a2 point at `vehicle_types.txt` below, while t128's `8123` is a
+    // physical vehicle id of the kind Kłosok's GTFS-RT joins on and resolves to
+    // no type at all. Both shapes are here so the store is pinned on telling
+    // them apart.
     'trips.txt': [
-      'route_id,service_id,trip_id,trip_headsign,direction_id,shape_id,wheelchair_accessible',
-      '4,WEEKDAY,t4a,OPORÓW,0,s4a,1',
-      '4,WEEKDAY,t4a2,OPORÓW,0,s4a,2',
-      '4,WEEKDAY,t4b,BISKUPIN,1,s4b,0',
-      '128,WEEKDAY,t128,KRZYKI,0,s128,',
-      '240,WEEKEND,tn1,NOC,0,sn1,1',
+      'route_id,service_id,trip_id,trip_headsign,direction_id,shape_id,wheelchair_accessible,vehicle_id',
+      '4,WEEKDAY,t4a,OPORÓW,0,s4a,1,VT1',
+      '4,WEEKDAY,t4a2,OPORÓW,0,s4a,2,VT2',
+      '4,WEEKDAY,t4b,BISKUPIN,1,s4b,0,',
+      '128,WEEKDAY,t128,KRZYKI,0,s128,,8123',
+      '240,WEEKEND,tn1,NOC,0,sn1,1,VT1',
+    ].join('\n'),
+
+    // Not a GTFS table. This feed describes its stock in prose rather than in
+    // flag columns, which is the case `readVehicleTypes` has to cope with —
+    // VT3 states its equipment in columns instead, so both readings are pinned.
+    'vehicle_types.txt': [
+      'vehicle_type_id,vehicle_type_name,vehicle_type_description',
+      'VT1,Moderus Beta MF 24 AC,Tramwaj częściowo niskopodłogowy z klimatyzacją',
+      'VT2,Konstal 105Na,Tramwaj wysokopodłogowy bez klimatyzacji',
+      'VT3,Solaris Urbino 12,',
     ].join('\n'),
 
     'stops.txt': [

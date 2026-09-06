@@ -19,6 +19,7 @@ const {
   simplify,
 } = require('./geo');
 const { inWarsaw, parseTable, secondsToTime, streamTableFast, timeToSeconds } = require('./parse');
+const { readVehicleTypes } = require('./vehicle-types');
 const { GrowableFloat64Array, GrowableInt32Array } = require('./typed-arrays');
 
 const SHAPE_SIMPLIFY_METERS = 4;
@@ -175,6 +176,12 @@ class GtfsStore {
       tripIndexById: new Map(),
       /** @type {Map<string, number[]>} trips.vehicle_id -> trip indices */
       tripsByVehicleId: new Map(),
+      /**
+       * @type {Map<string, Readonly<object>>} vehicle_types.txt, when the feed
+       * ships one — see src/gtfs/vehicle-types.js. Empty for a feed that does
+       * not, which is the normal case.
+       */
+      vehicleTypes: new Map(),
       /** @type {Map<string, number[]>} trips.brigade_id -> trip indices */
       tripsByBrigade: new Map(),
       /** @type {Map<string, number[]>} shape_id -> trip indices running it */
@@ -211,6 +218,7 @@ class GtfsStore {
     this.trips = state.trips;
     this.tripIndexById = state.tripIndexById;
     this.tripsByVehicleId = state.tripsByVehicleId;
+    this.vehicleTypes = state.vehicleTypes;
     this.tripsByBrigade = state.tripsByBrigade;
     this.tripsByShape = state.tripsByShape;
     this.tripStart = state.tripStart;
@@ -220,6 +228,19 @@ class GtfsStore {
     this.departuresByStop = state.departuresByStop;
     this.lines = state.lines;
     this.status.counts = state.counts;
+  }
+
+  /**
+   * What the feed says a vehicle type is, or null.
+   *
+   * The feed is the better authority than the hand-kept roster in
+   * `src/fleet.js` whenever it answers at all, because it ships with the
+   * timetable and cannot go stale on its own. Most feeds carry no such table,
+   * so null is the ordinary answer and the roster is what covers it.
+   */
+  getVehicleType(id) {
+    if (!id) return null;
+    return this.vehicleTypes.get(id) ?? null;
   }
 
   get isReady() {
@@ -356,6 +377,11 @@ class GtfsStore {
 
     stage('agency', () => this.#buildAgency(state, zip));
     const routeIdToLine = stage('routes', () => this.#buildRoutes(state, zip));
+    // Before trips: `trips.vehicle_id` is only read as a *type* reference when
+    // this table resolves it, so the table has to be in hand first.
+    stage('vehicleTypes', () => {
+      state.vehicleTypes = readVehicleTypes(zip);
+    });
     const { representativeTripByShape } = stage('trips', () => this.#buildTrips(state, zip, routeIdToLine));
     stage('stops', () => this.#buildStops(state, zip));
     stage('calendar', () => this.#buildCalendar(state, zip));
@@ -473,6 +499,14 @@ class GtfsStore {
         // trip on some days, and trips.txt is what connects those back here.
         vehicleId: row.vehicle_id || null,
         blockId: row.brigade_id || row.block_id || null,
+        // `vehicle_id` does double duty across the feeds this store reads: in
+        // Wrocław's it can reference `vehicle_types.txt`, and in a
+        // subcontractor's it names one physical bus that Kłosok's GTFS-RT
+        // joins on. Only an id the type table actually resolves is read as a
+        // type, so a feed with no such table changes nothing and a vehicle id
+        // is never printed to a rider as a model.
+        vehicleTypeId:
+          row.vehicle_id && state.vehicleTypes.has(row.vehicle_id) ? row.vehicle_id : null,
       });
       state.tripIndexById.set(row.trip_id, index);
 
@@ -733,6 +767,10 @@ class GtfsStore {
       trips: state.trips.length,
       stopTimes: state.stopTimes.trip.length,
       shapes: shapePoints.size,
+      // 0 means this snapshot ships no vehicle_types.txt, so every vehicle
+      // attribute has to come from the roster. It is in /health precisely so
+      // that question is answered by looking rather than by guessing.
+      vehicleTypes: state.vehicleTypes.size,
     };
 
     return state.counts;

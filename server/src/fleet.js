@@ -237,6 +237,60 @@ const loadRoster = (rosterPath = null) => {
   return new FleetRoster({ entries, path: file, warnings });
 };
 
+/**
+ * Memo for `combine`, keyed on the identity of its two inputs.
+ *
+ * Both sides are interned — one frozen object per roster entry, one per feed
+ * vehicle type — so identity is a complete key, and after the first vehicle of
+ * each pairing the merge is two Map hits and no allocation. That matters
+ * because this runs for every vehicle on every poll.
+ *
+ * @type {Map<object, Map<object, Readonly<object>>>}
+ */
+const combineCache = new Map();
+
+/**
+ * The roster's answer and the feed's, merged field by field.
+ *
+ * The roster is keyed on the side number, so it describes the vehicle that is
+ * physically on the street; `vehicle_types.txt` describes the type the
+ * timetable rosters onto the run, which is a plan and can be swapped on the
+ * day. Where both speak the physical answer wins; everywhere else the feed
+ * fills the gap, which is what makes a feed that ships the table cover the
+ * whole fleet without anybody maintaining a file.
+ *
+ * @param {Readonly<object>} roster from `FleetRoster.describe`, possibly UNKNOWN
+ * @param {Readonly<object>|null} feed from `GtfsStore.getVehicleType`
+ * @returns {Readonly<object>} `UNKNOWN` when neither says anything.
+ */
+const combine = (roster, feed) => {
+  if (!feed) return roster;
+  if (roster === UNKNOWN && feed.model === null && feed.lowFloor === null &&
+      feed.wheelchair === null && feed.airConditioning === null) {
+    return UNKNOWN;
+  }
+
+  let byFeed = combineCache.get(roster);
+  if (!byFeed) {
+    byFeed = new Map();
+    combineCache.set(roster, byFeed);
+  }
+  const cached = byFeed.get(feed);
+  if (cached) return cached;
+
+  const merged = Object.freeze({
+    model: roster.model ?? feed.model,
+    kind: roster.kind,
+    lowFloor: roster.lowFloor ?? feed.lowFloor,
+    wheelchair: roster.wheelchair ?? feed.wheelchair,
+    airConditioning: roster.airConditioning ?? feed.airConditioning,
+    years: roster.years,
+    source: roster.source,
+  });
+  byFeed.set(feed, merged);
+  return merged;
+};
+
 /** @type {FleetRoster|null} */
 let shared = null;
 
@@ -261,6 +315,7 @@ const sharedRoster = () => {
 module.exports = {
   FleetRoster,
   UNKNOWN,
+  combine,
   loadRoster,
   normaliseNumber,
   sharedRoster,

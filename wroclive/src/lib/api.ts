@@ -158,13 +158,13 @@ export type VehicleTrip = {
 /**
  * What the vehicle wearing this side number actually is.
  *
- * Served from the server's fleet roster (`server/src/fleet-roster.json`), which
- * is the only thing that knows — no live feed carries a model or its equipment.
- * Every field is independently unknown, and `null` means the roster does not
- * say: it must render as "no information", never as "no". A rider who boards
- * expecting a ramp that is not there is worse off than one who was told
- * nothing. The whole block is absent for a vehicle with no side number, which
- * is most of the MPK fleet until an Open Data record is merged onto it.
+ * The server merges two answers into this: the feed's own `vehicle_types.txt`
+ * where the timetable ships one, and the roster in `server/src/fleet-roster.json`
+ * keyed on the side number where it does not. Which one answered is not the
+ * client's problem — what is, is that every field is independently unknown, and
+ * `null` means neither said: it must render as "no information", never as "no".
+ * A rider who boards expecting a ramp that is not there is worse off than one
+ * who was told nothing. The whole block is absent when nothing is known at all.
  */
 export type VehicleFleetInfo = {
   model: string | null;
@@ -245,6 +245,13 @@ export type VehicleTripDetail = {
    * times.
    */
   wheelchairAccessible: boolean | null;
+  /**
+   * The type the timetable rosters onto this run, when the feed ships a
+   * `vehicle_types.txt` to say so. Its attributes are already folded into
+   * `vehicle.fleet` by the server — this is the id, for debugging which answer
+   * a vehicle got.
+   */
+  vehicleTypeId: string | null;
   atStop: { id: string; name: string; distanceMeters: number } | null;
   previousStops: TripStop[];
   previousStop: TripStop | null;
