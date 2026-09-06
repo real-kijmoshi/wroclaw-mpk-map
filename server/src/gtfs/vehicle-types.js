@@ -84,6 +84,30 @@ const deaccent = (text) =>
     .replace(/\u0141/g, 'L')
     .toLowerCase();
 
+/**
+ * Words that name a *category*, not a model.
+ *
+ * A `vehicle_types.txt` in a municipal feed is at least as likely to hold
+ * "Tramwaj" / "Autobus" — a fare or traction class — as it is to hold "Moderus
+ * Beta MF 24 AC". Printing the first as a model gives a rider a card reading
+ * "POJAZD / Tramwaj", which is worse than the honest "Model nieznany" they get
+ * with no table at all: it looks like an answer. Only a bare category is
+ * rejected, so "Autobus przegubowy" survives — that one actually tells you
+ * something about the vehicle pulling up.
+ */
+const CATEGORY_ONLY = new Set([
+  'tramwaj',
+  'tram',
+  'autobus',
+  'bus',
+  'trolejbus',
+  'pojazd',
+  'wagon',
+  'skladbtramwajowy',
+]);
+
+const isCategoryOnly = (name) => CATEGORY_ONLY.has(deaccent(name).replace(/[^a-z]/g, ''));
+
 const NEGATED_AIR = /(bez|brak)\s+klimatyzacj/;
 const AIR_WORD = /klimatyz/;
 const PARTIAL_LOW_FLOOR = /(czesciow|niskopodlogow[a-z]*\s+czesciow)/;
@@ -182,10 +206,15 @@ const readVehicleTypes = (zip) => {
 
     const lowFloor = lowFloorColumn ?? phrases.lowFloor;
 
+    // The name still feeds the phrase reading above — "Tramwaj niskopodłogowy"
+    // says something real about the floor — it just does not get printed as a
+    // model on its own.
+    const printable = name && !isCategoryOnly(name) ? name : null;
+
     types.set(id, {
       // Frozen and shared for the life of the feed, exactly like a roster
       // entry: every vehicle of this type is handed the same object.
-      model: name ?? description ?? null,
+      model: printable ?? (description && !isCategoryOnly(description) ? description : null),
       lowFloor,
       // A low floor is how a wheelchair gets on, so a type that states one and
       // says nothing about wheelchairs still answers the question a rider is

@@ -61,6 +61,24 @@ const parseWheelchair = (value) => {
   return null;
 };
 
+/** Columns a publisher might use to point a trip at its vehicle type. */
+const VEHICLE_TYPE_TRIP_KEYS = ['vehicle_type_id', 'vehicle_id', 'type_id'];
+
+/**
+ * The trip's vehicle type, or null when nothing on the row resolves to one.
+ *
+ * @param {Record<string, string>} row a trips.txt row
+ * @param {Map<string, object>} vehicleTypes the table read from the archive
+ */
+const resolveVehicleTypeId = (row, vehicleTypes) => {
+  if (!vehicleTypes.size) return null;
+  for (const key of VEHICLE_TYPE_TRIP_KEYS) {
+    const value = row[key];
+    if (value && vehicleTypes.has(value)) return value;
+  }
+  return null;
+};
+
 /**
  * How much a variant running the wrong way is penalised when matching a
  * vehicle, in metres of apparent extra distance.
@@ -499,14 +517,18 @@ class GtfsStore {
         // trip on some days, and trips.txt is what connects those back here.
         vehicleId: row.vehicle_id || null,
         blockId: row.brigade_id || row.block_id || null,
-        // `vehicle_id` does double duty across the feeds this store reads: in
-        // Wrocław's it can reference `vehicle_types.txt`, and in a
-        // subcontractor's it names one physical bus that Kłosok's GTFS-RT
-        // joins on. Only an id the type table actually resolves is read as a
-        // type, so a feed with no such table changes nothing and a vehicle id
-        // is never printed to a rider as a model.
-        vehicleTypeId:
-          row.vehicle_id && state.vehicleTypes.has(row.vehicle_id) ? row.vehicle_id : null,
+        // Which column joins a trip to `vehicle_types.txt` is a publishing
+        // convention, so several are tried — the same reasoning as the column
+        // aliases in vehicle-types.js, and the reason a single guessed name
+        // would silently join nothing.
+        //
+        // Resolution is the gate, not the column name: `vehicle_id` does double
+        // duty across the feeds this store reads — a type reference in
+        // Wrocław's, one physical bus in a subcontractor's, which Kłosok's
+        // GTFS-RT joins on — so an id is read as a type only when the type
+        // table actually holds it. A feed with no such table therefore changes
+        // nothing, and a fleet number is never printed to a rider as a model.
+        vehicleTypeId: resolveVehicleTypeId(row, state.vehicleTypes),
       });
       state.tripIndexById.set(row.trip_id, index);
 
