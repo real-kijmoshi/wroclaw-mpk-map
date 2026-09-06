@@ -286,31 +286,57 @@ native surface an OSM basemap stays light in both schemes and
 the other direction: the chrome follows what the map is *drawing*, never what
 the phone is set to.
 
-**22. What a vehicle *is* comes from a roster, and unknown stays unknown.**
-No live feed says what model a vehicle is, whether its floor is low, whether a
-wheelchair gets on or whether the saloon is air conditioned. MPK's
-`bus_position`, the city's Open Data table 14 and Kłosok's GTFS-RT all publish a
-side number (`Nr_Boczny`) and stop there. So `server/src/fleet.js` looks that
-number up in `server/src/fleet-roster.json` — which makes it the one place in
-the server that states something no feed ever told it, and the reason every
-attribute is a tri-state rather than a boolean. `null` means the roster does not
-say and must render as "brak danych" on both clients; reading a missing field as
-"nie" tells a rider there is no ramp on the strength of a blank cell, and
-reading it as "tak" sends them to a stop they cannot board at. That is "a fake
-disruption is worse than a missing one" applied to a vehicle.
+**22. What a vehicle *is* has two sources, and unknown stays unknown.**
+Model, low floor, wheelchair space and air conditioning are not in any live
+position feed: MPK's `bus_position`, the city's Open Data table 14 and Kłosok's
+GTFS-RT all publish a side number (`Nr_Boczny`) and stop there. Two things can
+answer instead, and the server reads both.
 
-Three consequences. `FLEET_ROSTER_PATH` **replaces** the bundled roster rather
-than extending it — an operator running another fleet must never have Wrocław's
-models stated for their side numbers — and a missing or malformed file costs the
-attributes, never the boot (`/health.fleet` says what loaded and what it
-ignored). The lookup is matched on tram/bus as well as on the number, because
-the two series are independent and nothing stops them from colliding. And the
-timetable's own `wheelchair_accessible` is read from `trips.txt` alongside it,
-but only from the *matched* run: borrowing another departure's accessibility is
-invariant 18's mistake in a different costume. The bus half of the roster is
-deliberately empty — the numbering could not be verified against the live feed,
-and the fleet is being replaced wholesale, so it says nothing rather than
-guessing.
+The *timetable* is the first authority. This feed already carries columns the
+GTFS spec does not (`trips.vehicle_id`, `trips.brigade_id`), and where it also
+ships a `vehicle_types.txt`, `server/src/gtfs/vehicle-types.js` reads it and
+`trips.vehicle_id` joins a run to its type. That reader is deliberately
+shape-agnostic, for the same reason `parseFileListing()` is: the table is not in
+the spec, so its columns are a publishing convention and pinning one spelling
+means a rename silently serves nothing. It reads the flag columns when they are
+there and the Polish description when they are not
+("częściowo niskopodłogowy z klimatyzacją"), and a column always beats a
+sentence. **`npm run doctor` prints whether the live snapshot carries the table,
+its header and what the reader made of it** — the test suite has no network, so
+that command is the only thing that can answer the question for real.
+
+The *roster* covers everything the feed does not say.
+`server/src/fleet.js` looks the side number up in `server/src/fleet-roster.json`,
+which makes it the one place in the server that states something no feed told
+it. `combine()` merges the two per field: the roster wins where both speak
+(it is keyed on the vehicle that physically turned up, where the feed describes
+the type the timetable rostered onto the run), and the feed fills every gap. The
+clients read one merged `vehicle.fleet` and never learn which side answered.
+
+Whichever answered, **every attribute is a tri-state**. `null` means neither
+source said, and it must render as "brak danych" on both clients; reading a
+missing field as "nie" tells a rider there is no ramp on the strength of a blank
+cell, and reading it as "tak" sends them to a stop they cannot board at. That is
+"a fake disruption is worse than a missing one" applied to a vehicle, and it is
+why `wheelchair_accessible`'s `0` is null rather than false, why an unrecognised
+flag value is null, and why a description that never mentions air conditioning
+leaves it null instead of denying it.
+
+Three more consequences. `trips.vehicle_id` does double duty across the feeds
+this store reads — a type reference in Wrocław's, one physical bus in a
+subcontractor's, which Kłosok's GTFS-RT joins on — so it is read as a type
+*only* when `vehicle_types.txt` resolves it, or a fleet number gets printed to a
+rider as a model. `FLEET_ROSTER_PATH` **replaces** the bundled roster rather than
+extending it (an operator running another fleet must never have Wrocław's models
+stated for their side numbers), and a missing or malformed file costs the
+attributes, never the boot — `/health.fleet` and `/health.gtfs.counts.vehicleTypes`
+say which source is actually answering. And the timetable's own
+`wheelchair_accessible` and vehicle type are taken from the *matched* run only:
+borrowing another departure's is invariant 18's mistake in a different costume.
+The bus half of the bundled roster is empty on purpose — the numbering could not
+be verified and the fleet is being replaced wholesale, so it says nothing rather
+than guessing, and a feed that ships `vehicle_types.txt` covers it without
+anyone maintaining a file.
 
 ## Fragile by nature
 

@@ -4,7 +4,7 @@ const { performance } = require('node:perf_hooks');
 
 const config = require('./config');
 const logger = require('./logger');
-const { UNKNOWN: FLEET_UNKNOWN, sharedRoster } = require('./fleet');
+const { UNKNOWN: FLEET_UNKNOWN, combine: combineFleet, sharedRoster } = require('./fleet');
 const { fetchWithTimeout, tryEachSource, SourceHealth } = require('./http');
 const { lineToType } = require('./lines');
 const { Metric } = require('./metrics');
@@ -297,10 +297,15 @@ class VehicleTracker {
      // What the side number is attached to: model, low floor, wheelchair
      // space, air conditioning. A shared frozen object per model, so this is a
      // map lookup rather than an allocation for each of several hundred
-     // vehicles, six times a minute. It is derived from `vehicleNumber` and
-     // `type`, both already compared below, so it needs no place of its own in
-     // the content-change check.
-     const fleet = roster.describe(vehicle.vehicleNumber, vehicle.type);
+     // vehicles, six times a minute. The feed's own `vehicle_types.txt` fills
+     // whatever the roster does not name — most feeds ship no such table, and
+     // then this is exactly the roster's answer. Derived from `vehicleNumber`,
+     // `type` and the trip, all already compared below, so it needs no place
+     // of its own in the content-change check.
+     const fleet = combineFleet(
+       roster.describe(vehicle.vehicleNumber, vehicle.type),
+       this.gtfs?.getVehicleType?.(vehicle.trip?.vehicleTypeId) ?? null,
+     );
      vehicles.push({
         id: vehicle.id,
         line: vehicle.line,

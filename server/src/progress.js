@@ -434,6 +434,10 @@ const describeVehicle = (
     // so borrowing their accessibility is the same mistake as borrowing their
     // times (see the run-matching note above). Unmatched stays null.
     wheelchairAccessible: null,
+    // The type the timetable rosters onto this run, when the feed ships a
+    // `vehicle_types.txt` to say so. Same rule and the same reason: it belongs
+    // to the matched departure, not to the variant.
+    vehicleTypeId: null,
     atStop: null,
     previousStops: [],
     previousStop: null,
@@ -473,6 +477,7 @@ const describeVehicle = (
     described.delaySeconds = run.delaySeconds;
     described.scheduleMatched = true;
     described.wheelchairAccessible = run.trip.wheelchairAccessible ?? null;
+    described.vehicleTypeId = run.trip.vehicleTypeId ?? null;
     if (run.trip.headsign) described.headsign = run.trip.headsign;
   }
 
@@ -538,6 +543,9 @@ const summarise = (described) => {
     shapeId: described.shapeId,
     delaySeconds: described.delaySeconds,
     tripId: described.tripId,
+    // The id, not the attributes: /locations repeats this for every vehicle,
+    // and the tracker resolves it against the store once per poll.
+    vehicleTypeId: described.vehicleTypeId,
     stopsAhead: described.stopsAhead,
     atStop: described.atStop ? described.atStop.name : null,
     previousStop: described.previousStop

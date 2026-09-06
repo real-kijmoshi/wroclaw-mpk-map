@@ -358,6 +358,10 @@ describe('HTTP API', () => {
     assert.ok(body.fleet.entries > 0);
     assert.equal(body.fleet.ignoredEntries, 0);
     assert.equal(body.fleet.lastError, null);
+    // Whether the snapshot ships a vehicle_types.txt decides where a vehicle's
+    // model comes from, so the count is in the report rather than left to be
+    // inferred from vehicles that came back without one.
+    assert.equal(body.gtfs.counts.vehicleTypes, 3);
     // Both vehicle sources and the merge stats are part of the report.
     assert.equal(body.vehicles.openData.source, 'https://open-data.cui.wroclaw.pl/hdb/db/14?download=json');
     assert.equal(body.vehicles.stats.total, 2);

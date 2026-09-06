@@ -3,7 +3,7 @@
 const config = require('../config');
 const logger = require('../logger');
 const { distanceMeters } = require('../gtfs/geo');
-const { UNKNOWN: FLEET_UNKNOWN, sharedRoster } = require('../fleet');
+const { UNKNOWN: FLEET_UNKNOWN, combine: combineFleet, sharedRoster } = require('../fleet');
 const { lineToType } = require('../lines');
 const { fetchKlosokFeed } = require('./fetch');
 const { parseRealtime, resolveEnrichment } = require('./realtime');
@@ -303,7 +303,10 @@ class KlosokService {
     // it must not get one, since it is not in the map format at all. It is
     // omitted entirely when the roster does not know the number, which is the
     // usual case for a subcontractor fleet the bundled roster does not cover.
-    const fleet = sharedRoster().describe(vehicle.vehicleNumber, type);
+    const fleet = combineFleet(
+      sharedRoster().describe(vehicle.vehicleNumber, type),
+      this.gtfs?.getVehicleType?.(enrichment.vehicleTypeId) ?? null,
+    );
 
     return {
       ...vehicle,
