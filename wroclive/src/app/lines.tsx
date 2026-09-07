@@ -18,6 +18,7 @@ import { HitTarget, Motion, Radius, Space, Type, Weight } from '@/constants/desi
 import { usePoll } from '@/hooks/use-poll';
 import { useTheme } from '@/hooks/use-theme';
 import { getLines, type LineType } from '@/lib/api';
+import { favouritesStore, useFavourites } from '@/lib/favourites';
 import { plural } from '@/lib/format';
 import {
   CATEGORY_ORDER,
@@ -26,6 +27,7 @@ import {
   HIDDEN_CATEGORIES,
   labelFor,
 } from '@/lib/lines';
+import { tapped } from '@/lib/haptics';
 import { selectionStore, useSelectedLines } from '@/lib/selection';
 
 type PickerTab = 'all' | 'tram' | 'bus' | 'night' | 'other';
@@ -96,6 +98,7 @@ export default function LinesScreen() {
   }, [lines.data]);
 
   const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const { lines: favouriteLines } = useFavourites();
   const needle = query.trim().toUpperCase();
   const visibleGroups = useMemo(
     () => groups
@@ -282,7 +285,12 @@ export default function LinesScreen() {
                           color={group.color}
                           width={chipWidth}
                           selected={selectedSet.has(line)}
+                          favourite={favouriteLines.includes(line)}
                           onPress={() => selectionStore.toggle(line)}
+                          onLongPress={() => {
+                            favouritesStore.toggleLine(line);
+                            tapped();
+                          }}
                         />
                       ))}
                     </View>
@@ -297,26 +305,42 @@ export default function LinesScreen() {
   );
 }
 
+/**
+ * One line in the grid.
+ *
+ * Tapping filters the map, which is what this screen is for. Holding pins the
+ * line — a second action on the same target, kept off the tap because
+ * filtering is what a rider does here twenty times and pinning is what they do
+ * once. A pinned line wears a star so the state is visible without holding
+ * anything, and the accessibility label says so rather than leaving the mark
+ * as decoration.
+ */
 function RouteChip({
   line,
   color,
   width,
   selected,
+  favourite,
   onPress,
+  onLongPress,
 }: {
   line: string;
   color: string;
   width: number;
   selected: boolean;
+  favourite: boolean;
   onPress: () => void;
+  onLongPress: () => void;
 }) {
   const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onLongPress}
       accessibilityRole="checkbox"
       accessibilityState={{ checked: selected }}
-      accessibilityLabel={`Linia ${line}`}
+      accessibilityLabel={favourite ? `Linia ${line}, ulubiona` : `Linia ${line}`}
+      accessibilityHint="Przytrzymaj, aby dodać do ulubionych"
       style={({ pressed }) => [
         styles.chip,
         {
@@ -332,11 +356,17 @@ function RouteChip({
         style={[styles.chipLabel, { color: selected ? '#ffffff' : theme.text }]}>
         {line}
       </Text>
+      {favourite && (
+        <View style={styles.chipStar}>
+          <Ionicons name="star" size={9} color={selected ? '#ffffff' : theme.amber} />
+        </View>
+      )}
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
+  chipStar: { position: 'absolute', top: 3, right: 4 },
   headerAction: { minHeight: 32, justifyContent: 'center', paddingHorizontal: Space.xs },
   tools: { gap: Space.sm, paddingBottom: Space.sm },
   search: {

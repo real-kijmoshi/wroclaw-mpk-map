@@ -1,12 +1,14 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
+import { FavouriteStopsSection } from './favourite-stops';
 import { Divider, LinkRow, Row, RowIcon, Section } from './list';
 import { StopAreaRow } from './stop-area-row';
 import { ThemedText } from './themed-text';
 import { Motion, Radius, Space } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
-import type { Stop } from '@/lib/api';
+import type { Departure, Stop } from '@/lib/api';
+import type { FavouriteStop } from '@/lib/favourites';
 import { formatDistance, plural } from '@/lib/format';
 import type { StopArea } from '@/lib/stops-api';
 
@@ -95,6 +97,9 @@ export type MapSheetHomeProps = {
   locating: boolean;
   /** Why the last locate attempt produced nothing, if it produced nothing. */
   locateProblem: 'denied' | 'failed' | null;
+  /** Pinned stops, above the nearby list — see FavouriteStopsSection. */
+  favouriteStops: FavouriteStop[];
+  favouriteBoards: Map<string, Departure[]>;
   /** The fleet poll is failing — the map is showing the last thing it knew. */
   offline: boolean;
   onLines: () => void;
@@ -115,6 +120,8 @@ export function MapSheetHome({
   located,
   locating,
   locateProblem,
+  favouriteStops,
+  favouriteBoards,
   offline,
   onLines,
   onAlerts,
@@ -160,7 +167,20 @@ export function MapSheetHome({
       )}
 
       {/*
-       * Nearest first, because it is the only thing here a rider needs *now*.
+       * Pinned first, then nearest. Proximity is a fact about where the rider
+       * is standing; a favourite is a fact about where they go, and for anyone
+       * with a commute the second is the one that is true twice a day. A rider
+       * who has pinned nothing sees exactly what they saw before — the section
+       * draws nothing at all when it is empty.
+       */}
+      <FavouriteStopsSection
+        stops={favouriteStops}
+        boards={favouriteBoards}
+        onStop={(stop) => onStop({ ...stop, lines: undefined })}
+      />
+
+      {/*
+       * Nearest, because it is the thing a rider with no pins needs *now*.
        * The line filter and the alerts are settings you visit; where the next
        * tram goes from is the question you opened the app with.
        */}

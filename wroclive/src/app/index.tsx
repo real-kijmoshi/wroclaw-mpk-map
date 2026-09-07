@@ -16,11 +16,13 @@ import { StopDetails, StopSummary } from '@/components/stop-details';
 import { VehicleDetails, VehicleSummary } from '@/components/vehicle-details';
 import { Space } from '@/constants/design';
 import { useAreaStops } from '@/hooks/use-area-stops';
+import { useFavouriteBoards } from '@/hooks/use-favourite-boards';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePoll } from '@/hooks/use-poll';
 import { useTheme } from '@/hooks/use-theme';
 import { getAlerts, getDeparturesForStops, getIncidents, getLocations, getShape, getStopsNear, getVehicle, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
 import { REFRESH_MS } from '@/lib/config';
+import { useFavourites } from '@/lib/favourites';
 import { plural } from '@/lib/format';
 import { colorFor } from '@/lib/lines';
 import { mapIntentStore, useMapIntent } from '@/lib/map-intent';
@@ -416,6 +418,16 @@ export default function MapScreen() {
    */
   const nearbyAreas = useMemo(() => groupStopAreas(myStops), [myStops]);
 
+  /* --- favourites ----------------------------------------------------------- */
+
+  const favourites = useFavourites();
+  // Boards only while the home list is the thing on screen: with a vehicle or a
+  // stop selected the section is not rendered, and polling for it would be a
+  // request every thirty seconds for rows nobody can see.
+  const favouriteBoards = useFavouriteBoards(favourites.stops, {
+    enabled: selection === null && !classic,
+  });
+
   /* --- status --------------------------------------------------------------- */
 
   const status: LiveStatus = (() => {
@@ -586,6 +598,8 @@ export default function MapScreen() {
             located={userPosition !== null}
             locating={locating}
             locateProblem={locateProblem}
+            favouriteStops={favourites.stops}
+            favouriteBoards={favouriteBoards}
             offline={Boolean(fleet.error)}
             onRetry={fleet.refresh}
             onLines={() => router.push('/lines')}

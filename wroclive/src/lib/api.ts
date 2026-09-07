@@ -266,6 +266,14 @@ export type Stop = {
    * away it is"; everyone else measures for themselves.
    */
   distance?: number;
+  /**
+   * Whether the stop can be boarded from a wheelchair.
+   *
+   * Three states, not two: `null` means the feed did not say, which is a
+   * different answer from "no" and must be rendered as a different answer.
+   * Wrocław's snapshots have shipped both with and without the column.
+   */
+  wheelchairBoarding?: boolean | null;
 };
 
 export type Departure = {
@@ -281,11 +289,25 @@ export type Departure = {
   realtime?: boolean;
   predictedInSeconds?: number | null;
   vehicleId?: string | null;
+  /** Whether this particular run is low-floor. `null` means unstated. */
+  wheelchair?: boolean | null;
 };
 
 export type Departures = {
   stop: Stop;
   departures: Departure[];
+  /** The moment this board describes — `now` unless one was asked for. */
+  at?: string;
+};
+
+/** One entry of the merged "what is leaving near me" board. */
+export type NearbyDeparture = Departure & {
+  stop: Stop & { distance: number };
+};
+
+export type NearbyDepartures = {
+  departures: NearbyDeparture[];
+  stops: Stop[];
 };
 
 export type Alert = {
@@ -578,6 +600,11 @@ export function normaliseStop(value: unknown): Stop | null {
   const code = optionalString(value.code);
   if (code) stop.code = code;
   if (Number.isFinite(value.distance)) stop.distance = value.distance as number;
+  // Only `true` and `false` are answers; anything else — including the field
+  // being absent — stays unknown rather than becoming "no".
+  if (typeof value.wheelchairBoarding === 'boolean') {
+    stop.wheelchairBoarding = value.wheelchairBoarding;
+  }
 
   const ids = Array.isArray(value.ids)
     ? value.ids.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
@@ -604,7 +631,7 @@ export function normaliseStopList(payload: unknown, endpoint: string): Stop[] {
 }
 
 /** Only the MPK departure shape is served: `{departure, inSeconds, serviceDay}`. */
-export function normaliseDepartures(payload: unknown): Departures {
+export function normaliseDepartures(payload: unknown, limit = 12): Departures {
   if (!isRecord(payload) || !isRecord(payload.stop) || !Array.isArray(payload.departures)) {
     throw new ApiError('Unexpected departures payload', 0);
   }
@@ -636,6 +663,7 @@ export function normaliseDepartures(payload: unknown): Departures {
           typeof item.vehicleId === 'string' && item.vehicleId
             ? item.vehicleId
             : null,
+        wheelchair: typeof item.wheelchair === 'boolean' ? item.wheelchair : null,
       },
     ];
   });
@@ -646,8 +674,44 @@ export function normaliseDepartures(payload: unknown): Departures {
   }
   return {
     stop,
-    departures: departures.slice(0, 12),
+    departures: departures.slice(0, limit),
+    at: typeof payload.at === 'string' ? payload.at : undefined,
   };
+}
+
+/**
+ * The merged nearby board.
+ *
+ * Each entry carries the pole it leaves from, because "3 → Leśnica in 4 min"
+ * is not actionable without knowing which side of the junction to stand on.
+ * An entry whose stop will not normalise is dropped rather than shown without
+ * one.
+ */
+export function normaliseNearbyDepartures(payload: unknown): NearbyDepartures {
+  if (!isRecord(payload) || !Array.isArray(payload.departures)) {
+    throw new ApiError('Unexpected /departures/near payload', 0);
+  }
+
+  const departures = payload.departures.flatMap((item): NearbyDeparture[] => {
+    if (!isRecord(item)) return [];
+    const stop = normaliseStop(item.stop);
+    if (!stop || !Number.isFinite(stop.distance)) return [];
+    const [departure] = normaliseDepartures(
+      { stop, departures: [item] },
+      1,
+    ).departures;
+    if (!departure) return [];
+    return [{ ...departure, stop: stop as Stop & { distance: number } }];
+  });
+
+  const stops = Array.isArray(payload.stops)
+    ? payload.stops.flatMap((item) => {
+        const stop = normaliseStop(item);
+        return stop ? [stop] : [];
+      })
+    : [];
+
+  return { departures, stops };
 }
 
 /** Compact shape points only; anything unparseable is dropped, not NaN-rendered. */
@@ -750,6 +814,190 @@ export function normaliseVehicleDetail(payload: unknown): VehicleDetail {
   return { vehicle, trip: rawTrip as unknown as VehicleTripDetail };
 }
 
+
+/* -------------------------------------------------------------------------- */
+/* Journey plans                                                                */
+/* -------------------------------------------------------------------------- */
+
+/** Where a leg starts or ends: a stop, or the rider's own point. */
+export type PlanPlace = {
+  id?: string;
+  name: string | null;
+  code?: string | null;
+  lat: number;
+  lon: number;
+  wheelchairBoarding?: boolean | null;
+  lines?: string[];
+};
+
+export type PlanWalkLeg = {
+  mode: 'walk';
+  meters: number;
+  seconds: number;
+  from: PlanPlace;
+  to: PlanPlace;
+};
+
+export type PlanRideLeg = {
+  mode: 'ride';
+  line: string;
+  type: LineType;
+  headsign: string | null;
+  direction: string | null;
+  tripId: string;
+  shapeId: string | null;
+  /** Whether this run is low-floor. `null` means the feed did not say. */
+  wheelchair: boolean | null;
+  /** ISO instants, not "in N minutes" — the app does its own counting down. */
+  departure: string;
+  arrival: string;
+  seconds: number;
+  from: PlanPlace;
+  to: PlanPlace;
+  stops: { id: string; name: string; lat: number; lon: number }[];
+};
+
+export type PlanLeg = PlanWalkLeg | PlanRideLeg;
+
+export type Plan = {
+  /** When the rider must leave, which is not when they asked. */
+  departure: string;
+  arrival: string;
+  durationSeconds: number;
+  startsInSeconds: number;
+  transfers: number;
+  walkMeters: number;
+  legs: PlanLeg[];
+};
+
+export type JourneyPlan = {
+  from: PlanPlace;
+  to: PlanPlace;
+  departAt: string;
+  /** Offered when the destination is close enough that riding is silly. */
+  walkOnly: Plan | null;
+  plans: Plan[];
+};
+
+const normalisePlace = (value: unknown): PlanPlace | null => {
+  if (!isRecord(value)) return null;
+  if (!Number.isFinite(value.lat) || !Number.isFinite(value.lon)) return null;
+  const place: PlanPlace = {
+    name: typeof value.name === 'string' ? value.name : null,
+    lat: value.lat as number,
+    lon: value.lon as number,
+  };
+  if (typeof value.id === 'string') place.id = value.id;
+  const code = optionalString(value.code);
+  if (code) place.code = code;
+  if (typeof value.wheelchairBoarding === 'boolean') {
+    place.wheelchairBoarding = value.wheelchairBoarding;
+  }
+  if (Array.isArray(value.lines)) {
+    place.lines = value.lines.filter((line): line is string => typeof line === 'string');
+  }
+  return place;
+};
+
+const normaliseLeg = (value: unknown): PlanLeg | null => {
+  if (!isRecord(value)) return null;
+  const from = normalisePlace(value.from);
+  const to = normalisePlace(value.to);
+  if (!from || !to) return null;
+
+  if (value.mode === 'walk') {
+    if (!Number.isFinite(value.meters) || !Number.isFinite(value.seconds)) return null;
+    return {
+      mode: 'walk',
+      meters: value.meters as number,
+      seconds: value.seconds as number,
+      from,
+      to,
+    };
+  }
+
+  if (value.mode !== 'ride') return null;
+  if (typeof value.line !== 'string' || !value.line) return null;
+  if (typeof value.departure !== 'string' || typeof value.arrival !== 'string') return null;
+
+  return {
+    mode: 'ride',
+    line: value.line,
+    type: value.type as LineType,
+    headsign: typeof value.headsign === 'string' ? value.headsign : null,
+    direction: typeof value.direction === 'string' ? value.direction : null,
+    tripId: typeof value.tripId === 'string' ? value.tripId : '',
+    shapeId: typeof value.shapeId === 'string' ? value.shapeId : null,
+    wheelchair: typeof value.wheelchair === 'boolean' ? value.wheelchair : null,
+    departure: value.departure,
+    arrival: value.arrival,
+    seconds: Number.isFinite(value.seconds) ? (value.seconds as number) : 0,
+    from,
+    to,
+    stops: Array.isArray(value.stops)
+      ? value.stops.flatMap((stop) => {
+          if (!isRecord(stop)) return [];
+          if (typeof stop.id !== 'string' || typeof stop.name !== 'string') return [];
+          if (!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) return [];
+          return [{
+            id: stop.id,
+            name: stop.name,
+            lat: stop.lat as number,
+            lon: stop.lon as number,
+          }];
+        })
+      : [],
+  };
+};
+
+/**
+ * A plan is only usable if every one of its legs survived validation.
+ *
+ * Dropping a bad leg and keeping the rest would hand the rider a journey with
+ * a hole in the middle — which reads as a complete plan and is not one.
+ */
+const normaliseOnePlan = (value: unknown): Plan | null => {
+  if (!isRecord(value) || !Array.isArray(value.legs) || !value.legs.length) return null;
+  if (typeof value.departure !== 'string' || typeof value.arrival !== 'string') return null;
+
+  const legs: PlanLeg[] = [];
+  for (const raw of value.legs) {
+    const leg = normaliseLeg(raw);
+    if (!leg) return null;
+    legs.push(leg);
+  }
+
+  return {
+    departure: value.departure,
+    arrival: value.arrival,
+    durationSeconds: Number.isFinite(value.durationSeconds) ? (value.durationSeconds as number) : 0,
+    startsInSeconds: Number.isFinite(value.startsInSeconds) ? (value.startsInSeconds as number) : 0,
+    transfers: Number.isFinite(value.transfers) ? (value.transfers as number) : 0,
+    walkMeters: Number.isFinite(value.walkMeters) ? (value.walkMeters as number) : 0,
+    legs,
+  };
+};
+
+export function normalisePlan(payload: unknown): JourneyPlan {
+  if (!isRecord(payload) || !Array.isArray(payload.plans)) {
+    throw new ApiError('Unexpected /plan payload', 0);
+  }
+  const from = normalisePlace(payload.from);
+  const to = normalisePlace(payload.to);
+  if (!from || !to) throw new ApiError('Unexpected /plan payload', 0);
+
+  return {
+    from,
+    to,
+    departAt: typeof payload.departAt === 'string' ? payload.departAt : new Date().toISOString(),
+    walkOnly: normaliseOnePlan(payload.walkOnly),
+    plans: payload.plans.flatMap((plan) => {
+      const parsed = normaliseOnePlan(plan);
+      return parsed ? [parsed] : [];
+    }),
+  };
+}
+
 /* -------------------------------------------------------------------------- */
 /* Endpoints                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -798,13 +1046,38 @@ export const getShape = async (
   );
 };
 
-export const getDepartures = async (stopId: string, options?: GetOptions) =>
-  normaliseDepartures(
-    await apiGet<unknown>(`/stop/${encodeURIComponent(stopId)}/departures?limit=12&within=1440`, options),
+/**
+ * A stop's board.
+ *
+ * `at` asks for another moment — the whole timetable rather than the next few
+ * minutes. The server serves no live ETAs on a board away from now, because a
+ * prediction is a claim about a vehicle moving at this instant; the returned
+ * departures simply carry `realtime: false`, and the UI shows scheduled times.
+ */
+export const getDepartures = async (
+  stopId: string,
+  options?: GetOptions & { at?: Date; limit?: number; within?: number },
+) => {
+  const limit = options?.limit ?? 12;
+  const query = new URLSearchParams({
+    limit: String(limit),
+    within: String(options?.within ?? 1440),
+  });
+  if (options?.at) query.set('at', options.at.toISOString());
+  return normaliseDepartures(
+    await apiGet<unknown>(
+      `/stop/${encodeURIComponent(stopId)}/departures?${query.toString()}`,
+      options,
+    ),
+    limit,
   );
+};
 
 /** Merge only GTFS records that search identified as one physical platform. */
-export const getDeparturesForStops = async (stop: Stop, options?: GetOptions): Promise<Departures> => {
+export const getDeparturesForStops = async (
+  stop: Stop,
+  options?: GetOptions & { at?: Date; limit?: number; within?: number },
+): Promise<Departures> => {
   const ids = [...new Set([stop.id, ...(stop.ids ?? [])])];
   const boards = await Promise.all(ids.map((id) => getDepartures(id, options)));
   const seen = new Set<string>();
@@ -817,8 +1090,8 @@ export const getDeparturesForStops = async (stop: Stop, options?: GetOptions): P
       return true;
     })
     .sort((a, b) => a.inSeconds - b.inSeconds)
-    .slice(0, 12);
-  return { stop: boards[0]?.stop ?? stop, departures };
+    .slice(0, options?.limit ?? 12);
+  return { stop: boards[0]?.stop ?? stop, departures, at: boards[0]?.at };
 };
 
 /**
@@ -854,4 +1127,77 @@ export const getIncidents = async (
   const queryString = query.toString();
   const suffix = queryString ? `?${queryString}` : '';
   return normaliseIncidents(await apiGet<unknown>(`/incidents${suffix}`, options));
+};
+
+/**
+ * Plan a journey.
+ *
+ * Both ends take either a point or `stop:<id>`, resolved server-side, so the
+ * caller never has to look a stop's position up before it can ask.
+ */
+export const getPlan = async (
+  from: string,
+  to: string,
+  options?: GetOptions & { at?: Date; maxTransfers?: number; fromName?: string; toName?: string },
+) => {
+  const query = new URLSearchParams({ from, to });
+  if (options?.at) query.set('at', options.at.toISOString());
+  if (options?.maxTransfers !== undefined) query.set('maxTransfers', String(options.maxTransfers));
+  if (options?.fromName) query.set('fromName', options.fromName);
+  if (options?.toName) query.set('toName', options.toName);
+  return normalisePlan(await apiGet<unknown>(`/plan?${query.toString()}`, options));
+};
+
+/**
+ * One board merged from every stop around a point.
+ *
+ * The alternative is a request per stop, which on a phone waking from a pocket
+ * is a dozen round trips before anything can be drawn.
+ */
+export const getNearbyDepartures = async (
+  lat: number,
+  lon: number,
+  options?: GetOptions & { radius?: number; within?: number; limit?: number },
+) => {
+  const query = new URLSearchParams({
+    lat: String(lat),
+    lon: String(lon),
+    radius: String(Math.round(options?.radius ?? 600)),
+    within: String(options?.within ?? 90),
+    limit: String(options?.limit ?? 24),
+  });
+  return normaliseNearbyDepartures(
+    await apiGet<unknown>(`/departures/near?${query.toString()}`, options),
+  );
+};
+
+/**
+ * Tell the server which lines this phone wants to hear about.
+ *
+ * An empty list means every line, which is what a rider who has turned
+ * notifications on without picking anything is asking for. Re-registering
+ * replaces the list rather than adding to it.
+ */
+export const registerPush = async (
+  token: string,
+  platform: string,
+  lines: string[],
+): Promise<{ following: 'all' | 'selected' }> => {
+  const response = await fetch(`${API_URL}/push/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ token, platform, lines }),
+  });
+  if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
+  const body = (await response.json()) as { following?: string };
+  return { following: body.following === 'selected' ? 'selected' : 'all' };
+};
+
+export const unregisterPush = async (token: string): Promise<void> => {
+  const response = await fetch(`${API_URL}/push/unregister`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
 };

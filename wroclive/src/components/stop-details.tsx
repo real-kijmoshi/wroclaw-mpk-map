@@ -1,12 +1,15 @@
-import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { LineBadge } from './line-badge';
 import { ThemedText } from './themed-text';
 import { CloseButton } from './vehicle-details';
-import { Radius, Space } from '@/constants/design';
+import { Motion, Radius, Space } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
 import type { Departures, Stop } from '@/lib/api';
+import { favouritesStore, useFavourites } from '@/lib/favourites';
 import { etaParts, formatDistance, formatScheduled } from '@/lib/format';
+import { tapped } from '@/lib/haptics';
 import { distanceMeters } from '@/lib/stops-api';
 
 /**
@@ -57,8 +60,47 @@ export function StopSummary({
         </ThemedText>
       </View>
 
+      <FavouriteStar stop={stop} />
       <CloseButton onPress={onClose} label="Zamknij odjazdy" />
     </View>
+  );
+}
+
+/**
+ * Pin this stop, or unpin it.
+ *
+ * It lives on the summary rather than in a menu because pinning is a decision
+ * made *while looking at the board* — "this is the one I want tomorrow
+ * morning" — and a control two taps away is one nobody finds. Filled star for
+ * pinned, outline for not: the same affordance every list on the phone uses,
+ * so it needs no label to be understood.
+ */
+function FavouriteStar({ stop }: { stop: Stop }) {
+  const theme = useTheme();
+  const favourites = useFavourites();
+  const pinned = favourites.stops.some((entry) => entry.id === stop.id);
+
+  return (
+    <Pressable
+      onPress={() => {
+        favouritesStore.toggleStop(stop);
+        tapped();
+      }}
+      accessibilityRole="button"
+      accessibilityLabel={pinned ? 'Usuń z ulubionych' : 'Dodaj do ulubionych'}
+      accessibilityState={{ selected: pinned }}
+      hitSlop={8}
+      style={({ pressed }) => [
+        styles.close,
+        { backgroundColor: theme.backgroundElement },
+        pressed && styles.pressed,
+      ]}>
+      <Ionicons
+        name={pinned ? 'star' : 'star-outline'}
+        size={17}
+        color={pinned ? theme.amber : theme.textSecondary}
+      />
+    </Pressable>
   );
 }
 
@@ -181,4 +223,8 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, gap: 1, minWidth: 0 },
   eta: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },
   etaValue: { fontVariant: ['tabular-nums'] },
+  // Same round 30pt target as the close button it sits beside, so the pair
+  // reads as one control group rather than two sizes of button.
+  close: { width: 30, height: 30, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
+  pressed: { opacity: Motion.pressedOpacity },
 });
