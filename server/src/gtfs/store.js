@@ -45,6 +45,21 @@ const sameBoardingArea = (a, b) => {
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 /**
+ * GTFS's wheelchair columns, read as three states rather than two.
+ *
+ * `1` is yes, `2` is no, and everything else — `0`, an empty cell, a column
+ * the publisher never shipped — is *unknown*, which is not the same answer as
+ * no. Wrocław's snapshots have shipped both with and without these columns,
+ * so collapsing unknown into false would flip every stop in the city to
+ * "step access only" the day the column goes missing.
+ */
+const accessibilityFlag = (value) => {
+  if (value === '1') return true;
+  if (value === '2') return false;
+  return null;
+};
+
+/**
  * How much a variant running the wrong way is penalised when matching a
  * vehicle, in metres of apparent extra distance.
  *
@@ -451,6 +466,10 @@ class GtfsStore {
         // trip on some days, and trips.txt is what connects those back here.
         vehicleId: row.vehicle_id || null,
         blockId: row.brigade_id || row.block_id || null,
+        // Same three-state reading as a stop's. Wrocław's feed does not
+        // always carry the column, and a run whose accessibility is unstated
+        // must not be served as a run that is inaccessible.
+        wheelchair: accessibilityFlag(row.wheelchair_accessible),
       });
       state.tripIndexById.set(row.trip_id, index);
 
@@ -494,6 +513,11 @@ class GtfsStore {
         name: row.stop_name || '',
         lat,
         lon,
+        // GTFS says 1 = boarding is possible, 2 = it is not, 0 or missing =
+        // nobody stated either way. The three cases stay three cases all the
+        // way to the client: rendering "no" for "unknown" tells a wheelchair
+        // user a stop is unusable on the strength of a blank column.
+        wheelchairBoarding: accessibilityFlag(row.wheelchair_boarding),
       };
       state.stopsById.set(row.stop_id, stop);
       // Folded once here, at load time, so a search never re-normalizes the
@@ -1062,6 +1086,7 @@ class GtfsStore {
           inSeconds: departure - offset - secondsNow,
           tripId: trip.id,
           serviceDay: label,
+          wheelchair: trip.wheelchair,
         });
       }
       return found;

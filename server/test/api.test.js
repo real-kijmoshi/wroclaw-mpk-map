@@ -412,6 +412,60 @@ describe('HTTP API', () => {
     assert.match(badTime.body.error, /ISO/);
   });
 
+  it('serves a board for another time, without pretending it is live', async () => {
+    const { status, body } = await get(
+      '/stop/1/departures?at=2026-06-15T07:00:00%2B02:00&limit=3',
+    );
+    assert.equal(status, 200);
+    assert.equal(body.at, '2026-06-15T05:00:00.000Z');
+    assert.equal(body.departures[0].departure, '08:00:00');
+    assert.equal(body.departures[0].inSeconds, 3600);
+    // A live ETA is a claim about a vehicle moving right now. On a board for
+    // another hour it would be measured from the wrong moment, so there is none.
+    assert.equal(body.departures[0].realtime, false);
+    assert.equal(body.departures[0].predictedInSeconds, null);
+  });
+
+  it('refuses a board time it cannot read', async () => {
+    const { status, body } = await get('/stop/1/departures?at=tomorrow-ish');
+    assert.equal(status, 400);
+    assert.match(body.error, /ISO/);
+  });
+
+  it('merges one board out of every stop around a point', async () => {
+    const { status, body } = await get(
+      '/departures/near?lat=51.11&lon=17.032&radius=900&within=180&at=2026-06-15T07:00:00%2B02:00&limit=4',
+    );
+    assert.equal(status, 200);
+    assert.deepEqual(
+      body.departures.map((departure) => [departure.stop.name, departure.departure]),
+      [
+        ['Rynek', '08:00:00'],
+        ['Świdnicka', '08:05:00'],
+        ['Rynek', '09:00:00'],
+        ['Świdnicka', '09:05:00'],
+      ],
+      'one list in time order, each entry saying which pole it leaves from',
+    );
+    assert.ok(body.departures[0].stop.distance >= 0);
+  });
+
+  it('bounds the nearby board by time, not only by count', async () => {
+    // Default horizon is an hour: a board of what is leaving *near me* stops
+    // being that once it reaches this evening's timetable.
+    const { body } = await get(
+      '/departures/near?lat=51.11&lon=17.032&radius=900&at=2026-06-15T07:00:00%2B02:00',
+    );
+    assert.deepEqual(
+      body.departures.map((departure) => departure.departure),
+      ['08:00:00'],
+    );
+  });
+
+  it('requires a position for the nearby board', async () => {
+    assert.equal((await get('/departures/near')).status, 400);
+  });
+
   it('404s unknown paths as JSON', async () => {
     const { status, body } = await get('/definitely-not-a-route');
     assert.equal(status, 404);

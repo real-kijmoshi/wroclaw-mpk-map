@@ -17,6 +17,11 @@ const AdmZip = require('adm-zip');
  *   stop_name, stop_lat, stop_lon]` tuples, for search tests that need many
  *   stops or specific names. `shapesText` replaces shapes.txt, for cache tests
  *   that need a second timetable whose geometry differs from the default.
+ *   `accessibility` adds the optional `wheelchair_boarding` /
+ *   `wheelchair_accessible` columns — they are optional in GTFS and Wrocław's
+ *   snapshots have shipped both with and without them, so the default fixture
+ *   deliberately omits them and only a test that is about accessibility asks
+ *   for them.
  */
 const buildFixtureZip = ({
   omit = [],
@@ -24,6 +29,7 @@ const buildFixtureZip = ({
   feedDates = null,
   stops = null,
   shapesText = null,
+  accessibility = false,
 } = {}) => {
   const stopsTable = stops ?? [
     ['1', '101', 'Rynek', '51.11000', '17.03200'],
@@ -32,6 +38,11 @@ const buildFixtureZip = ({
     ['4', '104', 'Biskupin', '51.10000', '17.10000'],
     ['5', '105', 'Krzyki', '51.07000', '17.03000'],
   ];
+
+  // 1 = accessible, 2 = not, 0 = the publisher shipped the column and said
+  // nothing — all three appear in the real feed and all three are tested.
+  const stopAccess = { 1: '1', 2: '1', 3: '2', 4: '0' };
+  const tripAccess = { t4a: '1', t4b: '2' };
 
   const files = {
     'routes.txt': [
@@ -42,17 +53,27 @@ const buildFixtureZip = ({
     ].join('\n'),
 
     'trips.txt': [
-      'route_id,service_id,trip_id,trip_headsign,direction_id,shape_id',
-      '4,WEEKDAY,t4a,OPORÓW,0,s4a',
-      '4,WEEKDAY,t4a2,OPORÓW,0,s4a',
-      '4,WEEKDAY,t4b,BISKUPIN,1,s4b',
-      '128,WEEKDAY,t128,KRZYKI,0,s128',
-      '240,WEEKEND,tn1,NOC,0,sn1',
+      [
+        'route_id,service_id,trip_id,trip_headsign,direction_id,shape_id',
+        accessibility ? ',wheelchair_accessible' : '',
+      ].join(''),
+      ...[
+        ['4', 'WEEKDAY', 't4a', 'OPORÓW', '0', 's4a'],
+        ['4', 'WEEKDAY', 't4a2', 'OPORÓW', '0', 's4a'],
+        ['4', 'WEEKDAY', 't4b', 'BISKUPIN', '1', 's4b'],
+        ['128', 'WEEKDAY', 't128', 'KRZYKI', '0', 's128'],
+        ['240', 'WEEKEND', 'tn1', 'NOC', '0', 'sn1'],
+      ].map((row) => (accessibility ? [...row, tripAccess[row[2]] ?? ''] : row).join(',')),
     ].join('\n'),
 
     'stops.txt': [
-      'stop_id,stop_code,stop_name,stop_lat,stop_lon',
-      ...stopsTable.map((row) => row.join(',')),
+      [
+        'stop_id,stop_code,stop_name,stop_lat,stop_lon',
+        accessibility ? ',wheelchair_boarding' : '',
+      ].join(''),
+      ...stopsTable.map((row) =>
+        (accessibility ? [...row, stopAccess[row[0]] ?? ''] : row).join(','),
+      ),
     ].join('\n'),
 
     'stop_times.txt': [

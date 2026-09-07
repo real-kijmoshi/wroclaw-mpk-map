@@ -11,7 +11,7 @@ const { simplify } = require('./gtfs/geo');
 const { CATEGORIES } = require('./lines');
 const { planJourney } = require('./gtfs/planner');
 const { describeVehicle } = require('./progress');
-const { enrichDepartures } = require('./realtime-departures');
+const { LIVE_CLEAR, enrichDepartures } = require('./realtime-departures');
 
 const shapeCache = new LruCache(config.cache.shapeEntries);
 // One entry is one (generation, revision, vehicle, limit, history) detail
@@ -333,7 +333,8 @@ const createRouter = ({
         { method: 'GET', path: '/stops/near', description: 'Stops near ?lat=&lon=; ?radius= (m) and ?limit=' },
         { method: 'GET', path: '/stops/:line', description: 'Stops served by a line' },
         { method: 'GET', path: '/stop/:id', description: 'Stop details' },
-        { method: 'GET', path: '/stop/:id/departures', description: 'Next departures; ?limit= and ?within= (minutes)' },
+        { method: 'GET', path: '/stop/:id/departures', description: 'Next departures; ?limit=, ?within= (minutes) and ?at= (ISO) for another time' },
+        { method: 'GET', path: '/departures/near', description: 'One board merged from every stop around ?lat=&lon=; ?radius=, ?within= and ?at=' },
         { method: 'GET', path: '/alerts', description: 'Service alerts; ?since= (ms epoch) and ?line=' },
         { method: 'GET', path: '/incidents', description: 'Grouped incident timelines; ?since=, ?line= and ?status=' },
         { method: 'GET', path: '/health', description: 'Health and upstream source report' },
@@ -611,16 +612,116 @@ const createRouter = ({
     return res.json({ line, stops: [...byId.values()] });
   });
 
+  /**
+   * A departure board's clock: now unless the caller asked for another time.
+   *
+   * Returns `null` for an `?at=` that is not a timestamp — planning against a
+   * silently different time is worse than refusing, because the board looks
+   * perfectly ordinary while describing the wrong hour.
+   */
+  const parseBoardTime = (value) => {
+    if (value === undefined) return { at: new Date(), requested: false };
+    const parsed = new Date(String(value));
+    if (Number.isNaN(parsed.getTime())) return null;
+    return { at: parsed, requested: true };
+  };
+
+  /**
+   * How far from real time a board may sit and still carry live ETAs.
+   *
+   * A live prediction is a statement about a vehicle that is moving *now*; on
+   * a board for tomorrow morning it is not merely useless but wrong, since
+   * `enrichDepartures` measures its ETA from the present moment. Outside this
+   * window the board is the timetable, and says so through `realtime: false`.
+   */
+  const LIVE_BOARD_WINDOW_MS = 120_000;
+
+  const boardDepartures = (stopId, { at, limit, horizonSeconds }) => {
+    const departures = gtfs.getDeparturesForStop(stopId, {
+      limit,
+      now: at,
+      horizonSeconds,
+    });
+    return Math.abs(at.getTime() - Date.now()) <= LIVE_BOARD_WINDOW_MS
+      ? enrichDepartures(departures, stopId, vehicles)
+      : departures.map((departure) => ({ ...departure, ...LIVE_CLEAR }));
+  };
+
   router.get('/stop/:id/departures', requireGtfs, noStore, (req, res) => {
     const stop = gtfs.getStop(req.params.id);
     if (!stop) return res.status(404).json({ error: 'Stop not found', id: req.params.id });
 
+    const time = parseBoardTime(req.query.at);
+    if (!time) return res.status(400).json({ error: 'Invalid ?at= — use an ISO timestamp' });
+
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 20, 100);
     const withinMinutes = Math.min(Number.parseInt(req.query.within, 10) || 1440, 1440);
-    const departures = gtfs.getDeparturesForStop(stop.id, { limit, horizonSeconds: withinMinutes * 60 });
     return res.json({
       stop: { ...stop, lines: gtfs.getLinesForStop(stop.id) },
-      departures: enrichDepartures(departures, stop.id, vehicles),
+      // Echoed so a client rendering "rozkład na jutro" can prove to itself
+      // which board it is holding, and so a cached response is self-describing.
+      at: time.at.toISOString(),
+      departures: boardDepartures(stop.id, {
+        at: time.at,
+        limit,
+        horizonSeconds: withinMinutes * 60,
+      }),
+    });
+  });
+
+  /**
+   * Every departure from every stop around a point, in one board.
+   *
+   * The question a rider actually opens the app with is "what is leaving near
+   * me", and answering it from `/stops/near` costs one request per stop —
+   * a dozen round trips on a phone that has just come out of a pocket. The
+   * merge happens here, where the timetable already is.
+   */
+  router.get('/departures/near', requireGtfs, noStore, (req, res) => {
+    const lat = parseCoordinate(req.query.lat);
+    const lon = parseCoordinate(req.query.lon);
+    if (lat === null || lon === null) {
+      return res.status(400).json({ error: 'Provide ?lat= and ?lon=' });
+    }
+
+    const time = parseBoardTime(req.query.at);
+    if (!time) return res.status(400).json({ error: 'Invalid ?at= — use an ISO timestamp' });
+
+    const radius = Math.min(Number.parseInt(req.query.radius, 10) || 500, 2000);
+    const limit = Math.min(Number.parseInt(req.query.limit, 10) || 20, 60);
+    const withinMinutes = Math.min(Number.parseInt(req.query.within, 10) || 60, 1440);
+    // Enough stops to cover a junction from either side without turning one
+    // request into a scan of half the city's timetable.
+    const stops = gtfs.findStopsNear(lat, lon, { radiusMeters: radius, limit: 12 });
+
+    const departures = [];
+    for (const stop of stops) {
+      for (const departure of boardDepartures(stop.id, {
+        at: time.at,
+        limit,
+        horizonSeconds: withinMinutes * 60,
+      })) {
+        departures.push({
+          ...departure,
+          stop: {
+            id: stop.id,
+            name: stop.name,
+            code: stop.code,
+            lat: stop.lat,
+            lon: stop.lon,
+            distance: stop.distance,
+            wheelchairBoarding: stop.wheelchairBoarding ?? null,
+          },
+        });
+      }
+    }
+
+    departures.sort((a, b) => a.inSeconds - b.inSeconds);
+    return res.json({
+      origin: { lat, lon, radius },
+      at: time.at.toISOString(),
+      stops,
+      departures: departures.slice(0, limit),
     });
   });
 

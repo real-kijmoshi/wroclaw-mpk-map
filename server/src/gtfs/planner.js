@@ -486,6 +486,9 @@ function buildPlan(gtfs, { arrival, rounds, from, to, epochAt, secondsOfDay }) {
       direction: variant.direction,
       tripId: trip.id,
       shapeId: variant.shapeId,
+      // Whether this run can be boarded from a wheelchair, when the feed says
+      // so at all. A plan is only usable if every leg of it is.
+      wheelchair: trip.wheelchair,
       departure: epochAt(label.departure),
       arrival: epochAt(label.arrival),
       seconds: label.arrival - label.departure,
@@ -539,6 +542,7 @@ function stopSummary(gtfs, stop) {
     code: stop.code ?? null,
     lat: stop.lat,
     lon: stop.lon,
+    wheelchairBoarding: stop.wheelchairBoarding ?? null,
     lines: gtfs.getLinesForStop(stop.id),
   };
 }
