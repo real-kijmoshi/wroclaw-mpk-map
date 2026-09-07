@@ -198,6 +198,7 @@ const createRouter = ({
   stats,
   klosok = null,
   runtimeSettings = null,
+  push = null,
   startedAt,
 }) => {
   const router = express.Router();
@@ -335,6 +336,8 @@ const createRouter = ({
         { method: 'GET', path: '/stop/:id', description: 'Stop details' },
         { method: 'GET', path: '/stop/:id/departures', description: 'Next departures; ?limit=, ?within= (minutes) and ?at= (ISO) for another time' },
         { method: 'GET', path: '/departures/near', description: 'One board merged from every stop around ?lat=&lon=; ?radius=, ?within= and ?at=' },
+        { method: 'POST', path: '/push/register', description: 'Follow lines on this device: {token, platform, lines}' },
+        { method: 'POST', path: '/push/unregister', description: 'Stop following: {token}' },
         { method: 'GET', path: '/alerts', description: 'Service alerts; ?since= (ms epoch) and ?line=' },
         { method: 'GET', path: '/incidents', description: 'Grouped incident timelines; ?since=, ?line= and ?status=' },
         { method: 'GET', path: '/health', description: 'Health and upstream source report' },
@@ -731,6 +734,44 @@ const createRouter = ({
     return res.json(stop);
   });
 
+  /**
+   * Follow a set of lines on this phone, or stop following them.
+   *
+   * POST rather than GET because it writes, and unauthenticated because the
+   * Expo push token *is* the credential: it is issued to one install by the
+   * platform, it is what a notification is addressed to, and someone who has
+   * it can already be sent notifications. There is nothing else stored to
+   * protect — no account, no position, no device id.
+   */
+  const requirePush = (req, res, next) => {
+    if (!push) return res.status(503).json({ error: 'Push notifications are not configured' });
+    return next();
+  };
+
+  router.post('/push/register', requirePush, noStore, express.json({ limit: '8kb' }), (req, res) => {
+    const result = push.register({
+      token: req.body?.token,
+      platform: req.body?.platform,
+      lines: req.body?.lines,
+    });
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    return res.json({
+      ok: true,
+      lines: result.subscription.lines,
+      // Echoed so the app can show "following every line" honestly rather
+      // than inferring it from an empty array it sent a moment ago.
+      following: result.subscription.lines.length ? 'selected' : 'all',
+    });
+  });
+
+  router.post('/push/unregister', requirePush, noStore, express.json({ limit: '8kb' }), (req, res) => {
+    const token = req.body?.token;
+    if (typeof token !== 'string' || !token) {
+      return res.status(400).json({ error: 'Provide a token' });
+    }
+    return res.json(push.unregister(token));
+  });
+
   router.get('/alerts', cacheFor(60), (req, res) => {
     const since = Number.parseInt(req.query.since ?? req.query.from, 10) || 0;
     const line = req.query.line ?? null;
@@ -797,6 +838,7 @@ const createRouter = ({
       performance: performanceBlock,
       klosok: klosok ? klosok.status : { enabled: false },
       alerts: alerts.status,
+      push: push ? push.status : { enabled: false },
       lines: {
         total: Object.values(gtfs.lines).flat().length,
         trams: gtfs.lines.allTrams.length,

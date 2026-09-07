@@ -89,10 +89,39 @@ const fakeAlerts = {
     ),
 };
 
+/**
+ * A registry with no disk and no network behind it: the endpoints' job is to
+ * validate and delegate, and that is all these tests are about.
+ */
+const fakePush = {
+  status: { enabled: true, subscriptions: 0, lastSentAt: null, lastError: null },
+  registered: new Map(),
+  register({ token, platform, lines }) {
+    if (typeof token !== 'string' || !token.startsWith('ExponentPushToken[')) {
+      return { ok: false, error: 'Invalid Expo push token' };
+    }
+    const subscription = { token, platform: platform ?? null, lines: lines ?? [] };
+    this.registered.set(token, subscription);
+    return { ok: true, subscription };
+  },
+  unregister(token) {
+    return { ok: true, removed: this.registered.delete(token) };
+  },
+};
+
 describe('HTTP API', () => {
   const gtfs = new GtfsStore();
   let server;
   let base;
+
+  const post = async (path, body) => {
+    const response = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return { status: response.status, body: await response.json() };
+  };
 
   const get = async (path) => {
     const response = await fetch(`${base}${path}`);
@@ -107,7 +136,12 @@ describe('HTTP API', () => {
     gtfs.status.state = 'ready';
     shapeCache.clear();
 
-    const app = createApp({ gtfs, vehicles: fakeVehicles, alerts: fakeAlerts });
+    const app = createApp({
+      gtfs,
+      vehicles: fakeVehicles,
+      alerts: fakeAlerts,
+      push: fakePush,
+    });
     server = app.listen(0, '127.0.0.1');
     await new Promise((resolve) => server.once('listening', resolve));
     base = `http://127.0.0.1:${server.address().port}`;
@@ -464,6 +498,50 @@ describe('HTTP API', () => {
 
   it('requires a position for the nearby board', async () => {
     assert.equal((await get('/departures/near')).status, 400);
+  });
+
+  it('registers a phone for the lines it follows', async () => {
+    const { status, body } = await post('/push/register', {
+      token: 'ExponentPushToken[abcdefghijklmnop]',
+      platform: 'ios',
+      lines: ['4', '33'],
+    });
+    assert.equal(status, 200);
+    assert.deepEqual(body.lines, ['4', '33']);
+    assert.equal(body.following, 'selected');
+  });
+
+  it('reads an empty line list as the whole network, and says so', async () => {
+    const { body } = await post('/push/register', {
+      token: 'ExponentPushToken[abcdefghijklmnop]',
+      lines: [],
+    });
+    assert.equal(body.following, 'all');
+  });
+
+  it('refuses anything that is not an Expo token', async () => {
+    const { status, body } = await post('/push/register', { token: 'let-me-in' });
+    assert.equal(status, 400);
+    assert.match(body.error, /token/i);
+  });
+
+  it('unregisters, and calls unsubscribing something already gone a success', async () => {
+    const token = 'ExponentPushToken[abcdefghijklmnop]';
+    await post('/push/register', { token, lines: ['4'] });
+    assert.deepEqual((await post('/push/unregister', { token })).body, {
+      ok: true,
+      removed: true,
+    });
+    assert.deepEqual((await post('/push/unregister', { token })).body, {
+      ok: true,
+      removed: false,
+    });
+    assert.equal((await post('/push/unregister', {})).status, 400);
+  });
+
+  it('reports push in /health', async () => {
+    const { body } = await get('/health');
+    assert.equal(body.push.enabled, true);
   });
 
   it('404s unknown paths as JSON', async () => {

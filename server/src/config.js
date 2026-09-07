@@ -153,6 +153,20 @@ module.exports = {
     buildStopIndex: bool(process.env.GTFS_BUILD_STOP_INDEX, DEFAULTS.gtfs.buildStopIndex),
   },
 
+  push: {
+    // A sink, not a source: nothing is sent until a phone registers a token,
+    // so this being on by default cannot reach out on a stock deploy the way
+    // a configured *source* would.
+    enabled: bool(process.env.PUSH_ENABLED, DEFAULTS.push.enabled),
+    file: process.env.PUSH_FILE || cachePath(DEFAULTS.push.file),
+    // Expo's push service. Self-hosted builds using another relay point this
+    // elsewhere; the payload shape is Expo's either way.
+    endpoint: process.env.PUSH_ENDPOINT || DEFAULTS.push.endpoint,
+    timeoutMs: num(process.env.PUSH_TIMEOUT_MS, DEFAULTS.push.timeoutMs),
+    // A ceiling so a loose endpoint cannot turn into an unbounded file.
+    maxSubscriptions: num(process.env.PUSH_MAX_SUBSCRIPTIONS, DEFAULTS.push.maxSubscriptions),
+  },
+
   planner: {
     // A brisk-but-honest 4.7 km/h. Planning at 5+ km/h produces connections a
     // rider misses, which is worse than a plan that says the next one.

@@ -9,6 +9,7 @@ const { createApp } = require('./src/app');
 const { AlertsService } = require('./src/alerts');
 const { AlertArchive } = require('./src/alert-archive');
 const { GtfsStore } = require('./src/gtfs/store');
+const { PushRegistry } = require('./src/push');
 const { KlosokService } = require('./src/klosok/service');
 const { RuntimeSettings } = require('./src/runtime-settings');
 const { StatsTracker } = require('./src/stats');
@@ -26,6 +27,13 @@ const gtfs = new GtfsStore();
 const vehicles = new VehicleTracker(() => gtfs.lines, { gtfs });
 // Alerts match line numbers against the lines that actually exist in the
 // timetable, so the matcher reads them from the store on every refresh.
+// Who has asked to be told when a line they ride goes wrong. Loaded before
+// the alerts service starts, so the first refresh already knows what it has
+// previously sent and a restart is not mistaken for news.
+const push = config.push.enabled
+  ? new PushRegistry({ file: config.push.file, logger }).load()
+  : null;
+
 const alerts = new AlertsService(
   () => new Set([...gtfs.routesByLine.keys()].map((line) => line.toUpperCase())),
   null,
@@ -37,6 +45,7 @@ const alerts = new AlertsService(
           logger,
         })
       : null,
+    push,
   },
 );
 
@@ -118,6 +127,7 @@ const start = () => {
     klosok,
     stats,
     runtimeSettings,
+    push,
     startedAt: new Date(),
   });
   stats?.start();

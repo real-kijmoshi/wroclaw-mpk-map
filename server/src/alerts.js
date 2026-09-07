@@ -620,6 +620,11 @@ class AlertsService {
     this.aiIncidentCache = new Map();
     /** Null in tests that do not care; the service works without one. */
     this.archive = options.archive ?? null;
+    /**
+     * Where "a line you follow is disrupted" leaves the building. Optional for
+     * the same reason the archive is: the service is complete without it.
+     */
+    this.push = options.push ?? null;
     this.maxAgeMs = (options.archiveDaysToKeep ?? config.alerts.archiveDaysToKeep) * 86400000;
 
     this.incidentStatus = {
@@ -785,6 +790,16 @@ class AlertsService {
     this.incidentStatus.incidentCount = this.incidents.length;
 
     await this.#generateIncidents();
+
+    // After the AI step, so the notification carries the narrative copy rather
+    // than the deterministic fallback wherever one was generated. Fail-soft
+    // for the same reason the archive write below is: a push service having a
+    // bad afternoon must not be why /alerts stopped updating.
+    try {
+      await this.push?.notifyIncidents(this.incidents);
+    } catch (error) {
+      logger.warn(`Push notification pass failed: ${error.message}`);
+    }
 
     // Written after the AI step so the cache saved is the warm one. Fail-soft
     // inside save(): an archive that cannot be written costs the next boot its

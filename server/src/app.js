@@ -8,12 +8,17 @@ const config = require('./config');
 const logger = require('./logger');
 const { createRouter } = require('./routes');
 
+// POST is here for the two /push endpoints only. Everything else this server
+// does is a read, and the browser map is a read-only client — so the widening
+// is one verb on two paths, not an open door.
+const CORS_METHODS = ['GET', 'HEAD', 'POST', 'OPTIONS'];
+
 const corsOptions = config.cors.origins.includes('*')
-  ? { origin: '*', methods: ['GET', 'HEAD'] }
-  : { origin: config.cors.origins, methods: ['GET', 'HEAD'] };
+  ? { origin: '*', methods: CORS_METHODS }
+  : { origin: config.cors.origins, methods: CORS_METHODS };
 
 /**
- * @param {{ gtfs: any, vehicles: any, alerts: any, klosok?: any, startedAt?: Date }} services
+ * @param {{ gtfs: any, vehicles: any, alerts: any, klosok?: any, push?: any, startedAt?: Date }} services
  */
 const createApp = (services) => {
   const app = express();
