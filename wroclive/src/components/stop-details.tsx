@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
@@ -120,6 +121,7 @@ export type StopDetailsProps = {
 /** The next departures from one stop — the board, as it would read at the stop. */
 export function StopDetails({ data, loading, error }: StopDetailsProps) {
   const theme = useTheme();
+  const router = useRouter();
 
   /*
    * Which departures already have an alarm.
@@ -210,6 +212,7 @@ export function StopDetails({ data, loading, error }: StopDetailsProps) {
           )}
         </View>
       ) : (
+        <View style={styles.boardWrap}>
         <View style={[styles.board, { backgroundColor: theme.backgroundCard }]}>
           {data.departures.slice(0, 12).map((departure, index) => {
             const seconds =
@@ -281,6 +284,28 @@ export function StopDetails({ data, loading, error }: StopDetailsProps) {
             );
           })}
         </View>
+
+        {/*
+          * The sheet answers "when is the next one". "When is the last one",
+          * and what runs on a Sunday, are different questions asked from an
+          * armchair — and the ones that used to send people to a PDF.
+          */}
+        <Pressable
+          onPress={() =>
+            router.push({
+              pathname: '/timetable',
+              params: { stopId: data.stop.id, name: data.stop.name },
+            })
+          }
+          accessibilityRole="button"
+          accessibilityLabel="Pokaż cały rozkład jazdy"
+          style={({ pressed }) => [styles.timetableLink, pressed && styles.pressed]}>
+          <Ionicons name="calendar-outline" size={15} color={theme.accent} />
+          <ThemedText type="footnote" weight="semibold" color={theme.accent}>
+            Cały rozkład
+          </ThemedText>
+        </Pressable>
+        </View>
       )}
     </ScrollView>
   );
@@ -322,7 +347,15 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: Space.lg, paddingBottom: Space.xxl, gap: Space.md },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Space.xl },
   empty: { borderRadius: Radius.lg, padding: Space.lg, gap: Space.xs },
+  boardWrap: { gap: Space.md },
   board: { borderRadius: Radius.lg, paddingHorizontal: Space.lg },
+  timetableLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Space.xs,
+    minHeight: 44,
+  },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

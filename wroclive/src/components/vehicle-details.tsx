@@ -148,6 +148,11 @@ export function VehicleDetails({ detail, loading, error, onOpenRoute }: VehicleD
         )}
       </View>
 
+      <Occupancy
+        status={vehicle.occupancyStatus ?? null}
+        percentage={vehicle.occupancyPercentage ?? null}
+      />
+
       {trip && !trip.onRoute && (
         <ThemedText type="footnote" themeColor="textSecondary">
           Pojazd jest poza trasą — możliwy objazd. Lista przystanków może być niedokładna.
@@ -248,6 +253,72 @@ export function CloseButton({ onPress, label }: { onPress: () => void; label: st
   );
 }
 
+/**
+ * How full the vehicle is.
+ *
+ * The Kłosok feed has been serving this all along — `occupancyStatus` and
+ * `occupancyPercentage` are validated in `api.ts` and were rendered nowhere.
+ * It is the second question after "when", and on a wet Monday it is the first.
+ *
+ * Only vehicles whose operator publishes it have it, so the row is absent
+ * rather than showing "brak danych": an empty state for a field most vehicles
+ * will never carry is noise on every other sheet in the app.
+ *
+ * The GTFS-RT vocabulary is coarser than a percentage and more honest than
+ * one, so where both arrive the words lead and the number qualifies.
+ */
+const OCCUPANCY_LABELS: Record<string, { label: string; level: number }> = {
+  EMPTY: { label: 'Pusty', level: 0 },
+  MANY_SEATS_AVAILABLE: { label: 'Dużo miejsc', level: 1 },
+  FEW_SEATS_AVAILABLE: { label: 'Mało miejsc siedzących', level: 2 },
+  STANDING_ROOM_ONLY: { label: 'Tylko miejsca stojące', level: 3 },
+  CRUSHED_STANDING_ROOM_ONLY: { label: 'Bardzo tłoczno', level: 4 },
+  FULL: { label: 'Pełny', level: 4 },
+  NOT_ACCEPTING_PASSENGERS: { label: 'Nie zabiera pasażerów', level: 4 },
+};
+
+function Occupancy({ status, percentage }: { status: string | null; percentage: number | null }) {
+  const theme = useTheme();
+  const known = status ? OCCUPANCY_LABELS[status] : undefined;
+  if (!known && percentage === null) return null;
+
+  // Four bars, filled to the level. A bar chart rather than a number because
+  // the underlying value is a category and printing "62%" from a category
+  // would be inventing precision the feed does not have.
+  const level = known?.level ?? Math.min(4, Math.round(((percentage ?? 0) / 100) * 4));
+  const tone = level >= 3 ? theme.danger : level === 2 ? theme.amber : theme.success;
+
+  return (
+    <View style={[styles.occupancy, { backgroundColor: theme.backgroundCard }]}>
+      <Ionicons name="people" size={17} color={theme.textSecondary} />
+      <View style={styles.occupancyText}>
+        <ThemedText type="callout" numberOfLines={1}>
+          {known?.label ?? `Zajętość ${Math.round(percentage ?? 0)}%`}
+        </ThemedText>
+        {!!known && percentage !== null && (
+          <ThemedText type="footnote" themeColor="textSecondary">
+            ok. {Math.round(percentage)}% zajętości
+          </ThemedText>
+        )}
+      </View>
+      <View
+        style={styles.occupancyBars}
+        accessibilityRole="progressbar"
+        accessibilityLabel={`Zajętość: ${known?.label ?? `${Math.round(percentage ?? 0)}%`}`}>
+        {[1, 2, 3, 4].map((step) => (
+          <View
+            key={step}
+            style={[
+              styles.occupancyBar,
+              { backgroundColor: step <= level ? tone : theme.backgroundElement },
+            ]}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function pluralStops(count: number) {
   if (count === 1) return 'przystanek';
   const mod10 = count % 10;
@@ -301,5 +372,17 @@ const styles = StyleSheet.create({
   },
   routeActionText: { flex: 1 },
   close: { width: 30, height: 30, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
+  occupancy: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Space.lg,
+    paddingVertical: Space.md,
+    minHeight: 52,
+  },
+  occupancyText: { flex: 1, gap: 1, minWidth: 0 },
+  occupancyBars: { flexDirection: 'row', alignItems: 'flex-end', gap: 3 },
+  occupancyBar: { width: 5, height: 16, borderRadius: 2 },
   pressed: { opacity: Motion.pressedOpacity },
 });

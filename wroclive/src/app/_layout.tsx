@@ -157,6 +157,7 @@ export default function RootLayout() {
           <Stack.Screen name="settings" options={MODAL_OPTIONS} />
           <Stack.Screen name="search" options={SEARCH_MODAL_OPTIONS} />
           <Stack.Screen name="plan" options={MODAL_OPTIONS} />
+          <Stack.Screen name="timetable" options={MODAL_OPTIONS} />
         </Stack>
       </ThemeProvider>
     </GestureHandlerRootView>
