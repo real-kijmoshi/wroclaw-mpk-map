@@ -153,6 +153,38 @@ module.exports = {
     buildStopIndex: bool(process.env.GTFS_BUILD_STOP_INDEX, DEFAULTS.gtfs.buildStopIndex),
   },
 
+  planner: {
+    // A brisk-but-honest 4.7 km/h. Planning at 5+ km/h produces connections a
+    // rider misses, which is worse than a plan that says the next one.
+    walkSpeedMps: decimal(process.env.PLANNER_WALK_SPEED_MPS, DEFAULTS.planner.walkSpeedMps),
+    // How far the rider is assumed willing to walk to the first stop and from
+    // the last one.
+    maxAccessMeters: num(process.env.PLANNER_MAX_ACCESS_METERS, DEFAULTS.planner.maxAccessMeters),
+    // How far a *change* may walk. Deliberately much shorter: a 350 m footpath
+    // is the pole across the junction, which is a real interchange here; 900 m
+    // between two vehicles is a walk the rider would rather take end to end.
+    maxTransferMeters: num(
+      process.env.PLANNER_MAX_TRANSFER_METERS,
+      DEFAULTS.planner.maxTransferMeters,
+    ),
+    // Past this, "just walk" stops being an answer worth offering.
+    maxWalkOnlyMeters: num(
+      process.env.PLANNER_MAX_WALK_ONLY_METERS,
+      DEFAULTS.planner.maxWalkOnlyMeters,
+    ),
+    // Slack added to every change: the walk between platforms is measured, but
+    // stepping off and finding the other stop is not, and a plan that is right
+    // to the second is a plan that fails on a bad day.
+    transferBufferSeconds: num(
+      process.env.PLANNER_TRANSFER_BUFFER_SECONDS,
+      DEFAULTS.planner.transferBufferSeconds,
+    ),
+    // Rounds of the search, and therefore the deepest plan it can find. Three
+    // changes is already more than anyone accepts inside one city.
+    maxTransfers: num(process.env.PLANNER_MAX_TRANSFERS, DEFAULTS.planner.maxTransfers),
+    maxPlans: num(process.env.PLANNER_MAX_PLANS, DEFAULTS.planner.maxPlans),
+  },
+
   vehicles: {
     sources: VEHICLE_SOURCES,
     pollIntervalMs: num(process.env.VEHICLE_POLL_INTERVAL_MS, DEFAULTS.vehicles.pollIntervalMs),

@@ -9,6 +9,7 @@ const { LruCache } = require('./cache');
 const { VehicleDetailCache } = require('./vehicle-detail-cache');
 const { simplify } = require('./gtfs/geo');
 const { CATEGORIES } = require('./lines');
+const { planJourney } = require('./gtfs/planner');
 const { describeVehicle } = require('./progress');
 const { enrichDepartures } = require('./realtime-departures');
 
@@ -327,6 +328,7 @@ const createRouter = ({
         { method: 'GET', path: '/vehicle/:id', description: 'One vehicle with its remaining stops and estimated times' },
         { method: 'GET', path: '/shapes/:line', description: 'Route shape; ?lat=&lon=&heading= picks the variant being run, ?format=compact for the smaller payload' },
         { method: 'GET', path: '/shapes/:line/variants', description: 'Every variant of a route' },
+        { method: 'GET', path: '/plan', description: 'Plan a journey: ?from=&to= as "lat,lon" or "stop:<id>", ?at= (ISO), ?maxTransfers=' },
         { method: 'GET', path: '/stops', description: 'Search stops with ?q=' },
         { method: 'GET', path: '/stops/near', description: 'Stops near ?lat=&lon=; ?radius= (m) and ?limit=' },
         { method: 'GET', path: '/stops/:line', description: 'Stops served by a line' },
@@ -508,6 +510,67 @@ const createRouter = ({
     const payload = compact ? toCompact(variant) : toLegacy(variant);
     shapeCache.set(cacheKey, payload);
     return conditionalJson(req, res, payload);
+  });
+
+  /**
+   * Resolve one end of a journey.
+   *
+   * Two forms, because the two callers are different: the map hands over
+   * coordinates it already has, and search hands over the stop the rider
+   * picked. `stop:<id>` is resolved here so a client never has to look a
+   * stop's position up before it can plan.
+   */
+  const parseEndpoint = (value) => {
+    const raw = String(value ?? '').trim();
+    if (!raw) return null;
+
+    if (raw.startsWith('stop:')) {
+      const stop = gtfs.getStop(raw.slice(5));
+      return stop ? { lat: stop.lat, lon: stop.lon, name: stop.name, stopId: stop.id } : null;
+    }
+
+    const [latPart, lonPart] = raw.split(',');
+    const lat = parseCoordinate(latPart);
+    const lon = parseCoordinate(lonPart);
+    if (lat === null || lon === null) return null;
+    return { lat, lon, name: null };
+  };
+
+  router.get('/plan', requireGtfs, noStore, (req, res) => {
+    const from = parseEndpoint(req.query.from);
+    const to = parseEndpoint(req.query.to);
+    if (!from || !to) {
+      return res.status(400).json({
+        error: 'Provide ?from= and ?to= as "lat,lon" or "stop:<id>"',
+      });
+    }
+
+    // An unparseable ?at= is a bug in the caller, not a reason to silently
+    // plan for a different time than the rider asked about.
+    let departAt = new Date();
+    if (req.query.at !== undefined) {
+      const parsed = new Date(String(req.query.at));
+      if (Number.isNaN(parsed.getTime())) {
+        return res.status(400).json({ error: 'Invalid ?at= — use an ISO timestamp' });
+      }
+      departAt = parsed;
+    }
+
+    const maxTransfers = req.query.maxTransfers === undefined
+      ? undefined
+      : Number.parseInt(req.query.maxTransfers, 10);
+
+    const result = planJourney(gtfs, {
+      from: { ...from, name: from.name ?? (req.query.fromName ? String(req.query.fromName) : null) },
+      to: { ...to, name: to.name ?? (req.query.toName ? String(req.query.toName) : null) },
+      departAt,
+      maxTransfers,
+    });
+
+    return res.json({
+      ...result,
+      plans: result.plans.slice(0, config.planner.maxPlans),
+    });
   });
 
   router.get('/stops/near', requireGtfs, cacheFor(60), (req, res) => {

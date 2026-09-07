@@ -32,6 +32,16 @@
     "buildStopIndex": true
   },
 
+  "planner": {
+    "walkSpeedMps": 1.3,
+    "maxAccessMeters": 900,
+    "maxTransferMeters": 350,
+    "maxWalkOnlyMeters": 1500,
+    "transferBufferSeconds": 60,
+    "maxTransfers": 3,
+    "maxPlans": 4
+  },
+
   "vehicles": {
     "pollIntervalMs": 10000,
     "timeoutMs": 10000,

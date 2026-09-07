@@ -381,6 +381,37 @@ describe('HTTP API', () => {
     assert.ok(Number.isFinite(gtfsPerf.peakMemory.heapUsedMb));
   });
 
+  it('plans a journey between two points', async () => {
+    const { status, body } = await get(
+      '/plan?from=51.11,17.032&to=51.08,16.98&at=2026-06-15T07:50:00%2B02:00',
+    );
+    assert.equal(status, 200);
+    const [plan] = body.plans;
+    assert.equal(plan.transfers, 0);
+    const ride = plan.legs.find((leg) => leg.mode === 'ride');
+    assert.equal(ride.line, '4');
+    assert.equal(ride.from.name, 'Rynek');
+    assert.equal(ride.to.name, 'Oporów');
+  });
+
+  it('plans from a stop id so a client need not look its position up', async () => {
+    const { status, body } = await get(
+      '/plan?from=stop:1&to=stop:3&at=2026-06-15T07:50:00%2B02:00',
+    );
+    assert.equal(status, 200);
+    assert.equal(body.from.name, 'Rynek');
+    assert.equal(body.to.name, 'Oporów');
+    assert.ok(body.plans.length);
+  });
+
+  it('rejects a journey it cannot read rather than planning a different one', async () => {
+    assert.equal((await get('/plan?from=51.11,17.032')).status, 400);
+    assert.equal((await get('/plan?from=stop:nope&to=stop:3')).status, 400);
+    const badTime = await get('/plan?from=stop:1&to=stop:3&at=yesterday');
+    assert.equal(badTime.status, 400);
+    assert.match(badTime.body.error, /ISO/);
+  });
+
   it('404s unknown paths as JSON', async () => {
     const { status, body } = await get('/definitely-not-a-route');
     assert.equal(status, 404);
