@@ -11,6 +11,7 @@ import { hydratePreferences, usePreferences } from '@/lib/preferences';
 import { ACCENT } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { hydrateFavourites } from '@/lib/favourites';
+import { installNotificationHandler } from '@/lib/notifications';
 import { hydrateRecentStops } from '@/lib/recent-stops';
 import { hydrateSelection, selectionStore } from '@/lib/selection';
 import { syncUpdates, watchForUpdatesOnResume } from '@/lib/updates';
@@ -92,6 +93,13 @@ export default function RootLayout() {
       border: dark ? 'rgba(84,84,88,0.5)' : 'rgba(60,60,67,0.16)',
     },
   };
+
+  // Installed before anything can schedule one: without a handler a
+  // notification that arrives while the map is open is swallowed, and "leave
+  // now" is precisely the moment the app is in the rider's hand.
+  useEffect(() => {
+    installNotificationHandler();
+  }, []);
 
   useEffect(() => {
     const init = async () => {

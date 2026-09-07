@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Linking, Platform, Pressable, StyleSheet, Switch, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,7 +16,9 @@ import { useTheme } from '@/hooks/use-theme';
 import { usePoll } from '@/hooks/use-poll';
 import { apiGet } from '@/lib/api';
 import { API_URL } from '@/lib/config';
+import { useFavourites } from '@/lib/favourites';
 import { formatAge, formatUptime } from '@/lib/format';
+import { disablePushAlerts, enablePushAlerts, pushAvailable } from '@/lib/notifications';
 import { tapped } from '@/lib/haptics';
 import {
   preferencesStore,
@@ -288,6 +290,52 @@ export default function SettingsScreen() {
 
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
 
+  /*
+   * Disruption alerts.
+   *
+   * The switch reflects what the *server* knows, not what the rider tapped:
+   * turning it on has to clear a permission prompt and obtain a push token,
+   * and either can fail. So the preference is only written once registration
+   * has actually succeeded, and a refused permission leaves the switch off —
+   * which is the honest state, and the one a rider can act on.
+   */
+  const { lines: favouriteLines } = useFavourites();
+  const [alertsBusy, setAlertsBusy] = useState(false);
+
+  const toggleAlerts = useCallback(
+    async (wanted: boolean) => {
+      setAlertsBusy(true);
+      try {
+        if (!wanted) {
+          await disablePushAlerts(preferences.pushToken);
+          preferencesStore.set('alertsEnabled', false);
+          preferencesStore.set('pushToken', null);
+          return;
+        }
+        const token = await enablePushAlerts(favouriteLines);
+        if (!token) return;
+        preferencesStore.set('pushToken', token);
+        preferencesStore.set('alertsEnabled', true);
+      } finally {
+        setAlertsBusy(false);
+      }
+    },
+    [favouriteLines, preferences.pushToken],
+  );
+
+  /*
+   * Keep the server's idea of the followed lines in step with the pinned ones.
+   *
+   * Registering again replaces the list rather than adding to it, so this is
+   * simply "re-register whenever the pins change" — and it only runs while
+   * alerts are on, so a rider who never enabled them never talks to the
+   * endpoint at all.
+   */
+  useEffect(() => {
+    if (!preferences.alertsEnabled) return;
+    void enablePushAlerts(favouriteLines);
+  }, [preferences.alertsEnabled, favouriteLines]);
+
   const serverState = health.error
     ? { text: 'Brak połączenia', color: theme.danger }
     : health.data?.status === 'ok'
@@ -423,6 +471,30 @@ export default function SettingsScreen() {
                 <Switch
                   value={preferences.followSelectedVehicle}
                   onValueChange={(value) => preferencesStore.set('followSelectedVehicle', value)}
+                />
+              }
+            />
+          </Section>
+
+          <Section
+            title="Powiadomienia"
+            icon="notifications-outline"
+            footer={
+              !pushAvailable
+                ? 'Powiadomienia o utrudnieniach wymagają wersji zbudowanej dla urządzenia — w Expo Go nie działają. Przypomnienia o odjazdach działają wszędzie.'
+                : favouriteLines.length
+                  ? `Dotyczy ulubionych linii: ${favouriteLines.join(', ')}. Przytrzymaj linię na liście, aby ją dodać.`
+                  : 'Bez ulubionych linii dostaniesz powiadomienia o wszystkich utrudnieniach. Przytrzymaj linię na liście, aby zawęzić.'
+            }>
+            <Row
+              label="Utrudnienia"
+              hint="Powiadom, gdy coś się dzieje na Twoich liniach"
+              leading={<RowIcon name="warning-outline" color={theme.textTertiary} />}
+              accessory={
+                <Switch
+                  value={preferences.alertsEnabled}
+                  disabled={!pushAvailable || alertsBusy}
+                  onValueChange={(value) => void toggleAlerts(value)}
                 />
               }
             />

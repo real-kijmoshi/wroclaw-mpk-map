@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { LineBadge } from './line-badge';
@@ -6,10 +7,16 @@ import { ThemedText } from './themed-text';
 import { CloseButton } from './vehicle-details';
 import { Motion, Radius, Space } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
-import type { Departures, Stop } from '@/lib/api';
+import type { Departure, Departures, Stop } from '@/lib/api';
 import { favouritesStore, useFavourites } from '@/lib/favourites';
 import { etaParts, formatDistance, formatScheduled } from '@/lib/format';
 import { tapped } from '@/lib/haptics';
+import {
+  alarmId,
+  cancelDepartureAlarm,
+  pendingAlarms,
+  scheduleDepartureAlarm,
+} from '@/lib/notifications';
 import { distanceMeters } from '@/lib/stops-api';
 
 /**
@@ -114,6 +121,62 @@ export type StopDetailsProps = {
 export function StopDetails({ data, loading, error }: StopDetailsProps) {
   const theme = useTheme();
 
+  /*
+   * Which departures already have an alarm.
+   *
+   * Read from the OS rather than kept in app state: a scheduled notification
+   * outlives the process, so a rider who set one, closed the app and came back
+   * must see it still set. The set is keyed by `alarmId`, which is the same
+   * identifier the notification itself carries.
+   */
+  const [alarms, setAlarms] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    let cancelled = false;
+    pendingAlarms().then((pending) => {
+      if (!cancelled) setAlarms(pending);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [data?.stop.id]);
+
+  const stopId = data?.stop.id;
+  const stopName = data?.stop.name;
+
+  const toggleAlarm = useCallback(
+    async (departure: Departure) => {
+      if (!stopId || !stopName) return;
+      const id = alarmId(stopId, departure.tripId);
+      tapped();
+
+      if (alarms.has(id)) {
+        await cancelDepartureAlarm(stopId, departure.tripId);
+        setAlarms((current) => {
+          const next = new Set(current);
+          next.delete(id);
+          return next;
+        });
+        return;
+      }
+
+      const warning = await scheduleDepartureAlarm(stopId, {
+        line: departure.line,
+        headsign: departure.headsign,
+        stopName,
+        inSeconds:
+          departure.realtime && departure.predictedInSeconds != null
+            ? departure.predictedInSeconds
+            : departure.inSeconds,
+        tripId: departure.tripId,
+      });
+      // Null means it could not be set — too close to departure, or permission
+      // refused. The bell simply does not light, which is the honest answer;
+      // a toast claiming success would be worse than the silence.
+      if (warning !== null) setAlarms((current) => new Set(current).add(id));
+    },
+    [alarms, stopId, stopName],
+  );
+
   if (loading && !data) {
     return (
       <View style={styles.centered}>
@@ -166,9 +229,24 @@ export function StopDetails({ data, loading, error }: StopDetailsProps) {
                 <LineBadge line={departure.line} type={departure.type} size="small" />
 
                 <View style={styles.rowText}>
-                  <ThemedText type="callout" numberOfLines={1}>
-                    {departure.headsign ?? '—'}
-                  </ThemedText>
+                  <View style={styles.headsign}>
+                    <ThemedText type="callout" numberOfLines={1} style={styles.headsignText}>
+                      {departure.headsign ?? '—'}
+                    </ThemedText>
+                    {/*
+                      * Only drawn when the feed actually says yes. `null` is
+                      * "unstated", and marking that as step-access would tell
+                      * a wheelchair user a usable run is unusable.
+                      */}
+                    {departure.wheelchair === true && (
+                      <Ionicons
+                        name="accessibility"
+                        size={13}
+                        color={theme.textSecondary}
+                        accessibilityLabel="Niskopodłogowy"
+                      />
+                    )}
+                  </View>
                   {scheduled && (
                     <ThemedText type="footnote" themeColor="textSecondary" numberOfLines={1}>
                       {departure.serviceDay === 'tomorrow' ? 'Jutro · ' : null}
@@ -194,12 +272,44 @@ export function StopDetails({ data, loading, error }: StopDetailsProps) {
                     </ThemedText>
                   )}
                 </View>
+
+                <AlarmBell
+                  set={alarms.has(alarmId(data.stop.id, departure.tripId))}
+                  onPress={() => toggleAlarm(departure)}
+                />
               </View>
             );
           })}
         </View>
       )}
     </ScrollView>
+  );
+}
+
+/**
+ * Set a reminder to leave for this departure.
+ *
+ * A bell per row rather than one control for the board: the rider is picking a
+ * *departure*, not a stop, and which one they want is exactly the decision the
+ * board exists to support. Filled when set, so the state is legible without
+ * opening anything.
+ */
+function AlarmBell({ set, onPress }: { set: boolean; onPress: () => void }) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: set }}
+      accessibilityLabel={set ? 'Wyłącz przypomnienie o odjeździe' : 'Przypomnij o odjeździe'}
+      hitSlop={10}
+      style={({ pressed }) => [styles.bell, pressed && styles.pressed]}>
+      <Ionicons
+        name={set ? 'notifications' : 'notifications-outline'}
+        size={18}
+        color={set ? theme.accent : theme.textTertiary}
+      />
+    </Pressable>
   );
 }
 
@@ -221,6 +331,9 @@ const styles = StyleSheet.create({
     minHeight: 56,
   },
   rowText: { flex: 1, gap: 1, minWidth: 0 },
+  headsign: { flexDirection: 'row', alignItems: 'center', gap: Space.xs },
+  headsignText: { flexShrink: 1 },
+  bell: { width: 32, minHeight: 32, alignItems: 'center', justifyContent: 'center' },
   eta: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },
   etaValue: { fontVariant: ['tabular-nums'] },
   // Same round 30pt target as the close button it sits beside, so the pair

@@ -76,6 +76,18 @@ export type Preferences = {
   layout: LayoutMode;
   /** The fused badge-and-tail marker, or the classic badge and chevron. */
   markerStyle: MarkerStyle;
+  /**
+   * Whether this phone has asked to be told about disruptions.
+   *
+   * Off until the rider turns it on: a notification permission prompt at
+   * launch is a question about nothing, and the answer it gets is usually no.
+   */
+  alertsEnabled: boolean;
+  /**
+   * The Expo push token currently registered with the server, so it can be
+   * unregistered again. Null whenever alerts are off.
+   */
+  pushToken: string | null;
 };
 
 const DEFAULTS: Preferences = {
@@ -86,6 +98,8 @@ const DEFAULTS: Preferences = {
   colorScheme: 'system',
   layout: 'sheet',
   markerStyle: 'modern',
+  alertsEnabled: false,
+  pushToken: null,
 };
 
 let preferences: Preferences = DEFAULTS;
