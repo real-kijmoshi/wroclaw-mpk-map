@@ -604,6 +604,7 @@ export default function MapScreen() {
             onRetry={fleet.refresh}
             onLines={() => router.push('/lines')}
             onAlerts={() => router.push('/alerts')}
+            onPlan={() => router.push('/plan')}
             onLocate={locate}
             onStop={(stop) => {
               mapRef.current?.centerOn(stop.lat, stop.lon, 17);

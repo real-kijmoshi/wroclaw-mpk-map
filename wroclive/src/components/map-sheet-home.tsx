@@ -104,6 +104,7 @@ export type MapSheetHomeProps = {
   offline: boolean;
   onLines: () => void;
   onAlerts: () => void;
+  onPlan: () => void;
   onLocate: () => void;
   onRetry: () => void;
   onStop: (stop: Stop) => void;
@@ -125,6 +126,7 @@ export function MapSheetHome({
   offline,
   onLines,
   onAlerts,
+  onPlan,
   onLocate,
   onRetry,
   onStop,
@@ -239,6 +241,20 @@ export function MapSheetHome({
             </View>
           ))
         )}
+      </Section>
+
+      {/*
+       * Above the line filter, because "how do I get there" is a question and
+       * the filter is a setting. A rider who does not yet know which tram they
+       * want cannot use anything else on this sheet.
+       */}
+      <Section>
+        <LinkRow
+          label="Dojazd"
+          hint="Wyznacz trasę z przesiadkami"
+          leading={<RowIcon name="navigate" color={theme.accent} />}
+          onPress={onPlan}
+        />
       </Section>
 
       <Section>
