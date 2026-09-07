@@ -3,7 +3,8 @@
   "version": "1.0.1",
   "description": "Real-time API for Wrocław public transport: lines, vehicle positions, route shapes, stop departures and service alerts.",
   "main": "index.js",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
+  "private": true,
   "engines": {
     "node": ">=22"
   },
