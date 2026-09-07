@@ -234,4 +234,6 @@ Check the terms of use of each source before deploying publicly.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Proprietary — all rights reserved. The source is published to be read, not
+reused: running, copying, modifying or redistributing it needs written
+permission. See [LICENSE](LICENSE).

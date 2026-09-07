@@ -574,7 +574,7 @@ export default function SettingsScreen() {
             <Divider />
             <LinkRow
               label="Licencja"
-              hint="Kod źródłowy i licencja MIT"
+              hint="Kod źródłowy do wglądu i warunki licencji"
               leading={<RowIcon name="code-slash-outline" color={theme.textTertiary} />}
               value="GitHub"
               onPress={() =>
@@ -585,7 +585,7 @@ export default function SettingsScreen() {
 
           <View style={styles.credit}>
             <ThemedText type="footnote" themeColor="textSecondary">
-              Pozycje pojazdów pochodzą z MPK Wrocław i kłosok.pl. Rozkłady jazdy pochodzą z plików GTFS MPK Wrocław. Aplikacja jest open source i dostępna na{' '}
+              Pozycje pojazdów pochodzą z MPK Wrocław i kłosok.pl. Rozkłady jazdy pochodzą z plików GTFS MPK Wrocław. Kod źródłowy jest dostępny do wglądu na{' '}
               <ThemedText
                 type="footnote"
                 weight="semibold"
