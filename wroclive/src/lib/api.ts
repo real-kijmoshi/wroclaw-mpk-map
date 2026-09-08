@@ -1,4 +1,5 @@
 import { API_URL } from './config';
+import { recall, remember } from './offline-cache';
 
 /**
  * The only way this app talks to the server.
@@ -44,6 +45,15 @@ export type GetOptions = {
   signal?: AbortSignal;
   /** Give up on 503 immediately. Used by polls, which will come round again anyway. */
   retryWhileLoading?: boolean;
+  /**
+   * Keep the last good answer on the phone, and serve it when the network is
+   * gone.
+   *
+   * Opt-in per request, never blanket: it is right for the timetable, which
+   * changes weekly, and wrong for vehicle positions, where a ten-minute-old
+   * answer is not stale but false. See `offline-cache.ts`.
+   */
+  offline?: boolean;
 };
 
 /**
@@ -56,7 +66,21 @@ const conditionalCache = new Map<string, { etag: string; data: unknown }>();
 const CONDITIONAL_CACHE_MAX = 32;
 
 export async function apiGet<T>(path: string, options: GetOptions = {}): Promise<T> {
-  const { signal, retryWhileLoading = true } = options;
+  return (await apiGetCached<T>(path, options)).data;
+}
+
+/**
+ * `apiGet`, plus whether the answer came off the phone rather than the wire.
+ *
+ * Split out rather than folded into the payload because the payload is the
+ * server's shape and this is not part of it — and a screen that shows "rozkład
+ * sprzed dwóch godzin" needs the timestamp, not a boolean buried in the data.
+ */
+export async function apiGetCached<T>(
+  path: string,
+  options: GetOptions = {},
+): Promise<{ data: T; cachedAt: number | null }> {
+  const { signal, retryWhileLoading = true, offline = false } = options;
   let attempt = 0;
 
   const cached = conditionalCache.get(path);
@@ -64,10 +88,23 @@ export async function apiGet<T>(path: string, options: GetOptions = {}): Promise
   if (cached?.etag) headers['If-None-Match'] = cached.etag;
 
   for (;;) {
-    const response = await fetch(`${API_URL}${path}`, {
-      signal,
-      headers,
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${API_URL}${path}`, { signal, headers });
+    } catch (error) {
+      // A cancelled request is the caller's own doing and stays an abort.
+      if ((error as Error)?.name === 'AbortError') throw error;
+      // No network. For the requests that opted in, yesterday's timetable is
+      // the right answer — it is the same timetable. An HTTP error is *not*
+      // routed here: the server answering 404 or 500 is a working network
+      // saying something true, and burying that under a stale copy would hide
+      // a real fault behind a board that looks fine.
+      if (offline) {
+        const stored = await recall<T>(path);
+        if (stored) return stored;
+      }
+      throw error;
+    }
 
     // Still ingesting the timetable — not an error, just not yet.
     if (response.status === 503 && retryWhileLoading && attempt < RETRY_DELAYS_MS.length) {
@@ -84,7 +121,7 @@ export async function apiGet<T>(path: string, options: GetOptions = {}): Promise
 
     // Nothing changed since the last poll — keep the payload we already hold.
     if (response.status === 304) {
-      if (cached) return cached.data as T;
+      if (cached) return { data: cached.data as T, cachedAt: null };
       throw new ApiError('HTTP 304 with no cached copy', 304);
     }
 
@@ -108,7 +145,10 @@ export async function apiGet<T>(path: string, options: GetOptions = {}): Promise
         if (oldest !== undefined) conditionalCache.delete(oldest);
       }
     }
-    return data;
+    // Written but never awaited: a slow disk must not sit between the rider
+    // and a board that has already arrived.
+    if (offline) void remember(path, data);
+    return { data, cachedAt: null };
   }
 }
 
@@ -298,6 +338,11 @@ export type Departures = {
   departures: Departure[];
   /** The moment this board describes — `now` unless one was asked for. */
   at?: string;
+  /**
+   * When this board was cached, if it was served off the phone rather than
+   * fetched. Null means it is live.
+   */
+  offlineAt?: number | null;
 };
 
 /** One entry of the merged "what is leaving near me" board. */
@@ -1003,7 +1048,10 @@ export function normalisePlan(payload: unknown): JourneyPlan {
 /* -------------------------------------------------------------------------- */
 
 export const getLines = async (options?: GetOptions) =>
-  normaliseLines(await apiGet<unknown>('/lines', options));
+  // Cached because a phone with no signal can still usefully filter the map,
+  // and the line list changes when the city opens a route, not when the
+  // network drops.
+  normaliseLines(await apiGet<unknown>('/lines', { ...options, offline: true }));
 
 export const getLocations = async (lines: string[] | null, options?: GetOptions) => {
   // The filter runs server-side so a narrow selection is a smaller payload,
@@ -1064,13 +1112,13 @@ export const getDepartures = async (
     within: String(options?.within ?? 1440),
   });
   if (options?.at) query.set('at', options.at.toISOString());
-  return normaliseDepartures(
-    await apiGet<unknown>(
-      `/stop/${encodeURIComponent(stopId)}/departures?${query.toString()}`,
-      options,
-    ),
-    limit,
+  const { data, cachedAt } = await apiGetCached<unknown>(
+    `/stop/${encodeURIComponent(stopId)}/departures?${query.toString()}`,
+    // The board is exactly what a rider needs underground, and a timetable an
+    // hour old is the same timetable.
+    { ...options, offline: true },
   );
+  return { ...normaliseDepartures(data, limit), offlineAt: cachedAt };
 };
 
 /** Merge only GTFS records that search identified as one physical platform. */
@@ -1091,7 +1139,18 @@ export const getDeparturesForStops = async (
     })
     .sort((a, b) => a.inSeconds - b.inSeconds)
     .slice(0, options?.limit ?? 12);
-  return { stop: boards[0]?.stop ?? stop, departures, at: boards[0]?.at };
+  return {
+    stop: boards[0]?.stop ?? stop,
+    departures,
+    at: boards[0]?.at,
+    // Any platform served from the cache makes the merged board a cached one:
+    // saying "live" while half of it is an hour old is the dishonest half.
+    offlineAt: boards.reduce<number | null>(
+      (oldest, board) =>
+        board.offlineAt && (oldest === null || board.offlineAt < oldest) ? board.offlineAt : oldest,
+      null,
+    ),
+  };
 };
 
 /**

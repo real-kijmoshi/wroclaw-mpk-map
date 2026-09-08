@@ -1,7 +1,15 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  View,
+} from 'react-native';
 
 import { LineBadge } from './line-badge';
 import { ThemedText } from './themed-text';
@@ -10,7 +18,7 @@ import { Motion, Radius, Space } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
 import type { Departure, Departures, Stop } from '@/lib/api';
 import { favouritesStore, useFavourites } from '@/lib/favourites';
-import { etaParts, formatDistance, formatScheduled } from '@/lib/format';
+import { etaParts, formatAge, formatDistance, formatScheduled } from '@/lib/format';
 import { tapped } from '@/lib/haptics';
 import {
   alarmId,
@@ -200,6 +208,21 @@ export function StopDetails({ data, loading, error }: StopDetailsProps) {
       style={styles.scroll}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}>
+      {/*
+        * A board served off the phone says so. It is still the right
+        * timetable — that is why it is cached — but a rider deciding whether
+        * to run for a tram is entitled to know nothing here has been checked
+        * since the signal went.
+        */}
+      {!!data.offlineAt && (
+        <View style={[styles.offline, { backgroundColor: theme.backgroundElement }]}>
+          <Ionicons name="cloud-offline-outline" size={15} color={theme.textSecondary} />
+          <ThemedText type="footnote" themeColor="textSecondary" numberOfLines={2}>
+            Rozkład zapisany {formatAge(data.offlineAt)} — bez połączenia, godziny są planowe.
+          </ThemedText>
+        </View>
+      )}
+
       {data.departures.length === 0 ? (
         <View style={[styles.empty, { backgroundColor: theme.backgroundCard }]}>
           <ThemedText type="callout" themeColor="textSecondary">
@@ -290,21 +313,34 @@ export function StopDetails({ data, loading, error }: StopDetailsProps) {
           * and what runs on a Sunday, are different questions asked from an
           * armchair — and the ones that used to send people to a PDF.
           */}
-        <Pressable
-          onPress={() =>
-            router.push({
-              pathname: '/timetable',
-              params: { stopId: data.stop.id, name: data.stop.name },
-            })
-          }
-          accessibilityRole="button"
-          accessibilityLabel="Pokaż cały rozkład jazdy"
-          style={({ pressed }) => [styles.timetableLink, pressed && styles.pressed]}>
-          <Ionicons name="calendar-outline" size={15} color={theme.accent} />
-          <ThemedText type="footnote" weight="semibold" color={theme.accent}>
-            Cały rozkład
-          </ThemedText>
-        </Pressable>
+        <View style={styles.boardActions}>
+          <Pressable
+            onPress={() =>
+              router.push({
+                pathname: '/timetable',
+                params: { stopId: data.stop.id, name: data.stop.name },
+              })
+            }
+            accessibilityRole="button"
+            accessibilityLabel="Pokaż cały rozkład jazdy"
+            style={({ pressed }) => [styles.timetableLink, pressed && styles.pressed]}>
+            <Ionicons name="calendar-outline" size={15} color={theme.accent} />
+            <ThemedText type="footnote" weight="semibold" color={theme.accent}>
+              Cały rozkład
+            </ThemedText>
+          </Pressable>
+
+          <Pressable
+            onPress={() => shareStop(data.stop.id, data.stop.name)}
+            accessibilityRole="button"
+            accessibilityLabel="Udostępnij przystanek"
+            style={({ pressed }) => [styles.timetableLink, pressed && styles.pressed]}>
+            <Ionicons name="share-outline" size={15} color={theme.accent} />
+            <ThemedText type="footnote" weight="semibold" color={theme.accent}>
+              Udostępnij
+            </ThemedText>
+          </Pressable>
+        </View>
         </View>
       )}
     </ScrollView>
@@ -338,6 +374,29 @@ function AlarmBell({ set, onPress }: { set: boolean; onPress: () => void }) {
   );
 }
 
+/**
+ * Hand a stop to someone else.
+ *
+ * The link is the app's own scheme, which expo-router already resolves to the
+ * timetable screen — the route file *is* the URL, so nothing extra had to be
+ * registered for this to work. The stop's name goes in the text as well as the
+ * link, because the person receiving it may not have the app, and "Rynek" is
+ * still useful to them where a bare `wroclive://` URL is not.
+ */
+async function shareStop(stopId: string, name: string) {
+  const url = `wroclive://timetable?stopId=${encodeURIComponent(stopId)}&name=${encodeURIComponent(name)}`;
+  try {
+    await Share.share(
+      Platform.OS === 'ios'
+        ? { message: `Przystanek ${name} w Wroclive`, url }
+        : { message: `Przystanek ${name} w Wroclive\n${url}` },
+    );
+  } catch {
+    // The rider dismissed the sheet, or the platform refused it. Neither is
+    // worth interrupting anyone over.
+  }
+}
+
 const styles = StyleSheet.create({
   summary: { flexDirection: 'row', alignItems: 'center', gap: Space.md, paddingBottom: Space.md, minHeight: 48 },
   mark: { width: 38, height: 38, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
@@ -348,8 +407,18 @@ const styles = StyleSheet.create({
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Space.xl },
   empty: { borderRadius: Radius.lg, padding: Space.lg, gap: Space.xs },
   boardWrap: { gap: Space.md },
+  offline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm,
+    borderRadius: Radius.md,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.sm,
+  },
   board: { borderRadius: Radius.lg, paddingHorizontal: Space.lg },
+  boardActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   timetableLink: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
