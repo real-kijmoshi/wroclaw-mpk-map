@@ -33,6 +33,17 @@ The app finds the API by itself: in development it uses the machine that served
 the bundle, on port 3000, so a phone on the same Wi-Fi works with no edits.
 Point it somewhere else with `EXPO_PUBLIC_API_URL` (see `wroclive/README.md`).
 
+### What it answers
+
+| | |
+| --- | --- |
+| `/plan` | A journey from A to B, with changes — RAPTOR over the loaded timetable |
+| `/stop/:id/departures` | The next departures, or any other time with `?at=` |
+| `/departures/near` | One board merged from every stop around a point |
+| `/locations`, `/vehicle/:id` | Where the fleet is, and what one vehicle is doing |
+| `/alerts`, `/incidents` | Disruptions, and their timelines |
+| `/push/register` | Follow lines on a device, for disruption notifications |
+
 Open <http://localhost:3000/map> for a browser map and <http://localhost:3000/status> for a
 dashboard showing which upstream sources are live.
 

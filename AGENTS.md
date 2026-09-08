@@ -286,6 +286,74 @@ native surface an OSM basemap stays light in both schemes and
 the other direction: the chrome follows what the map is *drawing*, never what
 the phone is set to.
 
+**22. The planner rides on invariant 18's shared profile, not on stop_times.**
+`server/src/gtfs/planner.js` is a RAPTOR search whose *patterns are the
+variants*: a pattern's whole timetable is `tripStart[trip] + offset`, read off
+`variant.stops[].departureOffset`. That is only legal because every trip of a
+shape shares one relative profile in this feed (invariant 18). It is not a
+shortcut taken for speed — `stopTimes` carries no stop id per row, so a
+conventional connection scan would need a second index over the largest table
+in the feed. If the shared-profile assumption ever stops holding, the planner
+is the second thing that breaks after `describeVehicle()`, and it breaks
+quietly: the plans stay plausible and the times drift.
+
+**23. A plan departs when the rider must leave, not when they asked.**
+`buildPlan()` measures from the first ride's departure less the walk to reach
+it. Printing the query time there — the obvious reading of "departure" — makes
+the app say "leave at 08:00" for a tram at 08:12 and counts twelve minutes on
+the pavement as travel. `startsInSeconds` is the separate answer to "how long
+until I have to go". The planner also returns a Pareto front rather than one
+best plan, so a later option always arrives sooner or changes less; two options
+that differ only by one being worse is a bug in the front, not a choice.
+
+**24. A departure board away from now carries no live ETAs.**
+`/stop/:id/departures?at=` and `/departures/near?at=` serve the timetable and
+nothing else once the requested time is more than `LIVE_BOARD_WINDOW_MS` from
+the real clock. `enrichDepartures()` measures its prediction from *this*
+moment, so attaching one to tomorrow's board is not merely useless but wrong by
+the size of the gap. An unparseable `?at=` is a 400 rather than a fall back to
+now: a board describing the wrong hour looks exactly like one describing the
+right hour.
+
+**25. Wheelchair access is three states, and the third is not "no".**
+GTFS's `0`, and a column the publisher never shipped, both mean *unstated* —
+`accessibilityFlag()` in `server/src/gtfs/store.js` returns `null` for them and
+the app renders nothing rather than a negative. Wrocław's snapshots have
+shipped both with and without these columns, so collapsing unknown into false
+would tell every wheelchair user in the city that every stop is step-access on
+the day the column goes missing. Only a stated `1` is ever drawn.
+
+**26. Push must never announce the backlog.**
+An incident known before a restart has been on the rider's screen for hours,
+and re-sending it because the process came back is how an app gets its
+notifications switched off for good — permanently, by the user, for every
+future notice that actually matters. `server/src/push.js` persists its `sent`
+map beside the subscriptions for exactly this, and a registry whose file has
+never carried one primes itself instead of firing. Two consequences worth
+keeping: the map is written *before* delivery (a crash mid-send costs one
+notification; not marking costs the whole backlog again), and an id still in
+the current incident list is never aged out of it — Wrocław has roadworks that
+run all summer, and the rider has known about them since June.
+
+The copy comes from `shortNotificationTitle` / `shortNotificationBody`, which
+`ai-incidents.js` clamps to 60 and 120 characters. Those lengths are for a lock
+screen; if you change what generates them, this is what reads them.
+
+**27. The offline cache holds the timetable and never a position.**
+`wroclive/src/lib/offline-cache.ts` keeps the last good answer for requests
+that opt in with `offline: true` — the line list and departure boards. A
+timetable from an hour ago is the same timetable, which is the whole
+justification. A vehicle position from ten minutes ago is not stale data, it is
+false data, and the map has its own "last known, and it says so" handling
+instead.
+
+Only a *network* failure falls back to it. An HTTP error is a working network
+saying something true, and serving an hour-old board over a 500 hides a real
+fault behind a screen that looks fine. A board served from the cache carries
+`offlineAt` and the sheet prints its age — and a merged multi-platform board
+counts as cached if *any* platform was, because "live" while half of it is an
+hour old is the dishonest half.
+
 ## Fragile by nature
 
 **There is no default alerts source, and that is a decision, not a gap.**

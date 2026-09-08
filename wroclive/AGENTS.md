@@ -274,12 +274,39 @@ their own copy of the same `Platform.select` shadow.
 - **The server says when it does not know.** MPK's feed has no trip id, so the
   run is inferred; when it cannot be identified there is no delay, only remaining
   running time — the sheet shows "Brak rozkładu", not a plausible-looking number.
+- **`notifications.ts` is the only module that touches `expo-notifications`,**
+  the same rule `updates.ts` follows and for the same reason: it is the module
+  whose calls throw somewhere. Two features share it and they are not alike. A
+  departure alarm is *local* — the OS is handed a time and a string, so it works
+  in Expo Go, with no network, with the app closed. Disruption alerts are
+  *remote* and need a push token, which Expo Go cannot obtain (SDK 53+) and a
+  simulator cannot either; `pushAvailable` gates every remote path and settings
+  says why rather than showing a switch that cannot work. Alarms are read back
+  from the OS (`pendingAlarms()`), never mirrored in app state — a scheduled
+  notification outlives the process.
+- **The alerts switch reflects the server, not the tap.** Turning it on has to
+  clear a permission prompt *and* obtain a token, and either can fail. The
+  preference is written only after registration succeeds, so a refused
+  permission leaves the switch off — which is both the honest state and the one
+  a rider can act on.
+- **Do not call `setState` synchronously inside an effect.** The React Compiler
+  lint rule (`react-hooks/set-state-in-effect`) rejects it, and the fix is
+  almost always to *derive* instead: `plan.tsx` and `timetable.tsx` tag their
+  answer with the question it answers, so "a request is in flight" is simply
+  "the answer on hand is for an older question". That removes the flag nobody
+  remembers to clear on the paths that throw, and closes the window where the
+  previous query's results are on screen under the new query's heading.
+- **A favourites row costs a request.** `useFavouriteBoards()` fetches only the
+  stops actually on screen (`BOARDS_LIMIT`), and stops polling entirely when a
+  vehicle or stop is selected and the section is not rendered. Twelve
+  favourites polled every thirty seconds is twelve round trips for rows below
+  the fold, on a phone that has just come out of a pocket.
 
 ## Layout
 
 | Path | |
 | --- | --- |
-| `src/app/` | expo-router screens: `index` (the map), `lines`, `alerts`, `settings`, `search` |
+| `src/app/` | expo-router screens: `index` (the map), `lines`, `alerts`, `settings`, `search`, `plan`, `timetable` |
 | `src/constants/design.ts` | Type ramp, spacing, radii, elevation, motion |
 | `src/components/map-sheet*.tsx` | The persistent sheet and its home content |
 | `src/components/classic-chrome.tsx` | The classic layout's top bar and button tower |
@@ -288,6 +315,9 @@ their own copy of the same `Platform.select` shadow.
 | `src/lib/map-html.ts` | The Leaflet page: generated HTML, message bridge, marker logic |
 | `src/lib/lines.ts` | Line colours and category labels |
 | `src/lib/selection.ts` / `preferences.ts` | Line filter and settings, persisted |
+| `src/lib/favourites.ts` | Pinned stops and lines (recent-stops is *not* this) |
+| `src/lib/notifications.ts` | The only module touching `expo-notifications` |
+| `src/lib/offline-cache.ts` | Last good timetable answers; never positions |
 | `src/lib/config.ts` | API URL (`EXPO_PUBLIC_API_URL` wins) and poll intervals |
 | `src/components/map-view*.tsx` | Platform pick for `MapView` |
 | `src/components/native-map.tsx` | `react-native-maps` surface |
