@@ -19,6 +19,7 @@ import { classicBorderColorFor, colorFor, isTram } from '@/lib/lines';
 import { BACKWARD_TOLERANCE_METERS, projectProgress, splitRoute, type RouteProgress, type RouteSplit } from '@/lib/route-progress';
 import { WROCLAW_CENTER } from '@/lib/map-html';
 import { usePreferences, type MarkerStyle } from '@/lib/preferences';
+import { STOP_SPREAD_GAP, STOP_SPREAD_MAX_METERS, spreadStops } from '@/lib/stop-spread';
 import {
   CLASSIC_ARROW_HALF_BASE,
   CLASSIC_ARROW_LENGTH,
@@ -487,6 +488,12 @@ const VehicleMarker = memo(
 
 type StopMarkerProps = {
   stop: Stop;
+  /**
+   * Where the dot is drawn, which is the stop's own coordinate unless it shares
+   * its pixels with another platform — see `spreadStops()`.
+   */
+  lat: number;
+  lon: number;
   tint: string;
   /** Draw the name beside the dot. */
   labelled: boolean;
@@ -521,6 +528,8 @@ type StopMarkerProps = {
  */
 const StopMarker = memo(function StopMarker({
   stop,
+  lat,
+  lon,
   tint,
   labelled,
   selected,
@@ -529,7 +538,7 @@ const StopMarker = memo(function StopMarker({
 }: StopMarkerProps) {
   const dotTracking = useMarkerRedraw(`${tint}|${selected}`);
   const nameTracking = useMarkerRedraw(`${selected}|${onDark}`);
-  const at = coordinate(stop.lat, stop.lon);
+  const at = coordinate(lat, lon);
   const press = (event: { stopPropagation: () => void }) => {
     event.stopPropagation();
     onPress(stop);
@@ -864,46 +873,89 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
   );
 
   /**
-   * Which stops get their name, and which stay a dot.
+   * Where every stop is drawn, and which ones carry their name.
    *
-   * Two rules, in order. A place is named once: `/stops/near` answers with one
-   * record per platform, so a junction came back as "Galeria Dominikańska"
-   * five times over, printed five times across the same block. Then the same
-   * screen-cell trick the vehicles use, because two *different* names landing
-   * on one patch of screen is still worse than one name and a dot.
+   * First the dots. A platform normally gets its own coordinate and nothing
+   * else, but a tram stop and the bus stop sharing its kerb are two records
+   * metres apart: drawn honestly they are one dot with another hidden under it,
+   * and the hidden one cannot be tapped at any zoom — which is a stop whose
+   * departures the app simply will not open. `spreadStops()` pushes dots like
+   * those apart until a fingertip can pick one, and never far enough from the
+   * kerb to be pointing at somewhere else.
+   *
+   * Then the names. Two rules, in order. A place is named once: `/stops/near`
+   * answers with one record per platform, so a junction came back as "Galeria
+   * Dominikańska" five times over, printed five times across the same block.
+   * Then the same screen-cell trick the vehicles use, because two *different*
+   * names landing on one patch of screen is still worse than one name and a
+   * dot. The cell is measured where the dot is actually drawn, offset
+   * included.
    *
    * Every platform keeps its dot either way — they are different boarding
    * points, and tapping the right one is how a rider gets the right direction.
-   * The selected stop always wins both rules; it is the one being read about in
-   * the sheet below.
+   * The selected stop always wins both naming rules; it is the one being read
+   * about in the sheet below.
    */
   const stopPlacements = useMemo(() => {
     const source: Stop[] = route ? route.stops : nearbyStops;
+    const width = Math.max(1, viewport.width);
+    const height = Math.max(1, viewport.height);
+
+    // Sorted by id so both passes below see the same order from poll to poll:
+    // the platform that carries the name stays the same one, and two dots that
+    // have to give way do so the same way round every time rather than trading
+    // places under the rider's finger. Selection is not part of it for that
+    // reason.
+    const ordered = source.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+
+    const metersPerPoint = (visibleRegion.latitudeDelta * METERS_PER_DEGREE) / height;
+    const points = ordered.map((stop) => ({
+      x: ((stop.lon - visibleRegion.longitude) / visibleRegion.longitudeDelta) * width,
+      y: ((visibleRegion.latitude - stop.lat) / visibleRegion.latitudeDelta) * height,
+    }));
+    const placed = spreadStops(points, STOP_SPREAD_GAP, STOP_SPREAD_MAX_METERS, metersPerPoint);
+
+    // A stop that did not have to move keeps its own coordinate rather than one
+    // projected out and back: the round trip differs in the last few decimals
+    // on every pan, and that is a moved marker to the platform — every stop on
+    // screen re-placed on every gesture, for nothing.
+    const drawn = ordered.map((stop, index) => {
+      if (placed[index].x === points[index].x && placed[index].y === points[index].y) {
+        return { stop, lat: stop.lat, lon: stop.lon };
+      }
+      return {
+        stop,
+        lat: visibleRegion.latitude - (placed[index].y / height) * visibleRegion.latitudeDelta,
+        lon: visibleRegion.longitude + (placed[index].x / width) * visibleRegion.longitudeDelta,
+      };
+    });
+
     if (tier !== 'near') {
-      return source.map((stop) => ({ stop, labelled: stop.id === selectedStopId }));
+      return drawn.map((entry) => ({ ...entry, labelled: entry.stop.id === selectedStopId }));
     }
 
-    const cellLat = (visibleRegion.latitudeDelta * STOP_LABEL_CELL) / Math.max(1, viewport.height);
-    const cellLon = (visibleRegion.longitudeDelta * STOP_LABEL_CELL) / Math.max(1, viewport.width);
+    const cellLat = (visibleRegion.latitudeDelta * STOP_LABEL_CELL) / height;
+    const cellLon = (visibleRegion.longitudeDelta * STOP_LABEL_CELL) / width;
     const takenCells = new Set<string>();
     const takenNames = new Set<string>();
+    const named = new Set<string>();
 
-    // Sorted by id so the platform that carries the name is the same one from
-    // poll to poll; the selected stop is considered first so it always wins.
-    const ordered = source
+    // The selected stop is considered first, so it always wins its cell.
+    const byPriority = drawn
       .slice()
-      .sort((a, b) => (a.id === selectedStopId ? -1 : b.id === selectedStopId ? 1 : a.id < b.id ? -1 : 1));
+      .sort((a, b) => (a.stop.id === selectedStopId ? -1 : b.stop.id === selectedStopId ? 1 : 0));
 
-    return ordered.map((stop) => {
-      const selected = stop.id === selectedStopId;
-      const cell = `${Math.round(stop.lat / cellLat)}:${Math.round(stop.lon / cellLon)}`;
-      const free = !takenNames.has(stop.name) && !takenCells.has(cell);
+    for (const entry of byPriority) {
+      const cell = `${Math.round(entry.lat / cellLat)}:${Math.round(entry.lon / cellLon)}`;
+      const free = !takenNames.has(entry.stop.name) && !takenCells.has(cell);
       if (free) {
-        takenNames.add(stop.name);
+        takenNames.add(entry.stop.name);
         takenCells.add(cell);
       }
-      return { stop, labelled: free || selected };
-    });
+      if (free || entry.stop.id === selectedStopId) named.add(entry.stop.id);
+    }
+
+    return drawn.map((entry) => ({ ...entry, labelled: named.has(entry.stop.id) }));
   }, [nearbyStops, route, selectedStopId, tier, viewport.height, viewport.width, visibleRegion]);
 
   const osm = mapProvider === 'osm';
@@ -996,10 +1048,12 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
 
       {/* A route's own stops replace the nearby ones while there is a route,
           the same way those two layers trade places everywhere else. */}
-      {stopPlacements.map(({ stop, labelled }) => (
+      {stopPlacements.map(({ stop, lat, lon, labelled }) => (
         <StopMarker
           key={`stop-${stop.id}`}
           stop={stop}
+          lat={lat}
+          lon={lon}
           tint={route?.color ?? STOP_TINT}
           labelled={labelled}
           selected={stop.id === selectedStopId}

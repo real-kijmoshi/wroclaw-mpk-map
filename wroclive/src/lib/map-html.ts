@@ -28,6 +28,7 @@ import {
   TAIL_SINK,
   badgeWidthFor,
 } from './vehicle-marker';
+import { STOP_SPREAD_GAP, STOP_SPREAD_MAX_METERS } from './stop-spread';
 
 /**
  * The map itself: a plain Leaflet page.
@@ -445,7 +446,16 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
   }
   .stop--selected .stop__dot { transform: scale(1.25); border-width: 4px; }
   .stop--selected .stop__name { font-weight: 800; }
-  .leaflet-marker-icon.stop-marker { z-index: 400 !important; }
+  /*
+   * The icon box is 104x56 — room for a two-line name — and Leaflet makes the
+   * whole of it interactive, so each stop was swallowing every tap within half
+   * a name's width of itself: at a junction the neighbouring platform could not
+   * be reached at all, whichever dot the finger was actually on. The box keeps
+   * its size (the anchor depends on it) and gives up its hit testing; the dot
+   * and the name take taps themselves and still bubble to the marker's own
+   * click handler.
+   */
+  .leaflet-marker-icon.stop-marker { z-index: 400 !important; pointer-events: none; }
 
   .user-dot {
     width: 16px; height: 16px; border-radius: 50%;
@@ -1243,6 +1253,150 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
   var STOP_LABEL_CELL = 78;
   /** Below this the map is showing districts, and no name would fit anyway. */
   var STOP_LABEL_ZOOM = 15;
+  /** How far apart two dots end up, and how far one may be moved to get there. */
+  var STOP_SPREAD_GAP = ${STOP_SPREAD_GAP};
+  var STOP_SPREAD_MAX_METERS = ${STOP_SPREAD_MAX_METERS};
+  /** Web Mercator metres per pixel at the equator, for the zoom conversion. */
+  var EARTH_CIRCUMFERENCE_METERS = 40075016.686;
+
+  /**
+   * Push stop dots that landed on each other apart, so both can be tapped.
+   *
+   * A hand copy of \`spreadStops()\` in src/lib/stop-spread.ts, which is the
+   * authority and carries the reasoning: this page has no build step and cannot
+   * import it. Change it there and change it here — test/stop-spread.test.js
+   * lifts this copy out and runs it.
+   */
+  function spreadStops(points, gap, maxOffsetMeters, metersPerPoint) {
+    // Declared inside, as they are in stop-spread.ts: this function depends on
+    // nothing around it, which is what lets the test lift it out and run it.
+    var PASSES = 12;
+    var COINCIDENT = 1e-6;
+    var GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+    var placed = points.map(function (point) { return { x: point.x, y: point.y }; });
+    if (placed.length < 2 || !(gap > 0) || !(metersPerPoint > 0) || !(maxOffsetMeters > 0)) {
+      return placed;
+    }
+
+    var maxOffset = maxOffsetMeters / metersPerPoint;
+    var i, j, pair;
+
+    // Which stops could ever be in each other's way: no dot moves further than
+    // maxOffset, so a pair starting further apart than that twice over plus the
+    // gap cannot meet, and every pass below walks neighbours rather than the
+    // whole layer squared.
+    var horizon = gap + 2 * maxOffset;
+    var pairs = [];
+    for (i = 0; i < placed.length; i++) {
+      for (j = i + 1; j < placed.length; j++) {
+        if (Math.hypot(points[j].x - points[i].x, points[j].y - points[i].y) >= horizon) continue;
+        pairs.push(i, j);
+      }
+    }
+    if (!pairs.length) return placed;
+
+    // Two records on one coordinate have no direction to be pushed along, so
+    // they are given one first: a turn of the golden angle per stop.
+    for (pair = 0; pair < pairs.length; pair += 2) {
+      i = pairs[pair];
+      j = pairs[pair + 1];
+      if (Math.hypot(placed[j].x - placed[i].x, placed[j].y - placed[i].y) > COINCIDENT) continue;
+      var angle = GOLDEN_ANGLE * j;
+      placed[j] = {
+        x: placed[j].x + COINCIDENT * Math.cos(angle),
+        y: placed[j].y + COINCIDENT * Math.sin(angle)
+      };
+    }
+
+    for (var pass = 0; pass < PASSES; pass++) {
+      var pushed = false;
+
+      for (pair = 0; pair < pairs.length; pair += 2) {
+        i = pairs[pair];
+        j = pairs[pair + 1];
+        var dx = placed[j].x - placed[i].x;
+        var dy = placed[j].y - placed[i].y;
+        var distance = Math.hypot(dx, dy);
+        if (distance >= gap) continue;
+
+        // Half the shortfall each, along the line they already lie on: the
+        // one to the north stays the northern dot.
+        var step = (gap - distance) / 2;
+        var ux = dx / distance;
+        var uy = dy / distance;
+        placed[i] = { x: placed[i].x - ux * step, y: placed[i].y - uy * step };
+        placed[j] = { x: placed[j].x + ux * step, y: placed[j].y + uy * step };
+        pushed = true;
+      }
+
+      if (!pushed) break;
+
+      // Hauled back to within sight of its own stop after every round.
+      for (i = 0; i < placed.length; i++) {
+        var offsetX = placed[i].x - points[i].x;
+        var offsetY = placed[i].y - points[i].y;
+        var offset = Math.hypot(offsetX, offsetY);
+        if (offset <= maxOffset) continue;
+        placed[i] = {
+          x: points[i].x + (offsetX / offset) * maxOffset,
+          y: points[i].y + (offsetY / offset) * maxOffset
+        };
+      }
+    }
+
+    // A dot that was never in anyone's way is handed back exactly as it came in.
+    for (i = 0; i < placed.length; i++) {
+      if (Math.hypot(placed[i].x - points[i].x, placed[i].y - points[i].y) > COINCIDENT) continue;
+      placed[i] = { x: points[i].x, y: points[i].y };
+    }
+
+    return placed;
+  }
+
+  /**
+   * Move every stop dot that is sitting on another one.
+   *
+   * A tram stop and the bus stop sharing its kerb are two records metres apart:
+   * drawn where they belong, the second dot is under the first and no tap can
+   * reach it. The offset goes on the marker's own element rather than its
+   * coordinate, so Leaflet keeps placing the marker where the stop actually is
+   * and the dot — with its hit area and its name — is what moves.
+   *
+   * Ordered by id, never by selection, so the dots do not change places under
+   * the rider's finger when one of the stops is opened.
+   *
+   * Hands back where each dot ended up, keyed by stop id, so the naming pass
+   * below shares out the screen by what the rider can actually see.
+   */
+  function spreadStopDots() {
+    var drawn = Object.create(null);
+    if (!stopMarkers.length) return drawn;
+
+    var ordered = stopMarkers.slice().sort(function (a, b) {
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+    var points = ordered.map(function (entry) {
+      var point = map.latLngToLayerPoint(entry.marker.getLatLng());
+      return { x: point.x, y: point.y };
+    });
+    var metersPerPixel =
+      (EARTH_CIRCUMFERENCE_METERS * Math.cos((map.getCenter().lat * Math.PI) / 180)) /
+      Math.pow(2, map.getZoom() + 8);
+    var placed = spreadStops(points, STOP_SPREAD_GAP, STOP_SPREAD_MAX_METERS, metersPerPixel);
+
+    for (var i = 0; i < ordered.length; i++) {
+      drawn['s:' + ordered[i].id] = placed[i];
+      var element = ordered[i].marker.getElement();
+      var root = element && element.firstElementChild;
+      if (!root) continue;
+      var dx = placed[i].x - points[i].x;
+      var dy = placed[i].y - points[i].y;
+      root.style.transform = dx || dy ? 'translate(' + dx + 'px,' + dy + 'px)' : '';
+    }
+
+    return drawn;
+  }
 
   /**
    * Which stops get their name, and which stay a dot.
@@ -1253,8 +1407,13 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
    * block. Then the same screen-cell trick the vehicles use, at a wider cell
    * because these are words. Every platform keeps its dot either way; the
    * selected stop wins both rules.
+   *
+   * The dots are moved off each other first, since that is what decides where
+   * the names can go.
    */
   function applyStopTier() {
+    var drawn = spreadStopDots();
+
     var labelled = map.getZoom() >= STOP_LABEL_ZOOM;
     var takenCells = Object.create(null);
     var takenNames = Object.create(null);
@@ -1273,7 +1432,10 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
 
       var free = true;
       if (labelled) {
-        var point = map.latLngToLayerPoint(entry.marker.getLatLng());
+        // Where the dot is drawn, offset included — a name has to clear the
+        // names its own dot can be seen beside, not the ones its coordinate
+        // could.
+        var point = drawn['s:' + entry.id] || map.latLngToLayerPoint(entry.marker.getLatLng());
         var cell = Math.round(point.x / STOP_LABEL_CELL) + ':' + Math.round(point.y / STOP_LABEL_CELL);
         // Prefixed so a stop actually named "12:8" cannot collide with a cell.
         var nameKey = 'n:' + entry.name;
