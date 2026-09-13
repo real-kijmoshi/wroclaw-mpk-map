@@ -241,6 +241,30 @@ their own copy of the same `Platform.select` shadow.
   104pt-wide one over every platform of a junction takes the taps that pick the
   direction a rider is travelling. Apple Maps ignores `anchor` and uses
   `centerOffset`; pass one per platform, never both.
+- **Two stops on one kerb are two dots a rider can hit.** A tram stop and the
+  bus stop beside it are separate GTFS records metres apart, so their dots land
+  on the same pixels — and the one underneath cannot be tapped at any zoom,
+  because a dot does not grow when the map does. Its board is then simply
+  unreachable: the map shows the stop and the app will not open it. `spreadStops()`
+  in `src/lib/stop-spread.ts` is the whole rule — dots closer than
+  `STOP_SPREAD_GAP` are pushed apart until they clear it, and none is ever drawn
+  more than `STOP_SPREAD_MAX_METERS` from its stop, which is what keeps it a
+  drawing decision rather than a claim about where a stop is (and what makes it
+  behave at district zoom without a threshold anywhere). It pushes *pairs* apart
+  rather than placing a cluster on a ring: a ring has to decide what a cluster
+  is, and two clusters deciding separately pushed their members into each other
+  on the four platforms of one junction. `native-map.tsx` imports it; the
+  Leaflet page carries a copy, which `server/test/stop-spread.test.js` lifts out
+  and runs.
+- **A stop marker's hit area is its dot and its name, not its box.** The Leaflet
+  page's stop icon is 104×56 — room for a two-line name — and Leaflet makes the
+  whole icon interactive, so every stop was swallowing taps within half a name's
+  width of itself and its neighbour could not be reached at all. Spreading the
+  dots changed nothing until `.stop-marker` gave up `pointer-events` and the dot
+  and the name took them instead (they still bubble to the marker's own click
+  handler). The native surface states the same rule as z-order: the name marker
+  sits *under* the dots, so it never takes a tap meant for a neighbouring
+  platform.
 - **A stop name gets two lines.** Wrocław has stops called "Dembowskiego
   (Chełmońskiego)"; on one line that is "Dembowskiego (…", which is not a stop
   anyone can look for. Both surfaces clamp at two (`numberOfLines` in
@@ -287,6 +311,7 @@ their own copy of the same `Platform.select` shadow.
 | `src/lib/api.ts` | The only way to the server, plus all payload validation |
 | `src/lib/map-html.ts` | The Leaflet page: generated HTML, message bridge, marker logic |
 | `src/lib/lines.ts` | Line colours and category labels |
+| `src/lib/stop-spread.ts` | Keeping overlapping stop dots individually tappable |
 | `src/lib/selection.ts` / `preferences.ts` | Line filter and settings, persisted |
 | `src/lib/config.ts` | API URL (`EXPO_PUBLIC_API_URL` wins) and poll intervals |
 | `src/components/map-view*.tsx` | Platform pick for `MapView` |
