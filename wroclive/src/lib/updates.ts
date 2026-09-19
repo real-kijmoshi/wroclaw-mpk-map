@@ -62,8 +62,10 @@ export async function checkForUpdate(): Promise<UpdateCheckOutcome> {
   if (!updatesEnabled) return 'unavailable';
 
   try {
-    const { isAvailable } = await Updates.checkForUpdateAsync();
-    if (!isAvailable) return 'current';
+    const check = await Updates.checkForUpdateAsync();
+    // Rollback directives report isAvailable=false. They still need a fetch
+    // and restart so a bad OTA bundle can be removed from a device.
+    if (!check.isAvailable && !check.isRollBackToEmbedded) return 'current';
 
     // A roll back to the embedded bundle reports `isNew: false` — it is the
     // lever for undoing a bad publish, and it needs a restart just like a new

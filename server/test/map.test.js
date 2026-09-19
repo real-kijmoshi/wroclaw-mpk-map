@@ -314,7 +314,7 @@ describe('browser map', () => {
 
     // Defined light, redefined dark: a filter that only exists inside the
     // media query leaves the variable unresolved in light mode.
-    assert.match(html, /--tile-filter:\s*none;/);
+    assert.match(html, /--tile-filter:\s*saturate\(0\.82\)/);
     assert.match(html, /--tile-filter:\s*invert\(1\)/);
 
     // The tile pane is the only selector allowed to name it. Anything wider —

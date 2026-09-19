@@ -43,8 +43,10 @@
 
             /* OpenStreetMap publishes one raster style and it is a light one,
                so dark mode is a filter over the tiles rather than a second
-               source. Light leaves them alone. */
-            --tile-filter: none;
+               source. Light tiles are gently muted so routes and vehicles read
+               clearly over the street detail. */
+            --tile-filter: saturate(0.82) contrast(0.98) brightness(1.02);
+            --map-bg: #e9eef2;
 
             /* Brand + the departure board */
             --rail: #0B5FBF;
@@ -83,7 +85,8 @@
 
         @media (prefers-color-scheme: dark) {
             :root {
-                --tile-filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.86) saturate(0.72);
+                --tile-filter: invert(1) hue-rotate(180deg) brightness(0.90) contrast(0.92) saturate(0.62);
+                --map-bg: #17212b;
                 --bg: #000000;
                 --surface: #1C1C1E;
                 --surface-blur: rgba(28, 28, 30, 0.74);
@@ -133,7 +136,7 @@
         #map {
             position: fixed;
             inset: 0;
-            background: var(--bg);
+            background: var(--map-bg);
             z-index: 0;
         }
 
