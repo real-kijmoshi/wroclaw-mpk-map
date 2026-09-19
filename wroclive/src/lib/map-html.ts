@@ -65,9 +65,11 @@ export const WROCLAW_CENTER = { lat: 51.1079, lon: 17.0385, zoom: 13 };
  * unlike the CARTO pair this replaced there is no dark tile URL to switch to.
  * Inverting and rotating the hue back gives dark roads under light labels; the
  * brightness and contrast trims stop the result glaring under the markers.
+ * The light filter mutes the busy raster without altering markers or routes.
  * Applied to Leaflet's tile pane alone — see the rule in the page's CSS.
  */
-const TILE_FILTER = 'invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.86) saturate(0.72)';
+const TILE_FILTER = 'invert(1) hue-rotate(180deg) brightness(0.90) contrast(0.92) saturate(0.62)';
+const LIGHT_TILE_FILTER = 'saturate(0.82) contrast(0.98) brightness(1.02)';
 
 export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
 <html lang="pl">
@@ -87,7 +89,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
    */
   :root {
     color-scheme: ${dark ? 'dark' : 'light'};
-    --map-bg: ${dark ? '#000000' : '#f2f2f7'};
+    --map-bg: ${dark ? '#17212b' : '#e9eef2'};
     /* The outline every marker is drawn with. */
     --ring: ${dark ? 'rgba(255,255,255,0.92)' : '#ffffff'};
     --chrome-bg: ${dark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.6)'};
@@ -96,7 +98,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     --tooltip-fg: ${dark ? '#f2f2f7' : '#1c1c1e'};
     /* OpenStreetMap publishes one raster style and it is a light one, so dark
        mode is a filter over the tiles rather than a second source. */
-    --tile-filter: ${dark ? TILE_FILTER : 'none'};
+    --tile-filter: ${dark ? TILE_FILTER : LIGHT_TILE_FILTER};
   }
   html, body, #map { margin: 0; padding: 0; height: 100%; width: 100%; }
   body { background: var(--map-bg); -webkit-tap-highlight-color: transparent; }
@@ -1481,14 +1483,14 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     // Nothing on the page is rebuilt for a theme change, so every themed
     // colour is repainted here through its variable.
     var root = document.documentElement.style;
-    root.setProperty('--map-bg', dark ? '#000000' : '#f2f2f7');
+    root.setProperty('--map-bg', dark ? '#17212b' : '#e9eef2');
     root.setProperty('--ring', dark ? 'rgba(255,255,255,0.92)' : '#ffffff');
     root.setProperty('--chrome-bg', dark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.6)');
     root.setProperty('--chrome-fg', dark ? '#8e8e93' : '#6b7280');
     root.setProperty('--tooltip-bg', dark ? 'rgba(28,28,30,0.94)' : 'rgba(255,255,255,0.96)');
     root.setProperty('--tooltip-fg', dark ? '#f2f2f7' : '#1c1c1e');
     document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
-    root.setProperty('--tile-filter', dark ? '${TILE_FILTER}' : 'none');
+    root.setProperty('--tile-filter', dark ? '${TILE_FILTER}' : '${LIGHT_TILE_FILTER}');
   }
 
   /**

@@ -9,6 +9,7 @@ const config = require('../config');
 const logger = require('../logger');
 const { fetchWithTimeout } = require('../http');
 const { resolveFeedCandidates } = require('./catalogue');
+const { readEffectiveWindow, serviceDayKey } = require('./archive');
 
 const CACHE_FILE = 'gtfs.zip';
 const META_FILE = 'gtfs.meta.json';
@@ -59,10 +60,10 @@ const fetchArchive = async (url) => {
  * Falls back to the last archive written to disk when every candidate fails, so
  * a portal outage degrades to a stale timetable rather than an empty service.
  *
- * `prefer` decides between valid candidates: the first one it accepts wins, and
- * if none is accepted the first valid candidate is used anyway. That is what
- * keeps a future-dated snapshot from being served early when the candidates
- * arrived without names to sort by — the archive states its own dates.
+ * When the catalogue supplies names, it has already sorted the candidates by
+ * effective date. When it only supplies ids, compare the dates inside every
+ * valid archive: upload order is not effective-date order. If nothing is in
+ * force, the first valid archive still beats an empty service.
  *
  * @param {{
  *   validate?: (buffer: Buffer) => void,
@@ -75,65 +76,59 @@ const downloadGtfs = async ({ validate, prefer, now = Date.now() } = {}) => {
   const candidates = await resolveFeedCandidates({ now });
   const errors = [];
   let fallback = null;
+  let best = null;
+  const today = serviceDayKey(new Date(now));
 
   for (const candidate of candidates.slice(0, config.gtfs.maxCandidates)) {
     try {
       const buffer = await fetchArchive(candidate.url);
       validate?.(buffer);
+      const window = readEffectiveWindow(buffer);
 
       if (prefer && !prefer(buffer, new Date(now))) {
         logger.info(
           `${candidate.name ?? candidate.url} is not in force today; looking for a better one`,
         );
-        fallback ??= { buffer, candidate };
+        fallback ??= { buffer, candidate, window };
         continue;
       }
 
-      const checksum = crypto.createHash('sha256').update(buffer).digest('hex');
-      const meta = {
-        source: candidate.url,
-        snapshot: candidate.name,
-        checksum,
-        fetchedAt: new Date().toISOString(),
-        bytes: buffer.length,
-      };
-
-      if (config.gtfs.useCache) {
-        await writeCache(buffer, meta).catch((error) =>
-          logger.warn('Could not write GTFS cache:', error.message),
-        );
+      // Named entries are already sorted by the catalogue. Bare IDs are only
+      // ordered by upload time, so keep the latest effective archive seen.
+      if (prefer && !candidate.name) {
+        if (!best || (window?.start ?? '') > (best.window?.start ?? '')) {
+          best = { buffer, candidate, window };
+        }
+        continue;
       }
 
-      logger.info(
-        `GTFS archive ${previous?.checksum === checksum ? 'unchanged' : 'downloaded'} ` +
-          `(${(buffer.length / 1e6).toFixed(1)} MB) from ${candidate.name ?? candidate.url}`,
-      );
+      if (best) {
+        if ((window?.start ?? '') > (best.window?.start ?? '')) {
+          best = { buffer, candidate, window };
+        }
+        continue;
+      }
 
-      return { buffer, ...meta, fromCache: false };
+      return finish(buffer, candidate, window, previous);
     } catch (error) {
       errors.push(`${candidate.url}: ${error.message}`);
       logger.warn(`candidate rejected (${candidate.url}): ${error.message}`);
     }
   }
 
+  if (best) {
+    logger.info(`Using latest in-force GTFS snapshot dated ${best.window?.start ?? today}`);
+    return finish(best.buffer, best.candidate, best.window, previous);
+  }
+
   if (fallback) {
     // Nothing was in force — an archive that is merely valid still beats no
     // timetable at all, and /health records which one it settled for.
-    const { buffer, candidate } = fallback;
+    const { buffer, candidate, window } = fallback;
     logger.warn(
       `No snapshot is in force today; falling back to ${candidate.name ?? candidate.url}`,
     );
-    const meta = {
-      source: candidate.url,
-      snapshot: candidate.name,
-      checksum: crypto.createHash('sha256').update(buffer).digest('hex'),
-      fetchedAt: new Date().toISOString(),
-      bytes: buffer.length,
-    };
-    if (config.gtfs.useCache) {
-      await writeCache(buffer, meta).catch(() => {});
-    }
-    return { buffer, ...meta, fromCache: false };
+    return finish(buffer, candidate, window, previous);
   }
 
   const detail = errors.length ? `\n  - ${errors.join('\n  - ')}` : ' (no candidates resolved)';
@@ -148,6 +143,8 @@ const downloadGtfs = async ({ validate, prefer, now = Date.now() } = {}) => {
       buffer,
       source: previous?.source ?? 'disk cache',
       snapshot: previous?.snapshot ?? null,
+      effectiveStart: previous?.effectiveStart ?? null,
+      effectiveEnd: previous?.effectiveEnd ?? null,
       checksum: previous?.checksum ?? null,
       fetchedAt: previous?.fetchedAt ?? null,
       fromCache: true,
@@ -155,6 +152,32 @@ const downloadGtfs = async ({ validate, prefer, now = Date.now() } = {}) => {
   }
 
   throw new Error(`No usable GTFS feed${detail}`);
+};
+
+const finish = async (buffer, candidate, window, previous) => {
+  const checksum = crypto.createHash('sha256').update(buffer).digest('hex');
+  const meta = {
+    source: candidate.url,
+    snapshot: candidate.name,
+    effectiveStart: window?.start ?? null,
+    effectiveEnd: window?.end ?? null,
+    checksum,
+    fetchedAt: new Date().toISOString(),
+    bytes: buffer.length,
+  };
+
+  if (config.gtfs.useCache) {
+    await writeCache(buffer, meta).catch((error) =>
+      logger.warn('Could not write GTFS cache:', error.message),
+    );
+  }
+
+  logger.info(
+    `GTFS archive ${previous?.checksum === checksum ? 'unchanged' : 'downloaded'} ` +
+      `(${(buffer.length / 1e6).toFixed(1)} MB) from ${candidate.name ?? candidate.url}`,
+  );
+
+  return { buffer, ...meta, fromCache: false };
 };
 
 module.exports = { downloadGtfs, looksLikeZip };
