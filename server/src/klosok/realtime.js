@@ -352,6 +352,7 @@ const resolveEnrichment = (gtfs, vehicle, { now = new Date() } = {}) => {
       tripId: trip?.id ?? null,
       brigade: trip?.blockId ?? null,
       vehicleId: trip?.vehicleId ?? null,
+      vehicleTypeId: trip?.vehicleTypeId ?? null,
       agencyName: agency?.name ?? null,
     };
   };

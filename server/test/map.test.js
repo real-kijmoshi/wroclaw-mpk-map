@@ -342,6 +342,25 @@ describe('browser map', () => {
   });
 
   /**
+   * The vehicle's own attributes are the one thing on this page that comes
+   * from a roster rather than a feed, so "the roster does not say" has to stay
+   * distinguishable from "no". Telling a rider there is a ramp when there is
+   * not sends them to a stop they cannot board at, which is the fake-alert rule
+   * wearing a different hat — so the page prints "brak danych" for an unstated
+   * attribute and only ever reads a real boolean as an answer.
+   */
+  it('never renders an unstated vehicle attribute as a no', () => {
+    const html = readMap();
+    assert.match(html, /brak danych/, 'the vehicle block has no wording for an unknown');
+    assert.match(html, /chip--unknown/);
+    // A truthiness test here would read a missing field as "nie"; only a real
+    // boolean may become one.
+    assert.match(html, /typeof fleet\.wheelchair === 'boolean'/);
+    assert.match(html, /typeof fleet\.airConditioning === 'boolean'/);
+    assert.match(html, /typeof trip\.wheelchairAccessible === 'boolean'/);
+  });
+
+  /**
    * Invariant 7, on this client: /lines answers 503 while the feed is ingesting.
    * The page used to render categories straight out of `{error, state}`, so only
    * array-valued keys may reach the filter list.

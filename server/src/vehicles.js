@@ -4,6 +4,7 @@ const { performance } = require('node:perf_hooks');
 
 const config = require('./config');
 const logger = require('./logger');
+const { UNKNOWN: FLEET_UNKNOWN, combine: combineFleet, sharedRoster } = require('./fleet');
 const { fetchWithTimeout, tryEachSource, SourceHealth } = require('./http');
 const { lineToType } = require('./lines');
 const { Metric } = require('./metrics');
@@ -289,9 +290,22 @@ class VehicleTracker {
   #rebuildSnapshot({ source, stale }) {
    const cutoff = Date.now() - config.vehicles.staleAfterMs;
    const vehicles = [];
+   const roster = sharedRoster();
    this.nextStopIndex = new Map();
    for (const vehicle of this.fleet.values()) {
      if (vehicle.updatedAt < cutoff) continue;
+     // What the side number is attached to: model, low floor, wheelchair
+     // space, air conditioning. A shared frozen object per model, so this is a
+     // map lookup rather than an allocation for each of several hundred
+     // vehicles, six times a minute. The feed's own `vehicle_types.txt` fills
+     // whatever the roster does not name — most feeds ship no such table, and
+     // then this is exactly the roster's answer. Derived from `vehicleNumber`,
+     // `type` and the trip, all already compared below, so it needs no place
+     // of its own in the content-change check.
+     const fleet = combineFleet(
+       roster.describe(vehicle.vehicleNumber, vehicle.type),
+       this.gtfs?.getVehicleType?.(vehicle.trip?.vehicleTypeId) ?? null,
+     );
      vehicles.push({
         id: vehicle.id,
         line: vehicle.line,
@@ -313,6 +327,10 @@ class VehicleTracker {
         ...(vehicle.positionUpdatedAt !== undefined
           ? { positionUpdatedAt: vehicle.positionUpdatedAt }
          : {}),
+        // Omitted rather than sent as a row of nulls: MPK's own feed carries no
+        // side number until an Open Data record is merged in, so most of the
+        // fleet has nothing to say here on a cold start.
+        ...(fleet !== FLEET_UNKNOWN ? { fleet } : {}),
        });
 
       // Index live vehicles by their current next stop, so /stop/:id/departures
