@@ -142,7 +142,7 @@ export default function MapScreen() {
     async (signal) => {
       try {
         const response = await getIncidents({ signal, retryWhileLoading: false });
-        return response.incidents.filter((incident) => incident.status !== 'resolved').length;
+        return response.incidents.filter((incident) => incident.status === 'active').length;
       } catch {
         const response = await getAlerts({ signal, retryWhileLoading: false });
         return response.alerts.length;

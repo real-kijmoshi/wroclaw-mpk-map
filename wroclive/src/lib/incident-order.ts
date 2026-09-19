@@ -25,21 +25,22 @@ const bySeverityThenNewest = (left: Incident, right: Incident) =>
   SEVERITY_RANK[right.severity] - SEVERITY_RANK[left.severity] || newestFirst(left, right);
 
 /**
- * Active service impact always outranks history. Within active incidents the
- * rider's selected lines come first; resolved incidents form the final,
- * newest-first section regardless of line relevance.
+ * Confirmed active service impact outranks history. Stale reports whose
+ * current state is unknown stay after resolved reports, never among active
+ * disruptions.
  */
 export function orderIncidentsForSelectedLines(
   incidents: Incident[],
   selectedLines: readonly string[],
 ): IncidentSection[] {
-  const active = incidents.filter((incident) => incident.status !== 'resolved').sort(bySeverityThenNewest);
+  const active = incidents.filter((incident) => incident.status === 'active').sort(bySeverityThenNewest);
   const resolved = incidents.filter((incident) => incident.status === 'resolved').sort(newestFirst);
+  const unknown = incidents.filter((incident) => incident.status === 'unknown').sort(newestFirst);
   const sections: IncidentSection[] = [];
 
   if (!selectedLines.length) {
     if (active.length) {
-      sections.push({ heading: resolved.length ? 'Aktywne utrudnienia' : null, incidents: active });
+      sections.push({ heading: resolved.length || unknown.length ? 'Aktywne utrudnienia' : null, incidents: active });
     }
   } else {
     const selected = new Set(selectedLines.map((line) => line.toUpperCase()));
@@ -50,7 +51,7 @@ export function orderIncidentsForSelectedLines(
     if (relevant.length) sections.push({ heading: 'Twoje linie', incidents: relevant });
     if (other.length) {
       sections.push({
-        heading: relevant.length ? 'Pozostałe aktywne' : (resolved.length ? 'Aktywne utrudnienia' : null),
+        heading: relevant.length ? 'Pozostałe aktywne' : (resolved.length || unknown.length ? 'Aktywne utrudnienia' : null),
         incidents: other,
       });
     }
@@ -58,6 +59,10 @@ export function orderIncidentsForSelectedLines(
 
   if (resolved.length) {
     sections.push({ heading: 'Przywrócono ruch', incidents: resolved });
+  }
+
+  if (unknown.length) {
+    sections.push({ heading: 'Stan niepotwierdzony', incidents: unknown });
   }
 
   return sections;

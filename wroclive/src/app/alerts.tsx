@@ -62,6 +62,9 @@ export default function AlertsScreen() {
   const selectedLines = useSelectedLines();
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+  const displayedIncident = selectedIncident && disruptions.data?.kind === 'incidents'
+    ? disruptions.data.data.incidents.find((incident) => incident.id === selectedIncident.id) ?? selectedIncident
+    : selectedIncident;
 
   // The list and detail intentionally share one scroller. Reset its retained
   // offset after either view is committed, otherwise a card opened low in the
@@ -110,8 +113,8 @@ export default function AlertsScreen() {
             {!!disruptions.error && !!disruptions.data && <RefreshWarning />}
             {disruptions.error && !disruptions.data ? (
               <ErrorState />
-            ) : selectedIncident ? (
-              <IncidentDetail incident={selectedIncident} onShowMap={() => showMap(selectedIncident)} />
+            ) : displayedIncident ? (
+              <IncidentDetail incident={displayedIncident} onShowMap={() => showMap(displayedIncident)} />
             ) : disruptions.data?.kind === 'alerts' ? (
               <RawAlerts
                 alerts={disruptions.data.data.alerts}
@@ -156,6 +159,7 @@ export default function AlertsScreen() {
 function IncidentCard({ incident, onPress }: { incident: Incident; onPress: () => void }) {
   const theme = useTheme();
   const latest = incident.timeline.at(-1)?.timestamp ?? incident.lastUpdatedAt;
+  const active = incident.status === 'active';
   const resolved = incident.status === 'resolved';
   const name = incidentName(incident);
   const title = clean(incident.title);
@@ -168,10 +172,10 @@ function IncidentCard({ incident, onPress }: { incident: Incident; onPress: () =
       accessibilityHint="Otwiera oś czasu"
       style={({ pressed }) => [pressed && styles.pressed]}>
       <View
-        style={[styles.card, resolved && styles.resolvedCard, { backgroundColor: theme.backgroundCard }]}>
+        style={[styles.card, !active && styles.resolvedCard, { backgroundColor: theme.backgroundCard }]}>
         <View style={styles.cardTopline}>
           <StatusChip status={incident.status} />
-          {!resolved && incident.severity === 'major' && (
+          {active && incident.severity === 'major' && (
             <Ionicons
               name="warning"
               size={14}
@@ -239,7 +243,7 @@ function IncidentDetail({ incident, onShowMap }: { incident: Incident; onShowMap
           )}
         </View>
         <View style={styles.detailStatus}>
-          {incident.status !== 'resolved' && incident.severity === 'major' && (
+          {incident.status === 'active' && incident.severity === 'major' && (
             <Ionicons
               name="warning"
               size={14}
@@ -251,6 +255,12 @@ function IncidentDetail({ incident, onShowMap }: { incident: Incident; onShowMap
         </View>
       </View>
 
+      {incident.status === 'unknown' && (
+        <ThemedText type="footnote" themeColor="textSecondary">
+          Nie potwierdzono, czy utrudnienie nadal trwa. Ostatnia informacja: {formatAge(incident.lastUpdatedAt)}.
+        </ThemedText>
+      )}
+
       {incident.affected.length > 0 && (
         <View style={styles.affectedBlock}>
           <ThemedText type="footnote" weight="semibold" themeColor="textSecondary">
@@ -261,7 +271,7 @@ function IncidentDetail({ incident, onShowMap }: { incident: Incident; onShowMap
       )}
 
       {!!summary && !summaryIsTheTimeline && (
-        <Section title="Stan obecny">
+        <Section title={incident.status === 'unknown' ? 'Ostatnia informacja' : 'Stan obecny'}>
           <View style={styles.summary}>
             <ThemedText type="body">{summary}</ThemedText>
           </View>
@@ -332,7 +342,7 @@ function StatusChip({ status }: { status: Incident['status'] }) {
   const resolved = status === 'resolved';
   const active = status === 'active';
   const color = resolved ? theme.success : active ? theme.danger : theme.textSecondary;
-  const label = resolved ? 'Przywrócono ruch' : active ? 'Aktywne' : 'Aktualizacja';
+  const label = resolved ? 'Przywrócono ruch' : active ? 'Aktywne' : 'Stan niepotwierdzony';
 
   return (
     <View
@@ -347,31 +357,34 @@ function StatusChip({ status }: { status: Incident['status'] }) {
 
 function IncidentOverview({ incidents }: { incidents: Incident[] }) {
   const theme = useTheme();
-  const active = incidents.filter((incident) => incident.status !== 'resolved').length;
-  const resolved = incidents.length - active;
+  const active = incidents.filter((incident) => incident.status === 'active').length;
+  const resolved = incidents.filter((incident) => incident.status === 'resolved').length;
+  const unknown = incidents.length - active - resolved;
 
   return (
     <View style={[styles.overview, { backgroundColor: theme.backgroundCard }]}>
       <View style={[
         styles.overviewIcon,
-        { backgroundColor: withAlpha(active ? theme.danger : theme.success, 0.14) },
+        { backgroundColor: withAlpha(active ? theme.danger : unknown ? theme.textSecondary : theme.success, 0.14) },
       ]}>
         <Ionicons
-          name={active ? 'warning-outline' : 'checkmark-circle-outline'}
+          name={active ? 'warning-outline' : unknown ? 'help-circle-outline' : 'checkmark-circle-outline'}
           size={22}
-          color={active ? theme.danger : theme.success}
+          color={active ? theme.danger : unknown ? theme.textSecondary : theme.success}
         />
       </View>
       <View style={styles.overviewCopy}>
         <ThemedText type="headline">
           {active
             ? `${active} ${plural(active, ['aktywne utrudnienie', 'aktywne utrudnienia', 'aktywnych utrudnień'])}`
-            : 'Ruch bez aktywnych utrudnień'}
+            : unknown ? 'Brak potwierdzonych utrudnień' : 'Ruch bez aktywnych utrudnień'}
         </ThemedText>
         <ThemedText type="footnote" themeColor="textSecondary">
-          {resolved
-            ? `${resolved} ${plural(resolved, ['zakończone zdarzenie', 'zakończone zdarzenia', 'zakończonych zdarzeń'])} poniżej`
-            : 'Lista odświeża się automatycznie'}
+          {unknown
+            ? `${unknown} ${plural(unknown, ['zgłoszenie bez potwierdzenia', 'zgłoszenia bez potwierdzenia', 'zgłoszeń bez potwierdzenia'])} poniżej`
+            : resolved
+              ? `${resolved} ${plural(resolved, ['zakończone zdarzenie', 'zakończone zdarzenia', 'zakończonych zdarzeń'])} poniżej`
+              : 'Lista odświeża się automatycznie'}
         </ThemedText>
       </View>
     </View>

@@ -12,6 +12,8 @@ const { stripHtml } = require('./html');
 const { validateModel } = require('./runtime-settings');
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
+// A silent source cannot confirm that an old disruption is still in progress.
+const ACTIVE_INCIDENT_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 
 const asArray = (value) => (Array.isArray(value) ? value : value ? [value] : []);
 
@@ -902,11 +904,16 @@ class AlertsService {
   }
 
   /**
-   * @param {{ since?: number, line?: string, status?: string|null }} options
+   * @param {{ since?: number, line?: string, status?: string|null, now?: number }} options
    */
-  getIncidents({ since = 0, line = null, status = null } = {}) {
+  getIncidents({ since = 0, line = null, status = null, now = Date.now() } = {}) {
     const wantedLine = line ? String(line).toUpperCase() : null;
-    return this.incidents.filter(
+    return this.incidents.map((incident) =>
+      incident.status === 'active' &&
+      now - incident.lastUpdatedAt >= ACTIVE_INCIDENT_MAX_AGE_MS
+        ? { ...incident, status: 'unknown' }
+        : incident,
+    ).filter(
       (incident) =>
         incident.lastUpdatedAt >= since &&
         (!wantedLine || incident.affected.includes(wantedLine)) &&
