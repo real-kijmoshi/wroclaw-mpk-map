@@ -313,6 +313,17 @@ their own copy of the same `Platform.select` shadow.
 - **The server says when it does not know.** MPK's feed has no trip id, so the
   run is inferred; when it cannot be identified there is no delay, only remaining
   running time — the sheet shows "Brak rozkładu", not a plausible-looking number.
+- **A vehicle's own attributes are a tri-state, not a boolean.** Model, low
+  floor, wheelchair space and air conditioning reach `vehicle.fleet` already
+  merged by the server — from the timetable's `vehicle_types.txt` where the
+  feed ships one, from its side-number roster where it does not — so `null`
+  means neither source said. `VehicleAmenities` in `vehicle-details.tsx` draws
+  that as "brak danych" and drops the card when nothing at all is known.
+  Rendering a missing field as "nie" tells a rider there is no ramp on the
+  strength of a blank cell; rendering it as "tak" sends them to a stop they
+  cannot board at. `normaliseFleet()` in `src/lib/api.ts` is what keeps `false`
+  and "not stated" apart, and `server/views/map.html` carries the same three
+  labels.
 
 ## Shipping updates (OTA)
 

@@ -22,6 +22,7 @@ const { fetchKlosokFeed } = require('../src/klosok/fetch');
 const { parseRealtime: parseKlosokRealtime } = require('../src/klosok/realtime');
 const { resolveFeedCandidates } = require('../src/gtfs/catalogue');
 const { assertComplete } = require('../src/gtfs/store');
+const { FILE_NAMES, readVehicleTypes } = require('../src/gtfs/vehicle-types');
 
 const PASS = '[32m✔[0m';
 const FAIL = '[31m✘[0m';
@@ -39,6 +40,45 @@ const timed = async (task) => {
   const startedAt = Date.now();
   const value = await task();
   return { value, ms: Date.now() - startedAt };
+};
+
+/**
+ * Print what the feed says about its own stock.
+ *
+ * Whether a snapshot carries `vehicle_types.txt` decides where a vehicle's
+ * model, low floor and air conditioning come from: the feed if it does, and the
+ * hand-kept roster in `src/fleet-roster.json` if it does not. That question
+ * cannot be answered from the test suite — it has no network — so this is the
+ * command that answers it, and it prints the header and a couple of rows so an
+ * unfamiliar column layout is visible rather than merely absent.
+ */
+const describeVehicleTypes = (zip) => {
+  const entry = zip
+    .getEntries()
+    .find((candidate) => FILE_NAMES.includes(candidate.entryName.split('/').pop().toLowerCase()));
+
+  if (!entry) {
+    console.log(
+      `      ${DIM('no vehicle_types.txt — model/low floor/air conditioning come from src/fleet-roster.json')}`,
+    );
+    return;
+  }
+
+  const text = entry.getData().toString('utf8');
+  const [header, ...rows] = text.split(/\r?\n/).filter((line) => line.trim());
+  const types = readVehicleTypes(zip);
+
+  console.log(`      ${DIM(`${entry.entryName}: ${rows.length} rows, ${types.size} read`)}`);
+  console.log(`      ${DIM(`columns: ${header}`)}`);
+  for (const row of rows.slice(0, 3)) console.log(`      ${DIM(`  ${row}`)}`);
+
+  // What the reader actually made of them — a table whose columns it did not
+  // recognise still parses, and then answers null to everything.
+  for (const [id, value] of [...types].slice(0, 3)) {
+    console.log(
+      `      ${DIM(`  -> ${id}: ${value.model ?? '?'} · podłoga ${value.lowFloor ?? '?'} · wózek ${value.wheelchair ?? '?'} · klima ${value.airConditioning ?? '?'}`)}`,
+    );
+  }
 };
 
 const checkGtfs = async () => {
@@ -73,7 +113,8 @@ const checkGtfs = async () => {
 
       // Same completeness check the server applies before accepting a feed.
       assertComplete(buffer);
-      const names = new AdmZip(buffer)
+      const zip = new AdmZip(buffer);
+      const names = zip
         .getEntries()
         .map((entry) => entry.entryName)
         .filter((name) => name.endsWith('.txt'));
@@ -84,6 +125,11 @@ const checkGtfs = async () => {
         true,
         `${(buffer.length / 1e6).toFixed(1)} MB in ${ms} ms — ${names.length} tables`,
       );
+      // The whole list, because the tables beyond the GTFS core are where this
+      // feed keeps its extras (`vehicle_types.txt`, `trips.vehicle_id`) and
+      // there is no published schema to check them against.
+      console.log(`      ${DIM(names.map((name) => name.split('/').pop()).sort().join(', '))}`);
+      describeVehicleTypes(zip);
     } catch (error) {
       report('gtfs', url, false, error.message);
     }

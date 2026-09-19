@@ -746,6 +746,42 @@
         .board__status span:last-child { color: #94A3B8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .board__status.warn span:first-child { color: var(--amber); }
 
+        /*
+         * What the vehicle is, and what a rider needs to know before it pulls
+         * up. None of it is in a live feed — the server reads it out of a
+         * roster keyed on the side number (src/fleet-roster.json) — so the
+         * state that matters here is the third one: an attribute nobody stated
+         * is drawn as "brak danych", never as "nie". Telling someone there is a
+         * ramp when there is not is worse than telling them nothing, and the
+         * muted chip is what keeps the two apart at a glance. Amber stays on
+         * the countdown, so a stated "tak" borrows --live instead.
+         */
+        .board__fleet { padding: 0 14px 12px; margin-top: -2px; }
+        .board__model {
+            font-size: 13px;
+            color: #F8FAFC;
+            font-weight: 600;
+            margin-bottom: 8px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .board__model span { color: #94A3B8; font-weight: 400; }
+        .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+        .chip {
+            font-size: 12px;
+            line-height: 1;
+            padding: 6px 9px;
+            border-radius: 999px;
+            border: 1px solid var(--ink-line);
+            color: #94A3B8;
+            white-space: nowrap;
+        }
+        .chip b { font-weight: 600; color: #CBD5E1; }
+        .chip--yes { border-color: rgba(22, 163, 74, 0.5); color: #CBD5E1; }
+        .chip--yes b { color: var(--live); }
+        .chip--unknown { opacity: 0.75; }
+
         /* A rail of dots down the row, standing in for the line badge a
            departures row has: this list is all one line, so repeating it would
            say nothing a stop name doesn't already. */
@@ -1063,6 +1099,12 @@
         let currentVehicleId = null;
         let currentTrip = null;
         let tripStale = false;
+        /**
+         * The followed vehicle as /vehicle/:id described it — side number and
+         * the roster's answer for it. Static for the life of the selection, so
+         * it is kept beside the trip rather than re-read on every poll.
+         */
+        let currentVehicleInfo = null;
 
         try {
             const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
@@ -1518,6 +1560,7 @@
             currentVehicleLine = null;
             currentVehicleTint = null;
             currentTrip = null;
+            currentVehicleInfo = null;
             tripStale = false;
             if (activePane === 'vehicle') setPane('lines');
             renderVehicles();
@@ -1570,6 +1613,7 @@
 
             currentVehicleId = key;
             currentTrip = null;
+            currentVehicleInfo = null;
             tripStale = false;
             renderVehicles();
 
@@ -1590,6 +1634,7 @@
                 const data = await apiGet('/vehicle/' + encodeURIComponent(id), { retries: 1 });
                 if (currentVehicleId !== id) return;
                 currentTrip = normaliseTrip(data.trip);
+                currentVehicleInfo = data.vehicle || null;
                 tripStale = false;
                 applyTripProgress(currentTrip);
             } catch (error) {
@@ -1685,7 +1730,52 @@
                         : 'Brak danych o kolejnych przystankach.') + '</div>';
             }
 
-            $('vehicleBoard').innerHTML = head + status + body;
+            $('vehicleBoard').innerHTML = head + status + fleetBlock(trip) + body;
+        }
+
+        /**
+         * What the vehicle is: model, side number, and the three things worth
+         * knowing before it arrives. The roster answers for the physical
+         * vehicle and the timetable's `wheelchair_accessible` answers for the
+         * run, so the roster wins where both speak — it describes the tram
+         * actually on the street. Anything neither states is drawn as "brak
+         * danych" rather than as a "nie" nobody said, and the block disappears
+         * entirely when there is nothing to state, which is most of the fleet:
+         * MPK's own feed carries no side number until an Open Data record is
+         * merged onto it.
+         */
+        function fleetBlock(trip) {
+            const vehicle = currentVehicleInfo;
+            const fleet = vehicle && vehicle.fleet ? vehicle.fleet : null;
+
+            const lowFloor = fleet && fleet.lowFloor
+                ? ({ full: 'pełna', partial: 'częściowa', none: 'brak' })[fleet.lowFloor] || null
+                : null;
+            const wheelchair = fleet && typeof fleet.wheelchair === 'boolean'
+                ? fleet.wheelchair
+                : (trip && typeof trip.wheelchairAccessible === 'boolean' ? trip.wheelchairAccessible : null);
+            const air = fleet && typeof fleet.airConditioning === 'boolean' ? fleet.airConditioning : null;
+
+            const yesNo = (value) => (value === null ? null : value ? 'tak' : 'nie');
+            const rows = [
+                ['Niska podłoga', lowFloor, lowFloor !== null && fleet.lowFloor !== 'none'],
+                ['Miejsce dla wózka', yesNo(wheelchair), wheelchair === true],
+                ['Klimatyzacja', yesNo(air), air === true],
+            ];
+
+            const model = fleet && fleet.model ? fleet.model : null;
+            const number = vehicle && vehicle.vehicleNumber != null ? String(vehicle.vehicleNumber) : null;
+            if (!model && !number && rows.every((row) => row[1] === null)) return '';
+
+            const chips = rows.map(([label, value, stated]) =>
+                '<span class="chip' + (stated ? ' chip--yes' : value === null ? ' chip--unknown' : '') + '">' +
+                escapeHtml(label) + ': <b>' + escapeHtml(value === null ? 'brak danych' : value) + '</b></span>').join('');
+
+            return '<div class="board__fleet">' +
+                '<div class="board__eyebrow">Pojazd</div>' +
+                '<div class="board__model">' + escapeHtml(model || 'Model nieznany') +
+                (number ? ' <span>nr ' + escapeHtml(number) + '</span>' : '') + '</div>' +
+                '<div class="chips">' + chips + '</div></div>';
         }
 
         function vehicleWhereText(trip) {

@@ -19,6 +19,7 @@ const {
   simplify,
 } = require('./geo');
 const { inWarsaw, parseTable, secondsToTime, streamTableFast, timeToSeconds } = require('./parse');
+const { readVehicleTypes } = require('./vehicle-types');
 const { GrowableFloat64Array, GrowableInt32Array } = require('./typed-arrays');
 
 const SHAPE_SIMPLIFY_METERS = 4;
@@ -43,6 +44,40 @@ const sameBoardingArea = (a, b) => {
   return distanceMeters(a.lat, a.lon, b.lat, b.lon) <= SAME_PLATFORM_RADIUS_METERS;
 };
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+/**
+ * GTFS `wheelchair_accessible` as a tri-state.
+ *
+ * The column encodes 1 accessible, 2 not, and 0 (or an absent column)
+ * explicitly means "no information". Reading 0 as false would state
+ * that a run has no wheelchair space on the strength of a field nobody filled
+ * in, so it maps to null along with everything unparseable.
+ */
+const parseWheelchair = (value) => {
+  if (value === undefined || value === null) return null;
+  const code = String(value).trim();
+  if (code === '1') return true;
+  if (code === '2') return false;
+  return null;
+};
+
+/** Columns a publisher might use to point a trip at its vehicle type. */
+const VEHICLE_TYPE_TRIP_KEYS = ['vehicle_type_id', 'vehicle_id', 'type_id'];
+
+/**
+ * The trip's vehicle type, or null when nothing on the row resolves to one.
+ *
+ * @param {Record<string, string>} row a trips.txt row
+ * @param {Map<string, object>} vehicleTypes the table read from the archive
+ */
+const resolveVehicleTypeId = (row, vehicleTypes) => {
+  if (!vehicleTypes.size) return null;
+  for (const key of VEHICLE_TYPE_TRIP_KEYS) {
+    const value = row[key];
+    if (value && vehicleTypes.has(value)) return value;
+  }
+  return null;
+};
 
 /**
  * How much a variant running the wrong way is penalised when matching a
@@ -159,6 +194,12 @@ class GtfsStore {
       tripIndexById: new Map(),
       /** @type {Map<string, number[]>} trips.vehicle_id -> trip indices */
       tripsByVehicleId: new Map(),
+      /**
+       * @type {Map<string, Readonly<object>>} vehicle_types.txt, when the feed
+       * ships one — see src/gtfs/vehicle-types.js. Empty for a feed that does
+       * not, which is the normal case.
+       */
+      vehicleTypes: new Map(),
       /** @type {Map<string, number[]>} trips.brigade_id -> trip indices */
       tripsByBrigade: new Map(),
       /** @type {Map<string, number[]>} shape_id -> trip indices running it */
@@ -195,6 +236,7 @@ class GtfsStore {
     this.trips = state.trips;
     this.tripIndexById = state.tripIndexById;
     this.tripsByVehicleId = state.tripsByVehicleId;
+    this.vehicleTypes = state.vehicleTypes;
     this.tripsByBrigade = state.tripsByBrigade;
     this.tripsByShape = state.tripsByShape;
     this.tripStart = state.tripStart;
@@ -204,6 +246,19 @@ class GtfsStore {
     this.departuresByStop = state.departuresByStop;
     this.lines = state.lines;
     this.status.counts = state.counts;
+  }
+
+  /**
+   * What the feed says a vehicle type is, or null.
+   *
+   * The feed is the better authority than the hand-kept roster in
+   * `src/fleet.js` whenever it answers at all, because it ships with the
+   * timetable and cannot go stale on its own. Most feeds carry no such table,
+   * so null is the ordinary answer and the roster is what covers it.
+   */
+  getVehicleType(id) {
+    if (!id) return null;
+    return this.vehicleTypes.get(id) ?? null;
   }
 
   get isReady() {
@@ -340,6 +395,11 @@ class GtfsStore {
 
     stage('agency', () => this.#buildAgency(state, zip));
     const routeIdToLine = stage('routes', () => this.#buildRoutes(state, zip));
+    // Before trips: `trips.vehicle_id` is only read as a *type* reference when
+    // this table resolves it, so the table has to be in hand first.
+    stage('vehicleTypes', () => {
+      state.vehicleTypes = readVehicleTypes(zip);
+    });
     const { representativeTripByShape } = stage('trips', () => this.#buildTrips(state, zip, routeIdToLine));
     stage('stops', () => this.#buildStops(state, zip));
     stage('calendar', () => this.#buildCalendar(state, zip));
@@ -445,12 +505,30 @@ class GtfsStore {
         headsign: row.trip_headsign || null,
         serviceId: row.service_id || null,
         directionId: row.direction_id === undefined ? null : Number.parseInt(row.direction_id, 10),
+        // GTFS's own answer to "can a wheelchair board this run": 1 yes, 2 no,
+        // 0/absent no information. Kept as a tri-state rather than collapsed
+        // to a boolean, because "the feed does not say" and "the feed says no"
+        // send a rider to two different places. Optional in the spec and
+        // absent from some snapshots, so null is the common case.
+        wheelchairAccessible: parseWheelchair(row.wheelchair_accessible),
         // Subcontractor fleets are matched to their runs through these: the
         // Wrocław feed is the authority on its own buses, but Kłosok's live
         // GTFS-RT positions identify a bus by vehicle or brigade rather than
         // trip on some days, and trips.txt is what connects those back here.
         vehicleId: row.vehicle_id || null,
         blockId: row.brigade_id || row.block_id || null,
+        // Which column joins a trip to `vehicle_types.txt` is a publishing
+        // convention, so several are tried — the same reasoning as the column
+        // aliases in vehicle-types.js, and the reason a single guessed name
+        // would silently join nothing.
+        //
+        // Resolution is the gate, not the column name: `vehicle_id` does double
+        // duty across the feeds this store reads — a type reference in
+        // Wrocław's, one physical bus in a subcontractor's, which Kłosok's
+        // GTFS-RT joins on — so an id is read as a type only when the type
+        // table actually holds it. A feed with no such table therefore changes
+        // nothing, and a fleet number is never printed to a rider as a model.
+        vehicleTypeId: resolveVehicleTypeId(row, state.vehicleTypes),
       });
       state.tripIndexById.set(row.trip_id, index);
 
@@ -711,6 +789,10 @@ class GtfsStore {
       trips: state.trips.length,
       stopTimes: state.stopTimes.trip.length,
       shapes: shapePoints.size,
+      // 0 means this snapshot ships no vehicle_types.txt, so every vehicle
+      // attribute has to come from the roster. It is in /health precisely so
+      // that question is answered by looking rather than by guessing.
+      vehicleTypes: state.vehicleTypes.size,
     };
 
     return state.counts;
