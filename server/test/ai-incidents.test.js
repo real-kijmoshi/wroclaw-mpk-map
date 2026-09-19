@@ -389,6 +389,24 @@ describe('AI incident validation', () => {
 });
 
 describe('AlertsService incident integration', () => {
+  it('stops presenting silent old reports as active without claiming resolution', () => {
+    const service = new AlertsService(() => new Set(), []);
+    const now = Date.parse('2026-09-19T12:00:00Z');
+    const hoursAgo = (hours) => now - hours * 60 * 60 * 1000;
+    service.incidents = [
+      { id: 'recent', status: 'active', lastUpdatedAt: hoursAgo(47), affected: ['4'] },
+      { id: 'boundary', status: 'active', lastUpdatedAt: hoursAgo(48), affected: ['4'] },
+      { id: 'old', status: 'active', lastUpdatedAt: hoursAgo(17 * 24), affected: ['6'] },
+      { id: 'resolved', status: 'resolved', lastUpdatedAt: hoursAgo(72), affected: ['4'] },
+    ];
+
+    assert.deepEqual(service.getIncidents({ now, status: 'active' }).map((item) => item.id), ['recent']);
+    assert.deepEqual(service.getIncidents({ now, status: 'unknown' }).map((item) => item.id), ['boundary', 'old']);
+    assert.deepEqual(service.getIncidents({ now, line: '4', status: 'unknown' }).map((item) => item.id), ['boundary']);
+    assert.deepEqual(service.getIncidents({ now, status: 'resolved' }).map((item) => item.id), ['resolved']);
+    assert.equal(service.incidents[1].status, 'active', 'read-time expiry must not rewrite cached source data');
+  });
+
   it('keeps raw alerts intact while publishing filterable fallback incidents', async () => {
     const rawItems = alerts.map(({ affected: _affected, types: _types, ...alert }) => alert);
     const service = new AlertsService(

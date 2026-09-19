@@ -513,6 +513,7 @@ export function normaliseAlerts(payload: unknown): Alerts {
 }
 
 const INCIDENT_STATUSES = new Set<Incident['status']>(['active', 'resolved', 'unknown']);
+const ACTIVE_INCIDENT_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const INCIDENT_SEVERITIES = new Set<Incident['severity']>([
   'minor',
   'moderate',
@@ -577,7 +578,11 @@ export function normaliseIncidents(payload: unknown): IncidentsResponse {
     return [{
       schemaVersion: Number.isFinite(value.schemaVersion) ? (value.schemaVersion as number) : null,
       id: value.id,
-      status: value.status as Incident['status'],
+      // Keep older server builds from presenting a silent, days-old source as
+      // a confirmed live disruption. Elapsed time does not prove resolution.
+      status: value.status === 'active' && Date.now() - (value.lastUpdatedAt as number) >= ACTIVE_INCIDENT_MAX_AGE_MS
+        ? 'unknown'
+        : value.status as Incident['status'],
       severity: value.severity as Incident['severity'],
       title: value.title,
       locationName: typeof value.locationName === 'string' ? value.locationName : null,
