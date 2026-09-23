@@ -19,7 +19,7 @@ import { useAreaStops } from '@/hooks/use-area-stops';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePoll } from '@/hooks/use-poll';
 import { useTheme } from '@/hooks/use-theme';
-import { getAlerts, getDeparturesForStops, getIncidents, getLocations, getShape, getStopsNear, getVehicle, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
+import { getAlerts, getDeparturesForStops, getIncidents, getLocations, getShape, getStopsNear, getVehicle, vehiclePollDelay, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
 import { REFRESH_MS } from '@/lib/config';
 import { plural } from '@/lib/format';
 import { colorFor } from '@/lib/lines';
@@ -133,7 +133,7 @@ export default function MapScreen() {
         retryWhileLoading: false,
       }),
     REFRESH_MS.vehicles,
-    { key: linesKey },
+    { key: linesKey, delayMs: followServer },
   );
 
   // Only for the count on the sheet's "Utrudnienia" row — the incidents screen
@@ -195,7 +195,7 @@ export default function MapScreen() {
   const detail = usePoll(
     (signal) => getVehicle(vehicleId as string, { signal }),
     REFRESH_MS.vehicles,
-    { enabled: Boolean(vehicleId), key: vehicleId ?? '' },
+    { enabled: Boolean(vehicleId), key: vehicleId ?? '', delayMs: followServer },
   );
 
   const departures = usePoll(
@@ -606,6 +606,9 @@ export default function MapScreen() {
 // A stable empty array: a new `[]` every render would re-run the effects that
 // push data into the map.
 const EMPTY_VEHICLES: never[] = [];
+
+/** Vehicle polls land just after the server's own poll rather than on a free-running timer. */
+const followServer = () => vehiclePollDelay(REFRESH_MS.vehicles);
 
 function freshnessLabel(lastUpdated: string | null, stale: boolean, now: number) {
   if (!lastUpdated) return stale ? 'Dane nieaktualne' : 'Live';

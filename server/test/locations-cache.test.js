@@ -143,3 +143,56 @@ describe('/locations body cache freshness', () => {
     }
   });
 });
+
+describe('next-update hint', () => {
+  const originalSources = config.vehicles.sources;
+  const originalOpenDataUrl = config.vehicles.openDataUrl;
+  let endpoint;
+
+  after(() => {
+    config.vehicles.sources = originalSources;
+    config.vehicles.openDataUrl = originalOpenDataUrl;
+    endpoint?.close();
+  });
+
+  // Clients used to poll on a free-running ten-second timer that drifted
+  // against the server's: a fresh position could wait a whole interval before
+  // a phone asked for it, and a rider watched the tram sit ~400 m short of the
+  // platform it was already at. The hint lets clients ask right after the
+  // server's poll lands, without polling any more often.
+  it('is null until the poll loop is armed, then counts down to the next poll', () => {
+    const tracker = new VehicleTracker(() => lines);
+    assert.equal(tracker.msUntilNextUpdate(), null);
+
+    tracker.nextPollAt = 10_000;
+    tracker.lastPollDurationMs = 400;
+    assert.equal(tracker.msUntilNextUpdate(3_000), 7_400);
+    assert.equal(tracker.msUntilNextUpdate(20_000), 0, 'never negative while a poll is running');
+  });
+
+  it('is sent on /locations, including a 304, and exposed to browsers', async () => {
+    endpoint = await startEndpoint(() => [{ name: '4', type: 'tram', x: 51.11, y: 17.032, k: 1 }]);
+    config.vehicles.sources = [`http://127.0.0.1:${endpoint.address().port}/bus_position`];
+    config.vehicles.openDataUrl = null;
+    const tracker = new VehicleTracker(() => lines);
+    await tracker.poll();
+    tracker.nextPollAt = Date.now() + 6_000;
+    tracker.lastPollDurationMs = 500;
+
+    const app = await startApp(tracker);
+    try {
+      const first = await app.get('/locations?format=map', { headers: { Origin: 'http://example.test' } });
+      const hint = Number(first.headers.get('x-next-update-in'));
+      assert.ok(hint > 5_000 && hint <= 6_500, `hint ${hint}`);
+      assert.match(first.headers.get('access-control-expose-headers') ?? '', /X-Next-Update-In/);
+
+      const second = await app.get('/locations?format=map', {
+        headers: { 'If-None-Match': first.headers.get('etag') },
+      });
+      assert.equal(second.status, 304);
+      assert.ok(second.headers.get('x-next-update-in'), 'a 304 carries the hint too');
+    } finally {
+      await app.stop();
+    }
+  });
+});
