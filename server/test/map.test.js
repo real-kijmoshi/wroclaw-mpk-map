@@ -385,3 +385,28 @@ describe('browser map', () => {
     );
   });
 });
+
+describe('vehicle refresh cadence', () => {
+  // Server poll + client poll stack: at ten seconds each a rider standing at
+  // the platform watched the tram sit ~400 m away for up to twenty seconds
+  // after it had arrived. Every link in the chain is pinned to five seconds.
+  const LIMIT_MS = 5000;
+  const config = require('../src/config');
+
+  it('polls MPK at most every five seconds', () => {
+    assert.ok(config.vehicles.pollIntervalMs <= LIMIT_MS, `${config.vehicles.pollIntervalMs} ms`);
+  });
+
+  it('refreshes vehicles in both clients at most every five seconds', () => {
+    for (const file of [MAP_HTML, LANDING_MAP_HTML]) {
+      const match = /VEHICLE_REFRESH_MS\s*=\s*(\d+)/.exec(fs.readFileSync(file, 'utf8'));
+      assert.ok(match, `VEHICLE_REFRESH_MS missing in ${path.basename(file)}`);
+      assert.ok(Number(match[1]) <= LIMIT_MS, `${path.basename(file)}: ${match[1]} ms`);
+    }
+
+    const appConfig = path.join(__dirname, '..', '..', 'wroclive', 'src', 'lib', 'config.ts');
+    const match = /vehicles:\s*([\d_]+)/.exec(fs.readFileSync(appConfig, 'utf8'));
+    assert.ok(match, 'REFRESH_MS.vehicles missing in config.ts');
+    assert.ok(Number(match[1].replace(/_/g, '')) <= LIMIT_MS, `app: ${match[1]} ms`);
+  });
+});

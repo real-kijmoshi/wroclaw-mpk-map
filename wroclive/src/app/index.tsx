@@ -569,6 +569,7 @@ export default function MapScreen() {
         {shownVehicleId ? (
           <VehicleDetails
             detail={detail.data}
+            ageSeconds={detail.receivedAt === null ? 0 : (now - detail.receivedAt) / 1_000}
             loading={detail.loading}
             error={detail.error}
             onOpenRoute={() => {
