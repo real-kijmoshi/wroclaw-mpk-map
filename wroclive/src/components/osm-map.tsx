@@ -24,6 +24,7 @@ export const OsmMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function Osm
     follow = false,
     fitRoute = false,
     userPosition,
+    stale = false,
     nearbyStops,
     selectedStopId,
     onSelectVehicle,
@@ -77,6 +78,10 @@ export const OsmMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function Osm
     // next stops payload to come round.
     mapRef.current?.send({ type: 'selectStop', id: selectedStopId ?? null });
   }, [selectedStopId]);
+
+  useEffect(() => {
+    mapRef.current?.send({ type: 'stale', stale });
+  }, [stale]);
 
   useEffect(() => {
     mapRef.current?.send({ type: 'user', position: userPosition });

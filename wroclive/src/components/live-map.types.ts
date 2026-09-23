@@ -9,6 +9,7 @@ export type MapCommand =
   | { type: 'user'; position: { lat: number; lon: number } | null }
   | { type: 'theme'; dark: boolean }
   | { type: 'markerStyle'; style: 'modern' | 'classic' }
+  | { type: 'stale'; stale: boolean }
   | { type: 'select'; id: string | null; follow?: boolean; center?: boolean }
   | { type: 'center'; lat: number; lon: number; zoom?: number; animate?: boolean };
 

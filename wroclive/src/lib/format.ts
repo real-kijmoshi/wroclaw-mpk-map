@@ -1,5 +1,14 @@
 /** Polish copy for the numbers the server serves. Sentence case, no filler. */
 
+/**
+ * What the countdown says when the vehicle is standing at that stop.
+ *
+ * "1 min" or "teraz" beside a tram that is already at the platform reads as
+ * the app being late; the server knows when a fix is within a stop's radius
+ * (`trip.atStop`), so the sheet says so instead of counting.
+ */
+export const AT_STOP_ETA = { value: 'jest', unit: 'na przystanku' } as const;
+
 /** A countdown, split so the number can carry the amber and the unit not. */
 export function etaParts(seconds: number | null | undefined): { value: string; unit: string } {
   if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) {

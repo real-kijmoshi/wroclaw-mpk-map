@@ -2278,8 +2278,34 @@
         applyDetents();
 
         loadLines();
+        /**
+         * A link shared from the app: `?stop=<id>&name=&lat=&lon=` opens that
+         * stop's board, `?vehicle=<id>` follows that vehicle once the first
+         * fleet has loaded. The stop link carries its own name and position so
+         * the board opens without a lookup; a vehicle that has since finished
+         * its run is simply not found, and the map opens as usual.
+         */
+        const shared = new URLSearchParams(location.search);
+        const sharedVehicle = shared.get('vehicle');
+        (function openSharedStop() {
+            const id = shared.get('stop');
+            const lat = Number.parseFloat(shared.get('lat') || '');
+            const lon = Number.parseFloat(shared.get('lon') || '');
+            if (!id || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
+            map.setView([lat, lon], 17);
+            openStop({ id, name: shared.get('name') || '', lat, lon });
+        })();
+
         (async function pollVehicles() {
             await loadVehicles();
+            if (pollVehicles.first !== false) {
+                pollVehicles.first = false;
+                const vehicle = sharedVehicle && vehicles.find((entry) => vehicleKey(entry) === sharedVehicle);
+                if (vehicle) {
+                    map.setView([vehicle.lat, vehicle.lon], 16);
+                    selectVehicle(vehicle, vehicleKey(vehicle));
+                }
+            }
             setTimeout(pollVehicles, vehiclePollDelay());
         })();
         loadAlerts();

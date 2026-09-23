@@ -10,6 +10,7 @@ import { getLines } from '@/lib/api';
 import { hydratePreferences, usePreferences } from '@/lib/preferences';
 import { ACCENT } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { hydrateFavouriteStops } from '@/lib/favourite-stops';
 import { hydrateRecentStops } from '@/lib/recent-stops';
 import { hydrateSelection, selectionStore } from '@/lib/selection';
 import { syncUpdates, watchForUpdatesOnResume } from '@/lib/updates';
@@ -96,7 +97,7 @@ export default function RootLayout() {
     const init = async () => {
       try {
         const hasStoredSelection = await hydrateSelection();
-        await Promise.all([hydratePreferences(), hydrateRecentStops()]);
+        await Promise.all([hydratePreferences(), hydrateRecentStops(), hydrateFavouriteStops()]);
 
         // On the very first launch there is no saved filter — defaulting to the
         // whole fleet can lag the first paint on a phone. Start with trams only;

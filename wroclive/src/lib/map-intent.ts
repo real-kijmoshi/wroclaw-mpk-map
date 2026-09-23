@@ -19,7 +19,9 @@ import type { FleetVehicle, LineType, Stop } from '@/lib/api';
 export type MapIntent =
   | { kind: 'open-stop'; stop: Stop }
   | { kind: 'open-line'; line: string; type: LineType }
-  | { kind: 'open-vehicle'; vehicle: FleetVehicle };
+  | { kind: 'open-vehicle'; vehicle: FleetVehicle }
+  /** From a link: only the id is known until the server answers for it. */
+  | { kind: 'open-vehicle-id'; id: string };
 
 let pending: MapIntent | null = null;
 const listeners = new Set<() => void>();
@@ -47,6 +49,11 @@ export const mapIntentStore = {
 
   openVehicle(vehicle: FleetVehicle) {
     pending = { kind: 'open-vehicle', vehicle };
+    emit();
+  },
+
+  openVehicleId(id: string) {
+    pending = { kind: 'open-vehicle-id', id };
     emit();
   },
 

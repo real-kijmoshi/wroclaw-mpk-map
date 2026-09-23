@@ -2,7 +2,7 @@ import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 
 import { LineBadge } from './line-badge';
 import { ThemedText } from './themed-text';
-import { CloseButton } from './vehicle-details';
+import { CloseButton, HeaderButton } from './vehicle-details';
 import { Radius, Space } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
 import type { Departures, Stop } from '@/lib/api';
@@ -19,11 +19,17 @@ import { distanceMeters } from '@/lib/stops-api';
 export function StopSummary({
   stop,
   userPosition,
+  favourite,
+  onToggleFavourite,
+  onShare,
   onClose,
 }: {
   stop: Stop;
   /** Where the rider is, when that is known. */
   userPosition: { lat: number; lon: number } | null;
+  favourite: boolean;
+  onToggleFavourite: () => void;
+  onShare: () => void;
   onClose: () => void;
 }) {
   const theme = useTheme();
@@ -57,6 +63,15 @@ export function StopSummary({
         </ThemedText>
       </View>
 
+      <HeaderButton
+        icon={favourite ? 'star' : 'star-outline'}
+        // Amber is for countdowns; a lit star is told apart by its fill.
+        color={favourite ? theme.text : undefined}
+        label={favourite ? 'Usuń z ulubionych' : 'Dodaj do ulubionych'}
+        selected={favourite}
+        onPress={onToggleFavourite}
+      />
+      <HeaderButton icon="share-outline" label="Udostępnij przystanek" onPress={onShare} />
       <CloseButton onPress={onClose} label="Zamknij odjazdy" />
     </View>
   );

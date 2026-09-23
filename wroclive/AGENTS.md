@@ -325,6 +325,53 @@ their own copy of the same `Platform.select` shadow.
   and "not stated" apart, and `server/views/map.html` carries the same three
   labels.
 
+## Outside the app: links, alerts, the widget, the Live Activity
+
+Four things reach the rider when the map is not on screen. All four are fed by
+the app — none has a server of its own — and that is the rule to keep.
+
+- **Links** (`src/lib/links.ts`, `src/app/+native-intent.tsx`). What a rider
+  *shares* is an https link to the browser map (`SITE_URL/map.html?stop=…` or
+  `?vehicle=…`), because the person receiving it may not have the app; both
+  `server/views/map.html` and `landing/map.html` open those parameters. What
+  the system hands *back* — a tap on the widget or the Live Activity — is
+  `wroclive://open?…`, which `+native-intent` turns into the same one-shot
+  map intent search posts. There is no route per stop: the map is the only
+  screen that can show one. A stop link carries its own name and position so
+  it opens without a lookup.
+- **Arrival alerts** (`src/lib/arrival-alerts.ts`). Tap a stop in a vehicle's
+  list: a *local* notification two minutes before the ETA, rescheduled on
+  every poll while the app runs. Once the app is suspended the last schedule
+  stands — a tram that then loses time is announced early, never dropped.
+  `expo-notifications`' config plugin is deliberately **not** in `app.json`:
+  it writes a push entitlement, and these alerts are local. Permission is
+  asked when a rider arms an alert, never at launch.
+- **The home-screen widget** (`src/widgets/layouts.tsx`,
+  `src/lib/widgets.ios.ts`, `src/hooks/use-widget-sync.ts`). The first starred
+  stop's departures. WidgetKit cannot fetch, so the app pushes a half-hour
+  *timeline* — the same rows once a minute, each entry counting from its own
+  date — on launch, on resume and every five minutes. iOS only: `expo-widgets`
+  has Android behind an experimental flag, and `widgets.ts` is the no-op for
+  everything else.
+- **The Live Activity** — the arrival alert's countdown on the lock screen and
+  in the Dynamic Island, started and ended with the alert. The countdown is a
+  native timer, so it keeps ticking with the app suspended; the stale date
+  greys it out when nothing has refreshed it.
+
+Two rules that are not optional:
+
+- **A `'widget'` function is a string, not a closure.** babel-preset-expo
+  compiles it to source text that runs inside the widget extension, where
+  `@expo/ui`'s views and modifiers are globals. Use those names exactly as
+  imported — no aliases — and nothing else from the module or the app: no
+  helper, no constant, no theme import. Colours come in through props.
+- **`expo-widgets` is not in Expo Go** and resolves its native module at module
+  scope. `widgets.ios.ts` requires `src/widgets/layouts.tsx` only after
+  `requireOptionalNativeModule('ExpoWidgets')` — the `expo-maps` guard again.
+  `plugins/without-push-entitlement.js` strips the push entitlement
+  `expo-widgets` writes unconditionally; it must stay listed *before*
+  `expo-widgets` in `app.json`, because mods run in reverse plugin order.
+
 ## Shipping updates (OTA)
 
 An update carries JS and assets. Everything in `src/` goes this way; SDK bumps,
@@ -386,6 +433,10 @@ picked up, so both must work at once — that is what invariant 9 buys.
 | `src/lib/selection.ts` / `preferences.ts` | Line filter and settings, persisted |
 | `src/lib/config.ts` | API URL (`EXPO_PUBLIC_API_URL` wins) and poll intervals |
 | `src/lib/updates.ts` | The only module touching `expo-updates`; inert off release builds |
+| `src/lib/favourite-stops.ts` / `recent-stops.ts` | Starred and recently opened stops, persisted |
+| `src/lib/links.ts`, `src/app/+native-intent.tsx` | Share links out, `wroclive://` links in |
+| `src/lib/arrival-alerts.ts` | Local "2 min before" notification; drives the Live Activity |
+| `src/widgets/layouts.tsx`, `src/lib/widgets*.ts` | iOS widget and Live Activity; guarded, iOS only |
 | `src/components/map-view*.tsx` | Platform pick for `MapView` |
 | `src/components/native-map.tsx` | `react-native-maps` surface — iOS/MapKit only |
 | `src/components/apple-map*.tsx` | `expo-maps` MapKit surface (unused, keep guarded) |
