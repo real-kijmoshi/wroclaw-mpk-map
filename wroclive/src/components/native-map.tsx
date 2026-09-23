@@ -344,7 +344,9 @@ const VehicleMarker = memo(
           onPress(vehicle.id);
         }}
         accessibilityLabel={
-          towards ? `Linia ${vehicle.line} do ${towards}` : `Linia ${vehicle.line}`
+          // The fade is visual; VoiceOver has to hear that the position is old too.
+          (towards ? `Linia ${vehicle.line} do ${towards}` : `Linia ${vehicle.line}`) +
+          (stale ? ', pozycja nieaktualna' : '')
         }>
         <View
           style={[
@@ -1090,9 +1092,6 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
     </Maps>
   );
 });
-
-/** Whether this build can offer the platform's own map at all. */
-export const nativeMapAvailable = true;
 
 const ANCHOR_CENTRE: MapMarkerProps['anchor'] = { x: 0.5, y: 0.5 };
 const APPLE_CENTRE_OFFSET: NonNullable<MapMarkerProps['centerOffset']> = { x: 0, y: 0 };

@@ -10,8 +10,7 @@ export type { MapSurfaceHandle, MapSurfaceProps, MapRoute } from './map-surface.
  *
  * `NativeMap` switches to its UrlTile layer when OpenStreetMap is selected; the
  * Leaflet page is reserved for browsers, where `react-native-maps` has no
- * implementation. The `expo-maps` MapKit surface (`apple-map.ios.tsx`) exists
- * for a future switch but is not wired in here.
+ * implementation.
  */
 export const MapView = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function MapView(props, ref) {
   return <NativeMap ref={ref} {...props} />;

@@ -145,6 +145,23 @@ export async function apiGet<T>(path: string, options: GetOptions = {}): Promise
   }
 }
 
+/**
+ * A write — the only kind is the Live Activity registration. Not retried: it
+ * is best-effort by design, and the activity keeps working without it.
+ */
+export async function apiSend(method: 'POST' | 'DELETE', path: string, body?: unknown): Promise<boolean> {
+  try {
+    const response = await fetch(`${API_URL}${path}`, {
+      method,
+      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /* Payload types — mirrors of what server/src/routes.js actually serves.        */
 /* -------------------------------------------------------------------------- */

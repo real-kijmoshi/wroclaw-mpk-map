@@ -56,25 +56,47 @@
           "isIosBackgroundLocationEnabled": false
         }
       ],
-      "expo-maps",
-      "./plugins/without-push-entitlement",
       [
         "expo-widgets",
         {
+          "enablePushNotifications": true,
           "widgets": [
             {
               "name": "Departures",
               "displayName": "Odjazdy",
               "description": "Najbliższe odjazdy z ulubionego przystanku.",
               "ios": {
-                "supportedFamilies": ["systemSmall", "systemMedium"]
+                "supportedFamilies": [
+                  "systemSmall",
+                  "systemMedium",
+                  "accessoryRectangular",
+                  "accessoryInline",
+                  "accessoryCircular"
+                ],
+                "configuration": {
+                  "title": "Przystanek",
+                  "description": "Który z ulubionych przystanków pokazać.",
+                  "parameters": {
+                    "slot": {
+                      "title": "Ulubiony przystanek",
+                      "type": "enum",
+                      "values": [
+                        { "name": "Pierwszy", "value": "first" },
+                        { "name": "Drugi", "value": "second" },
+                        { "name": "Trzeci", "value": "third" }
+                      ],
+                      "default": "first"
+                    }
+                  }
+                }
               }
             }
           ]
         }
       ],
-      "expo-image",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-background-task",
+      "./plugins/without-background-fetch"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -1,9 +1,11 @@
 import { requireOptionalNativeModule } from 'expo';
 
-import type { Departure, Stop } from '@/lib/api';
+import { apiSend, type Departure } from '@/lib/api';
 import { Colors } from '@/constants/theme';
 import { stopAppUrl, vehicleAppUrl } from '@/lib/links';
+import type { FavouriteStop } from '@/lib/favourite-stops';
 import { colorFor } from '@/lib/lines';
+import { walkSeconds } from '@/lib/walking';
 import type { ArrivalActivityInput } from '@/lib/widgets';
 
 export type { ArrivalActivityInput } from '@/lib/widgets';
@@ -20,9 +22,11 @@ export type { ArrivalActivityInput } from '@/lib/widgets';
  * the app suspended, refreshed on every poll while the app runs, and a stale
  * date so the system greys it out when that stops.
  *
+ * While the app is suspended the server takes over the Live Activity through
+ * APNs, when it has a key for it (`registerPush` below).
+ *
  * `expo-widgets` is not in Expo Go and resolves its native module at module
- * scope, so the layouts are required only once the module is known to exist —
- * the same guard the `expo-maps` surface uses.
+ * scope, so the layouts are required only once the module is known to exist.
  */
 
 export const widgetsAvailable = requireOptionalNativeModule('ExpoWidgets') !== null;
@@ -34,25 +38,41 @@ const layouts: typeof import('@/widgets/layouts') | null = widgetsAvailable ? re
 const TIMELINE_MINUTES = 30;
 /** Past its arrival by this much, an un-refreshed activity is marked stale. */
 const ACTIVITY_STALE_AFTER_MS = 60_000;
+/** The configuration menu offers three slots (`app.json`). */
+export const WIDGET_STOPS = 3;
 
 const amber = { amberLight: Colors.light.amber, amberDark: Colors.dark.amber };
 
-export function syncDeparturesWidget(stop: Stop | null, departures: Departure[] | null, now = Date.now()) {
+export type WidgetBoard = { stop: FavouriteStop; departures: Departure[] };
+
+/**
+ * Hand the widget a fresh timeline for the first starred stops.
+ *
+ * `position` is where the rider last was, for the walking estimate; it never
+ * leaves the phone. An empty list puts the widget back to "add a favourite".
+ */
+export function syncDeparturesWidget(
+  boards: WidgetBoard[],
+  position: { lat: number; lon: number } | null,
+  now = Date.now(),
+) {
   if (!layouts) return;
   try {
     const props = {
       ...amber,
-      stopName: stop?.name ?? null,
-      url: stop ? stopAppUrl(stop) : 'wroclive://',
-      rows: (departures ?? []).slice(0, 12).map((departure) => ({
-        line: departure.line,
-        color: colorFor(departure.type),
-        headsign: departure.headsign ?? '',
-        at: now + (departure.predictedInSeconds ?? departure.inSeconds) * 1_000,
-        realtime: Boolean(departure.realtime),
+      stops: boards.slice(0, WIDGET_STOPS).map(({ stop, departures }) => ({
+        name: stop.name,
+        url: stopAppUrl(stop),
+        walk: walkSeconds(position, stop),
+        rows: departures.slice(0, 12).map((departure) => ({
+          line: departure.line,
+          color: colorFor(departure.type),
+          headsign: departure.headsign ?? '',
+          at: now + (departure.predictedInSeconds ?? departure.inSeconds) * 1_000,
+        })),
       })),
     };
-    if (!stop) {
+    if (props.stops.length === 0) {
       layouts.departuresWidget.updateSnapshot(props);
       return;
     }
@@ -68,8 +88,40 @@ export function syncDeparturesWidget(stop: Stop | null, departures: Departure[] 
   }
 }
 
-let activity: { vehicleId: string; handle: ReturnType<NonNullable<typeof layouts>['arrivalActivity']['start']> } | null =
-  null;
+type ActivityHandle = ReturnType<NonNullable<typeof layouts>['arrivalActivity']['start']>;
+
+let activity: {
+  vehicleId: string;
+  stopId: string;
+  handle: ActivityHandle;
+  /** The push token registered with the server, so ending can unregister it. */
+  token: string | null;
+  subscription: { remove: () => void } | null;
+} | null = null;
+
+/**
+ * Hand the activity to the server so it keeps the countdown right while the
+ * app is suspended (`server/src/live-activities.js`). Best-effort: without an
+ * APNs key the server answers 503 and the app goes on updating the activity
+ * itself while it runs, which is how it works in any case.
+ */
+function registerPush(current: NonNullable<typeof activity>, token: string, input: ArrivalActivityInput) {
+  if (current.token === token) return;
+  if (current.token) void apiSend('DELETE', `/live-activities/${current.token}`);
+  current.token = token;
+  void apiSend('POST', '/live-activities', {
+    token,
+    vehicleId: input.vehicleId,
+    stopId: input.stopId,
+    view: {
+      line: input.line,
+      color: input.color,
+      towards: input.towards,
+      stopName: input.stopName,
+      ...amber,
+    },
+  });
+}
 
 export function showArrivalActivity(input: ArrivalActivityInput) {
   if (!layouts) return;
@@ -86,15 +138,28 @@ export function showArrivalActivity(input: ArrivalActivityInput) {
   };
   const staleDate = new Date(props.arrivesAt + ACTIVITY_STALE_AFTER_MS);
   try {
-    if (activity && activity.vehicleId === input.vehicleId) {
+    if (activity && activity.vehicleId === input.vehicleId && activity.stopId === input.stopId) {
       void activity.handle.update(props, staleDate).catch(() => {});
       return;
     }
     endArrivalActivity();
-    activity = {
+    const handle = layouts.arrivalActivity.start(props, vehicleAppUrl(input.vehicleId), staleDate);
+    const current: NonNullable<typeof activity> = {
       vehicleId: input.vehicleId,
-      handle: layouts.arrivalActivity.start(props, vehicleAppUrl(input.vehicleId), staleDate),
+      stopId: input.stopId,
+      handle,
+      token: null,
+      subscription: null,
     };
+    activity = current;
+    // iOS may issue the token later, and may rotate it; register each one.
+    current.subscription = handle.addPushTokenListener(({ pushToken }) => registerPush(current, pushToken, input));
+    void handle
+      .getPushToken()
+      .then((token) => {
+        if (token && activity === current) registerPush(current, token, input);
+      })
+      .catch(() => {});
   } catch {
     // Live Activities switched off in Settings, or the system refused: the
     // notification still arrives, which is what the rider asked for.
@@ -106,5 +171,7 @@ export function endArrivalActivity() {
   const current = activity;
   activity = null;
   if (!current) return;
+  current.subscription?.remove();
+  if (current.token) void apiSend('DELETE', `/live-activities/${current.token}`);
   void current.handle.end('default').catch(() => {});
 }

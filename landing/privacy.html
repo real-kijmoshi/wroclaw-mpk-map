@@ -442,7 +442,7 @@
 
       <div class="callout">
         <strong>Administrator danych:</strong> operator projektu wroclive (kontakt: <a href="mailto:wroclive@kijmoshi.xyz">wroclive@kijmoshi.xyz</a>).<br>
-        <strong>Ostatnia aktualizacja:</strong> 15 sierpnia 2026 r.
+        <strong>Ostatnia aktualizacja:</strong> 23 września 2026 r.
       </div>
 
       <section id="collected">
@@ -482,10 +482,33 @@
 
         <h3>Dane lokalizacji</h3>
         <p>
-          Gdy stukniesz ikonę lokalizacji, aplikacja poprosi Twoją przeglądarkę o dostęp do
-          Twojej pozycji — <strong>tylko wtedy, gdy Ty tego żądasz</strong>. Pozycja ta jest
-          używana wyłącznie po Twojej stronie, aby wyśrodkować mapę.
-          <strong> Nigdy nie jest wysyłana na żaden serwer ani nie jest zapisywana.</strong>
+          Gdy stukniesz ikonę lokalizacji, aplikacja poprosi o dostęp do Twojej pozycji —
+          <strong>tylko wtedy, gdy Ty tego żądasz</strong>, i tylko podczas używania aplikacji
+          (nigdy w tle). Pozycja służy do wyśrodkowania mapy, pokazania przystanków w pobliżu
+          i oszacowania czasu dojścia na przystanek.
+          <strong> Nigdy nie jest wysyłana na żaden serwer.</strong>
+        </p>
+        <p>
+          Aplikacja na iPhone'a zapamiętuje na urządzeniu ostatnią znaną pozycję, zaokrągloną do
+          około 10 metrów, aby widżet mógł pokazać czas dojścia do ulubionego przystanku także
+          wtedy, gdy aplikacja jest zamknięta. Ta wartość nie opuszcza telefonu i znika wraz z
+          usunięciem aplikacji.
+        </p>
+
+        <h3>Powiadomienia i Live Activity (iPhone)</h3>
+        <p>
+          Powiadomienie o przyjeździe jest <strong>lokalne</strong>: planuje je sam telefon na
+          podstawie czasu przyjazdu, bez udziału serwera. Aplikacja prosi o zgodę na
+          powiadomienia dopiero wtedy, gdy pierwszy raz włączysz takie powiadomienie.
+        </p>
+        <p>
+          Odliczanie na ekranie blokady (Live Activity) aktualizuje sama aplikacja, dopóki jest
+          uruchomiona. Gdy serwer ma skonfigurowaną usługę Apple Push Notification, aplikacja
+          przekazuje mu dodatkowo <strong>token push tej jednej Live Activity</strong> wraz z
+          identyfikatorem pojazdu i przystanku, aby odliczanie było aktualne także przy
+          zablokowanym telefonie. Token nie identyfikuje osoby ani urządzenia na stałe, jest
+          trzymany wyłącznie w pamięci serwera i usuwany, gdy pojazd minie przystanek, gdy
+          wyłączysz powiadomienie lub najpóźniej po 2 godzinach. Nie jest zapisywany na dysku.
         </p>
 
         <h3>Dane przechowywane po Twojej stronie</h3>
@@ -498,7 +521,9 @@
           </thead>
           <tbody>
             <tr><td>Wybrane linie</td><td>By pamiętać Twój wybór przy następnym otwarciu</td><td>localStorage (<code>wromapa.selectedLines</code>)</td></tr>
-            <tr><td>Ustawienia aplikacji</td><td>Wybrany styl mapy, układ, filtry</td><td>localStorage / SecureStore</td></tr>
+            <tr><td>Ustawienia aplikacji</td><td>Wybrany styl mapy, układ, filtry</td><td>localStorage / pamięć aplikacji</td></tr>
+            <tr><td>Ulubione i ostatnie przystanki</td><td>By pokazać je na początku listy, w widżecie i w menu ikony</td><td>Pamięć aplikacji na urządzeniu</td></tr>
+            <tr><td>Ostatnia pozycja (zaokrąglona)</td><td>Czas dojścia w widżecie</td><td>Pamięć aplikacji na urządzeniu</td></tr>
           </tbody>
         </table>
         <p class="note">
@@ -615,6 +640,7 @@
             <tr><td>Zagregowane liczniki serwera</td><td>Plik JSON na serwerze</td><td>31 dni (konfigurowalne przez <code>STATS_DAYS_TO_KEEP</code>)</td></tr>
             <tr><td>Dane GTFS (rozklady)</td><td>Bufor na dysku serwera</td><td>Aktualizowane codziennie, starsze wersje nadpisywane</td></tr>
             <tr><td>Pozycje pojazdów</td><td>Pamięć RAM serwera</td><td>Na żywo — nie są przechowywane ani nie są zapisywane</td></tr>
+            <tr><td>Token push Live Activity (jeśli włączone)</td><td>Pamięć RAM serwera</td><td>Do minięcia przystanku lub wyłączenia powiadomienia, najwyżej 2 godziny</td></tr>
           </tbody>
         </table>
       </section>

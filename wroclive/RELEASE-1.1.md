@@ -46,6 +46,27 @@ and provisions them on the first iOS build — let it create the App Group and
 the extension's profile when it asks. Nothing else in App Store Connect needs
 setting up: the app sends no push, so no APNs key is needed.
 
+**Live Activity push (optional).** To keep the lock-screen countdown right
+while the app is suspended, create an APNs auth key (Apple Developer → Keys →
+Apple Push Notifications service) and set `APNS_KEY_ID`, `APNS_TEAM_ID` and
+`APNS_PRIVATE_KEY_PATH` on the server — see `server/.env.example`. Use
+`APNS_PRODUCTION=false` for a server that preview/development builds talk to.
+`/health.liveActivities` says whether it is enabled. Without a key everything
+still works; the countdown just follows the last estimate while the phone is
+locked. The app now carries the push entitlement for this, so EAS will enable
+Push Notifications on the App ID on the first build.
+
+**App Store privacy labels.** Data used to track you: none. Data linked to
+you: none. Location is used on the device only and never sent, so it is not
+"collected". The one judgement call is the Live Activity push token (only when
+the server has an APNs key): it leaves the phone but is held in memory only
+while it is needed to update that one ride. Apple's definition of "collect"
+excludes data kept only as long as needed to service the request in real
+time, which is the argument for declaring nothing. If in doubt, declare
+Identifiers → Device ID, used for App Functionality, not linked to the user,
+not used for tracking. The privacy policy (`landing/privacy.html`) describes
+the token either way.
+
 Install both preview builds. Check first launch, location denied and granted,
 light and dark map, vehicle movement, line and stop selection, departures,
 alerts, settings, background/resume, and a cold start while the API is loading.
@@ -55,7 +76,14 @@ or vehicle), tapping a stop in a vehicle's list (notification permission is
 asked then, not at launch; the banner arrives about two minutes before; on
 iOS a Live Activity counts down on the lock screen), adding the "Odjazdy"
 widget and tapping it (opens that stop), and the fleet fading when the phone
-goes offline.
+goes offline. Then the second batch: the widget on the lock screen and its
+"Ulubiony przystanek" setting (long-press → Edytuj widżet), "Prowadź pieszo" and
+"Wyjdź za … min" on a stop board with location on, the home-screen quick
+actions (long-press the icon), the armed-alert card in the vehicle sheet and on
+the home sheet, and — with an APNs key on the preview server — a locked phone's
+Live Activity still moving when the tram is held up. Background refresh
+cannot be forced on a release build; leave a widget on the home screen
+overnight and check it the next morning.
 Expo Go does not test EAS Update; use the installed preview builds for that.
 
 To exercise OTA before production, make a small visible JavaScript-only change

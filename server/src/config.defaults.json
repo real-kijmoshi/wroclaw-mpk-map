@@ -51,6 +51,13 @@
     "ambiguityMeters": 75
   },
 
+  "apns": {
+    "bundleId": "com.kijmoshi.wroclive",
+    "production": true,
+    "maxActivities": 2000,
+    "maxAgeMs": 7200000
+  },
+
   "klosok": {
     "enabled": true,
     "gtfsRtUrl": "https://mapadlugoleka.klosok.eu/vehicle_positions.pb",

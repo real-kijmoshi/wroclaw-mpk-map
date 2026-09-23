@@ -7,8 +7,11 @@ import { ThemedText } from './themed-text';
 import { Motion, Radius, Space } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
 import type { Stop } from '@/lib/api';
+import type { ArrivalAlert } from '@/lib/arrival-alerts';
+import type { FavouriteBoard } from '@/lib/favourite-boards';
 import type { FavouriteStop } from '@/lib/favourite-stops';
-import { formatDistance, plural } from '@/lib/format';
+import { LineBadge } from './line-badge';
+import { etaParts, formatDistance, plural } from '@/lib/format';
 import type { StopArea } from '@/lib/stops-api';
 
 export type LiveStatus = {
@@ -91,8 +94,16 @@ export type MapSheetHomeProps = {
   alertCount: number | null;
   /** Places, not platforms — grouped by `groupStopAreas`. */
   nearbyAreas: StopArea[];
+  /** The armed arrival alert, if any — it outlives the vehicle's sheet. */
+  arrivalAlert: ArrivalAlert | null;
+  onOpenAlert: () => void;
+  onDisarmAlert: () => void;
   /** Starred stops, in the order they were starred. */
   favouriteStops: FavouriteStop[];
+  /** Next departures for the first few of them, when fetched. */
+  favouriteBoards: FavouriteBoard[];
+  /** Seconds since those boards were fetched, so the minutes count down between polls. */
+  boardsAgeSeconds: number;
   /** Whether the rider's position is known, which is what makes the list mean anything. */
   located: boolean;
   locating: boolean;
@@ -115,7 +126,12 @@ export function MapSheetHome({
   selectedLineCount,
   alertCount,
   nearbyAreas,
+  arrivalAlert,
+  onOpenAlert,
+  onDisarmAlert,
   favouriteStops,
+  favouriteBoards,
+  boardsAgeSeconds,
   located,
   locating,
   locateProblem,
@@ -164,6 +180,41 @@ export function MapSheetHome({
       )}
 
       {/*
+       * An armed alert keeps following its tram after the sheet is closed, so
+       * the home says so — otherwise the only trace of it is a notification
+       * the rider may not remember asking for.
+       */}
+      {arrivalAlert && (
+        <View style={[styles.banner, { backgroundColor: theme.backgroundCard, borderColor: theme.separator }]}>
+          <Pressable
+            onPress={onOpenAlert}
+            accessibilityRole="button"
+            accessibilityLabel={`Linia ${arrivalAlert.line}, powiadomienie przed przystankiem ${arrivalAlert.stopName}`}
+            accessibilityHint="Pokazuje pojazd"
+            style={({ pressed }) => [styles.bannerMain, pressed && styles.pressed]}>
+            <Ionicons name="notifications" size={18} color={theme.text} />
+            <View style={styles.bannerText}>
+              <ThemedText type="callout" weight="semibold" numberOfLines={1}>
+                {`Linia ${arrivalAlert.line}${arrivalAlert.towards ? ` → ${arrivalAlert.towards}` : ''}`}
+              </ThemedText>
+              <ThemedText type="footnote" themeColor="textSecondary" numberOfLines={1}>
+                Powiadomienie przed: {arrivalAlert.stopName}
+              </ThemedText>
+            </View>
+          </Pressable>
+          <Pressable
+            onPress={onDisarmAlert}
+            accessibilityRole="button"
+            accessibilityLabel="Wyłącz powiadomienie"
+            hitSlop={8}>
+            <ThemedText type="footnote" weight="semibold" color={theme.accent}>
+              Wyłącz
+            </ThemedText>
+          </Pressable>
+        </View>
+      )}
+
+      {/*
        * Chosen stops above nearby ones: a regular opens the app to ask about
        * their own stop, and nearest-first answers that only when they are
        * already standing at it. Absent until something is starred — an empty
@@ -174,9 +225,10 @@ export function MapSheetHome({
           {favouriteStops.map((stop, index) => (
             <View key={stop.id}>
               {index > 0 && <Divider />}
-              <LinkRow
-                label={stop.name}
-                leading={<RowIcon name="star" color={theme.textSecondary} />}
+              <FavouriteRow
+                stop={stop}
+                board={favouriteBoards.find((board) => board.stop.id === stop.id) ?? null}
+                ageSeconds={boardsAgeSeconds}
                 onPress={() => onStop(stop)}
               />
             </View>
@@ -269,7 +321,67 @@ export function MapSheetHome({
   );
 }
 
+/**
+ * A starred stop with what leaves it next — the answer, not a link to it. The
+ * rider who starred a stop opens the app to ask exactly this, and a row that
+ * only says the stop's name makes them tap through for it every time.
+ */
+function FavouriteRow({
+  stop,
+  board,
+  ageSeconds,
+  onPress,
+}: {
+  stop: FavouriteStop;
+  board: FavouriteBoard | null;
+  ageSeconds: number;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  const age = Math.min(Math.max(ageSeconds, 0), 90);
+  const next = (board?.departures ?? [])
+    .map((departure) => ({
+      departure,
+      seconds: (departure.predictedInSeconds ?? departure.inSeconds) - age,
+    }))
+    .filter((entry) => entry.seconds > -30)
+    .slice(0, 2);
+
+  const spoken = next
+    .map(({ departure, seconds }) => `linia ${departure.line} ${etaParts(seconds).value} ${etaParts(seconds).unit}`)
+    .join(', ');
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={spoken ? `${stop.name}: ${spoken}` : stop.name}
+      style={({ pressed }) => [styles.favourite, pressed && styles.pressed]}>
+      <Ionicons name="star" size={16} color={theme.textSecondary} />
+      <ThemedText type="callout" numberOfLines={1} style={styles.favouriteName}>
+        {stop.name}
+      </ThemedText>
+      {next.map(({ departure, seconds }) => {
+        const eta = etaParts(seconds);
+        return (
+          <View key={`${departure.tripId}-${departure.departure}`} style={styles.favouriteNext}>
+            <LineBadge line={departure.line} type={departure.type} size="small" />
+            <ThemedText type="footnote" weight="semibold" color={theme.amber} style={styles.favouriteEta}>
+              {eta.unit ? `${eta.value} ${eta.unit}` : eta.value}
+            </ThemedText>
+          </View>
+        );
+      })}
+      {next.length === 0 && <Ionicons name="chevron-forward" size={16} color={theme.textTertiary} />}
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
+  favourite: { flexDirection: 'row', alignItems: 'center', gap: Space.sm, minHeight: 52, paddingHorizontal: Space.lg },
+  favouriteName: { flex: 1, minWidth: 0 },
+  favouriteNext: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  favouriteEta: { fontVariant: ['tabular-nums'] },
   header: { gap: Space.sm, paddingBottom: Space.md },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: Space.sm },
   search: {
@@ -305,6 +417,7 @@ const styles = StyleSheet.create({
     minHeight: 56,
   },
   bannerText: { flex: 1, gap: 1, minWidth: 0 },
+  bannerMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: Space.md, minWidth: 0 },
   scroll: { flex: 1 },
   content: { paddingHorizontal: Space.lg, paddingTop: Space.xs, paddingBottom: Space.xxl, gap: Space.xl },
   pressed: { opacity: Motion.pressedOpacity },

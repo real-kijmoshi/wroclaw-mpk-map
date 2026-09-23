@@ -97,6 +97,9 @@ export type VehicleDetailsProps = {
   onStopPress?: (stop: { id: string; name: string }) => void;
   /** The stop an arrival alert is armed for on this vehicle, if any. */
   alertStopId?: string | null;
+  /** Its name, for the card that says what the alert will do. */
+  alertStopName?: string | null;
+  onDisarm?: () => void;
 };
 
 /**
@@ -115,6 +118,8 @@ export function VehicleDetails({
   onOpenRoute,
   onStopPress,
   alertStopId = null,
+  alertStopName = null,
+  onDisarm,
 }: VehicleDetailsProps) {
   const theme = useTheme();
 
@@ -205,7 +210,33 @@ export function VehicleDetails({
         </ThemedText>
       ) : (
         <View style={styles.timelineBlock}>
-        {onStopPress && (
+        {/* Armed: say what will happen and offer the way out, rather than
+            leaving a small bell on one row to explain itself. */}
+        {alertStopId && alertStopName ? (
+          <View style={[styles.alertCard, { backgroundColor: theme.backgroundCard }]}>
+            <Ionicons name="notifications" size={18} color={theme.text} />
+            <View style={styles.alertText}>
+              <ThemedText type="callout" weight="semibold" numberOfLines={1}>
+                {alertStopName}
+              </ThemedText>
+              <ThemedText type="footnote" themeColor="textSecondary">
+                Powiadomimy Cię ok. 2 min przed przyjazdem.
+              </ThemedText>
+            </View>
+            {onDisarm && (
+              <Pressable
+                onPress={onDisarm}
+                accessibilityRole="button"
+                accessibilityLabel="Wyłącz powiadomienie o przyjeździe"
+                hitSlop={8}
+                style={({ pressed }) => [styles.alertAction, pressed && styles.pressed]}>
+                <ThemedText type="footnote" weight="semibold" color={theme.accent}>
+                  Wyłącz
+                </ThemedText>
+              </Pressable>
+            )}
+          </View>
+        ) : onStopPress && (
           <ThemedText type="footnote" themeColor="textSecondary">
             Dotknij przystanek, aby dostać powiadomienie 2 min przed przyjazdem.
           </ThemedText>
@@ -513,6 +544,16 @@ const styles = StyleSheet.create({
   stopName: { flexDirection: 'row', alignItems: 'center', gap: Space.xs, minWidth: 0 },
   stopNameText: { flexShrink: 1 },
   timelineBlock: { gap: Space.sm },
+  alertCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Space.lg,
+    paddingVertical: Space.md,
+  },
+  alertText: { flex: 1, gap: 1, minWidth: 0 },
+  alertAction: { minHeight: 32, justifyContent: 'center' },
   eta: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },
   routeAction: {
     minHeight: 52,

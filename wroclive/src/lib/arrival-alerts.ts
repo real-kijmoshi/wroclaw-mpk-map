@@ -27,10 +27,13 @@ import { endArrivalActivity, showArrivalActivity } from '@/lib/widgets';
 export const ARRIVAL_LEAD_SECONDS = 120;
 /** A reschedule that moves the alert by less than this is churn, not news. */
 const RESCHEDULE_THRESHOLD_SECONDS = 15;
-const ANDROID_CHANNEL = 'arrivals';
 
-/** Local notifications are a native feature; the web build hides the control. */
-export const arrivalAlertsAvailable = Platform.OS === 'ios' || Platform.OS === 'android';
+/**
+ * iOS only for now. Android would need its own notification channel and a
+ * small icon, and the web build has no local notifications; both hide the
+ * control rather than offer something that cannot arrive.
+ */
+export const arrivalAlertsAvailable = Platform.OS === 'ios';
 
 export type ArrivalAlert = {
   vehicleId: string;
@@ -67,16 +70,6 @@ if (arrivalAlertsAvailable) {
   });
 }
 
-let channelReady = false;
-async function ensureChannel() {
-  if (Platform.OS !== 'android' || channelReady) return;
-  await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL, {
-    name: 'Przyjazdy',
-    importance: Notifications.AndroidImportance.HIGH,
-  });
-  channelReady = true;
-}
-
 async function cancelScheduled() {
   const id = armed?.notificationId;
   if (!id) return;
@@ -99,6 +92,7 @@ function showActivity(alert: ArrivalAlert, detail: VehicleDetail) {
   if (!stop) return;
   showArrivalActivity({
     vehicleId: alert.vehicleId,
+    stopId: alert.stopId,
     line: alert.line,
     color: colorFor(detail.vehicle.type),
     towards: alert.towards,
@@ -122,14 +116,12 @@ export function alertFireTime(
 async function schedule(at: number) {
   if (!armed) return;
   await cancelScheduled();
-  await ensureChannel();
   const seconds = Math.max(1, Math.round((at - Date.now()) / 1_000));
   const id = await Notifications.scheduleNotificationAsync({
     content: content(armed),
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
       seconds,
-      channelId: Platform.OS === 'android' ? ANDROID_CHANNEL : undefined,
     },
   });
   if (armed) {

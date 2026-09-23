@@ -2,7 +2,7 @@
 
 Read the exact versioned docs at https://docs.expo.dev/versions/v57.0.0/ before writing any code.
 This app is SDK 57: React Native 0.86, React 19.2. Do not guess an API from an older SDK's docs —
-`expo-maps`, the WebView bridge and the native map props all changed on the way here.
+`expo-widgets`, the WebView bridge and the native map props all changed on the way here.
 
 ## The app
 
@@ -53,12 +53,6 @@ it got:
   `platformMapAvailable` is `false` — there is one surface, so Settings hides
   the provider choice and the map hides its layers button. See invariant 14 in
   the root `AGENTS.md`.
-- **`apple-map.ios.tsx` → `expo-maps`** — a MapKit surface via `expo-maps`
-  (SDK 57, **alpha**, *not* in Expo Go). It is **not wired into the live
-  screen**; it exists for a future switch. It must stay behind the
-  `appleMapsAvailable` runtime check (`requireOptionalNativeModule('ExpoMaps')`)
-  and a guarded `require('expo-maps')` — importing it at module scope crashes
-  the bundle. `apple-map.tsx` is the non-iOS stub.
 - **`map-view.web.tsx` → `osm-map.tsx` → `live-map.web.tsx`** — the same Leaflet
   page (`src/lib/map-html.ts`), rendered in a browser `<iframe>` instead of a
   `WebView`. `map-html.ts` mirrors `server/views/map.html`'s `renderVehicles()`:
@@ -327,8 +321,9 @@ their own copy of the same `Platform.select` shadow.
 
 ## Outside the app: links, alerts, the widget, the Live Activity
 
-Four things reach the rider when the map is not on screen. All four are fed by
-the app — none has a server of its own — and that is the rule to keep.
+Several things reach the rider when the map is not on screen. All of them are
+fed from data the app already has; the one server-side piece is the Live
+Activity push, and it is optional.
 
 - **Links** (`src/lib/links.ts`, `src/app/+native-intent.tsx`). What a rider
   *shares* is an https link to the browser map (`SITE_URL/map.html?stop=…` or
@@ -346,17 +341,42 @@ the app — none has a server of its own — and that is the rule to keep.
   `expo-notifications`' config plugin is deliberately **not** in `app.json`:
   it writes a push entitlement, and these alerts are local. Permission is
   asked when a rider arms an alert, never at launch.
+- **Favourite boards** (`src/lib/favourite-boards.ts`,
+  `src/hooks/use-favourite-boards.ts`). One fetch of the first three starred
+  stops' departures serves the sheet's "Ulubione" rows, the widget and the
+  background refresh — so the three never poll the same boards separately.
 - **The home-screen widget** (`src/widgets/layouts.tsx`,
-  `src/lib/widgets.ios.ts`, `src/hooks/use-widget-sync.ts`). The first starred
-  stop's departures. WidgetKit cannot fetch, so the app pushes a half-hour
-  *timeline* — the same rows once a minute, each entry counting from its own
-  date — on launch, on resume and every five minutes. iOS only: `expo-widgets`
-  has Android behind an experimental flag, and `widgets.ts` is the no-op for
-  everything else.
+  `src/lib/widgets.ios.ts`). Home screen (small, medium) and lock screen
+  (rectangular, inline, circular). Its configuration menu picks the first,
+  second or third starred stop, so a rider adds one widget per stop — a
+  "next stop" button would not work: a button press only rewrites the current
+  timeline entry, and the next minute's entry puts the old stop back. That
+  configuration makes it an iOS 17+ widget; the app itself targets 16.4.
+  WidgetKit cannot fetch, so the app hands it a half-hour *timeline* — the
+  same rows once a minute, each entry counting from its own date — with the
+  walk from the rider's last known position (`rememberPosition()`, device
+  only), so a departure the walk cannot reach is shown dimmed.
+- **Background refresh** (`src/lib/background-refresh.ios.ts`,
+  `expo-background-task`). iOS wakes the app now and then to rebuild the
+  widget's timeline. *When* is the system's call — often overnight or while
+  charging — so it makes the widget fresh more often and never makes it live.
+  The task is defined at module scope (imported from `_layout.tsx`), because
+  that is where a cold background launch looks for it.
 - **The Live Activity** — the arrival alert's countdown on the lock screen and
   in the Dynamic Island, started and ended with the alert. The countdown is a
   native timer, so it keeps ticking with the app suspended; the stale date
-  greys it out when nothing has refreshed it.
+  greys it out when nothing has refreshed it. When the server has an APNs key,
+  the app registers the activity's push token (`POST /live-activities`) and the
+  server pushes each new arrival time on every vehicle poll until the stop is
+  passed; without one it answers 503 and the app updates the activity itself
+  while it runs.
+- **Quick actions** (`src/hooks/use-quick-actions.ts`). Long-press the app
+  icon: the first starred stops, then search. Set at runtime from the
+  favourites.
+- **Walking** (`src/lib/walking.ts`). The stop board opens with "Prowadź
+  pieszo" (Apple Maps walking directions) and each departure says when to
+  leave. An estimate — straight line × 1.25 at 1.25 m/s — and only within a
+  quarter of an hour's walk.
 
 Two rules that are not optional:
 
@@ -367,15 +387,14 @@ Two rules that are not optional:
   helper, no constant, no theme import. Colours come in through props.
 - **`expo-widgets` is not in Expo Go** and resolves its native module at module
   scope. `widgets.ios.ts` requires `src/widgets/layouts.tsx` only after
-  `requireOptionalNativeModule('ExpoWidgets')` — the `expo-maps` guard again.
-  `plugins/without-push-entitlement.js` strips the push entitlement
-  `expo-widgets` writes unconditionally; it must stay listed *before*
-  `expo-widgets` in `app.json`, because mods run in reverse plugin order.
+  `requireOptionalNativeModule('ExpoWidgets')`, and the background task the
+  same way for `ExpoBackgroundTask`/`ExpoTaskManager`. Follow that pattern for
+  any native module that is not in Expo Go.
 
 ## Shipping updates (OTA)
 
 An update carries JS and assets. Everything in `src/` goes this way; SDK bumps,
-`react-native-maps`, `expo-maps` and anything touching permissions do not — see
+`react-native-maps`, `expo-widgets` and anything touching permissions do not — see
 invariant 16 in the root `AGENTS.md` for why the `fingerprint` runtime policy is
 what enforces that rather than discipline.
 
@@ -435,9 +454,10 @@ picked up, so both must work at once — that is what invariant 9 buys.
 | `src/lib/updates.ts` | The only module touching `expo-updates`; inert off release builds |
 | `src/lib/favourite-stops.ts` / `recent-stops.ts` | Starred and recently opened stops, persisted |
 | `src/lib/links.ts`, `src/app/+native-intent.tsx` | Share links out, `wroclive://` links in |
-| `src/lib/arrival-alerts.ts` | Local "2 min before" notification; drives the Live Activity |
+| `src/lib/arrival-alerts.ts`, `src/hooks/use-arrival-alert.ts` | Local "2 min before" notification; drives the Live Activity |
 | `src/widgets/layouts.tsx`, `src/lib/widgets*.ts` | iOS widget and Live Activity; guarded, iOS only |
+| `src/lib/favourite-boards.ts`, `src/lib/background-refresh*.ts` | Starred stops' boards: sheet, widget, background refresh |
+| `src/lib/walking.ts` | Walking time, "when to leave", Apple Maps directions |
 | `src/components/map-view*.tsx` | Platform pick for `MapView` |
 | `src/components/native-map.tsx` | `react-native-maps` surface — iOS/MapKit only |
-| `src/components/apple-map*.tsx` | `expo-maps` MapKit surface (unused, keep guarded) |
 | `src/components/osm-map.tsx`, `live-map*.tsx` | Leaflet surface: prop→command bridge, WebView/iframe host — ships on Android and web |

@@ -35,19 +35,27 @@ export type DeparturesWidgetRow = {
   headsign: string;
   /** Epoch ms the departure leaves. */
   at: number;
-  realtime: boolean;
+};
+
+export type DeparturesWidgetStop = {
+  name: string;
+  /** `wroclive://open?stop=…`, so a tap opens that stop's board. */
+  url: string;
+  /** Walking time from where the rider last was, or null when unknown or too far. */
+  walk: number | null;
+  rows: DeparturesWidgetRow[];
 };
 
 export type DeparturesWidgetProps = {
-  /** Null when nothing is starred yet. */
-  stopName: string | null;
-  rows: DeparturesWidgetRow[];
-  /** `wroclive://open?stop=…`, so a tap opens that stop's board. */
-  url: string;
+  /** The first three starred stops; the widget's configuration picks one. */
+  stops: DeparturesWidgetStop[];
   /** `theme.amber` for each scheme — the countdown colour and nothing else (invariant 10). */
   amberLight: string;
   amberDark: string;
 };
+
+/** The widget's configuration menu (`app.json`): which favourite it shows. */
+export type DeparturesWidgetConfiguration = { slot?: 'first' | 'second' | 'third' };
 
 export type ArrivalActivityProps = {
   line: string;
@@ -63,15 +71,24 @@ export type ArrivalActivityProps = {
   amberDark: string;
 };
 
-const DeparturesWidget = (props: DeparturesWidgetProps, environment: WidgetEnvironment) => {
+const DeparturesWidget = (
+  props: DeparturesWidgetProps,
+  environment: WidgetEnvironment<DeparturesWidgetConfiguration>,
+) => {
   'widget';
+  const family = environment.widgetFamily;
+  const lockScreen = family.startsWith('accessory');
   const amber = environment.colorScheme === 'dark' ? props?.amberDark : props?.amberLight;
   const now = environment.date.getTime();
-  const small = environment.widgetFamily === 'systemSmall';
+  const slot = environment.configuration?.slot === 'third' ? 2 : environment.configuration?.slot === 'second' ? 1 : 0;
+  const stops = props?.stops ?? [];
+  const stop = stops[slot] ?? stops[0];
 
-  if (!props || !props.stopName) {
-    return (
-      <VStack alignment="leading" spacing={4} modifiers={[padding({ all: 4 })]}>
+  if (!stop) {
+    return lockScreen ? (
+      <Text modifiers={[font({ textStyle: 'caption' })]}>Dodaj ulubiony przystanek</Text>
+    ) : (
+      <VStack alignment="leading" spacing={4}>
         <Text modifiers={[font({ textStyle: 'headline' })]}>Wroclive</Text>
         <Text modifiers={[font({ textStyle: 'footnote' }), foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}>
           Dodaj przystanek do ulubionych w aplikacji, a tu pojawią się jego odjazdy.
@@ -80,46 +97,97 @@ const DeparturesWidget = (props: DeparturesWidgetProps, environment: WidgetEnvir
     );
   }
 
-  // The timeline repeats the same rows every minute; each entry drops what has
-  // already left and counts the rest from its own date, so the widget keeps
-  // counting while the app is closed.
-  const upcoming = props.rows.filter((row) => row.at >= now - 30_000).slice(0, small ? 3 : 4);
+  // The timeline repeats the same rows once a minute; each entry drops what
+  // has left and counts the rest from its own date, so the widget keeps going
+  // with the app closed. A departure the walk cannot reach stays listed —
+  // it is on the board at the stop too — but its minutes step back.
+  const upcoming = stop.rows.filter((row) => row.at >= now - 30_000);
+  const minutesTo = (row: DeparturesWidgetRow) => Math.max(0, Math.round((row.at - now) / 60_000));
+  const label = (row: DeparturesWidgetRow) => (minutesTo(row) < 1 ? 'teraz' : `${minutesTo(row)} min`);
+  const reachable = (row: DeparturesWidgetRow) => stop.walk === null || row.at - now >= (stop.walk + 30) * 1_000;
+
+  if (family === 'accessoryInline') {
+    const next = upcoming[0];
+    return (
+      <Text modifiers={[widgetURL(stop.url)]}>
+        {next ? `${next.line} · ${label(next)} · ${stop.name}` : stop.name}
+      </Text>
+    );
+  }
+
+  if (family === 'accessoryCircular') {
+    const next = upcoming.find(reachable) ?? upcoming[0];
+    return (
+      <VStack spacing={0} modifiers={[widgetURL(stop.url)]}>
+        <Text modifiers={[font({ size: 13, weight: 'bold' })]}>{next ? next.line : '—'}</Text>
+        <Text modifiers={[font({ size: 11 }), monospacedDigit()]}>{next ? label(next) : ''}</Text>
+      </VStack>
+    );
+  }
+
+  if (family === 'accessoryRectangular') {
+    return (
+      <VStack alignment="leading" spacing={1} modifiers={[widgetURL(stop.url)]}>
+        <Text modifiers={[font({ textStyle: 'caption', weight: 'semibold' }), lineLimit(1)]}>{stop.name}</Text>
+        {upcoming.slice(0, 2).map((row) => (
+          <HStack key={`${row.line}-${row.at}`} spacing={4}>
+            <Text modifiers={[font({ textStyle: 'caption', weight: 'bold' })]}>{row.line}</Text>
+            <Text modifiers={[font({ textStyle: 'caption' }), lineLimit(1)]}>{row.headsign}</Text>
+            <Spacer />
+            <Text modifiers={[font({ textStyle: 'caption' }), monospacedDigit()]}>{label(row)}</Text>
+          </HStack>
+        ))}
+      </VStack>
+    );
+  }
+
+  const small = family === 'systemSmall';
+  const shown = upcoming.slice(0, small ? 3 : 4);
+  const walkMinutes = stop.walk === null ? null : Math.max(1, Math.round(stop.walk / 60));
 
   return (
-    <VStack alignment="leading" spacing={6} modifiers={[widgetURL(props.url)]}>
-      <Text modifiers={[font({ textStyle: 'caption', weight: 'semibold' }), foregroundStyle({ type: 'hierarchical', style: 'secondary' }), lineLimit(1)]}>
-        {props.stopName}
-      </Text>
-      {upcoming.length === 0 ? (
+    <VStack alignment="leading" spacing={6} modifiers={[widgetURL(stop.url)]}>
+      <HStack spacing={4}>
+        <Text modifiers={[font({ textStyle: 'caption', weight: 'semibold' }), foregroundStyle({ type: 'hierarchical', style: 'secondary' }), lineLimit(1)]}>
+          {stop.name}
+        </Text>
+        <Spacer />
+        {walkMinutes !== null && !small && (
+          <Text modifiers={[font({ textStyle: 'caption' }), foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}>
+            {`${walkMinutes} min pieszo`}
+          </Text>
+        )}
+      </HStack>
+      {shown.length === 0 ? (
         <Text modifiers={[font({ textStyle: 'footnote' }), foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}>
           Otwórz aplikację, aby odświeżyć odjazdy.
         </Text>
       ) : (
-        upcoming.map((row) => {
-          const minutes = Math.round((row.at - now) / 60_000);
-          return (
-            <HStack key={`${row.line}-${row.at}`} spacing={6}>
-              <Text
-                modifiers={[
-                  font({ size: 12, weight: 'bold' }),
-                  foregroundStyle('#FFFFFF'),
-                  padding({ horizontal: 5, vertical: 1 }),
-                  frame({ minWidth: 26 }),
-                  background(row.color),
-                  cornerRadius(5),
-                ]}>
-                {row.line}
-              </Text>
-              {!small && (
-                <Text modifiers={[font({ textStyle: 'footnote' }), lineLimit(1)]}>{row.headsign}</Text>
-              )}
-              <Spacer />
-              <Text modifiers={[font({ textStyle: 'footnote', weight: 'semibold' }), monospacedDigit(), foregroundStyle(amber)]}>
-                {minutes < 1 ? 'teraz' : `${minutes} min`}
-              </Text>
-            </HStack>
-          );
-        })
+        shown.map((row) => (
+          <HStack key={`${row.line}-${row.at}`} spacing={6}>
+            <Text
+              modifiers={[
+                font({ size: 12, weight: 'bold' }),
+                foregroundStyle('#FFFFFF'),
+                padding({ horizontal: 5, vertical: 1 }),
+                frame({ minWidth: 26 }),
+                background(row.color),
+                cornerRadius(5),
+              ]}>
+              {row.line}
+            </Text>
+            {!small && <Text modifiers={[font({ textStyle: 'footnote' }), lineLimit(1)]}>{row.headsign}</Text>}
+            <Spacer />
+            <Text
+              modifiers={[
+                font({ textStyle: 'footnote', weight: 'semibold' }),
+                monospacedDigit(),
+                foregroundStyle(reachable(row) ? amber : { type: 'hierarchical', style: 'tertiary' }),
+              ]}>
+              {label(row)}
+            </Text>
+          </HStack>
+        ))
       )}
       <Spacer />
     </VStack>
@@ -191,5 +259,8 @@ const ArrivalActivity = (props: ArrivalActivityProps, environment: LiveActivityE
   };
 };
 
-export const departuresWidget = createWidget<DeparturesWidgetProps>('Departures', DeparturesWidget);
+export const departuresWidget = createWidget<DeparturesWidgetProps, DeparturesWidgetConfiguration>(
+  'Departures',
+  DeparturesWidget,
+);
 export const arrivalActivity = createLiveActivity<ArrivalActivityProps>('Arrival', ArrivalActivity);

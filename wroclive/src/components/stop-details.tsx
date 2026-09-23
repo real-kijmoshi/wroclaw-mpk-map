@@ -1,13 +1,15 @@
-import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { LineBadge } from './line-badge';
 import { ThemedText } from './themed-text';
 import { CloseButton, HeaderButton } from './vehicle-details';
-import { Radius, Space } from '@/constants/design';
+import { Motion, Radius, Space } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
 import type { Departures, Stop } from '@/lib/api';
 import { etaParts, formatDistance, formatScheduled } from '@/lib/format';
 import { distanceMeters } from '@/lib/stops-api';
+import { leaveInSeconds, leaveLabel, openWalkingDirections, walkSeconds } from '@/lib/walking';
 
 /**
  * The selected stop, as the sheet's header.
@@ -81,11 +83,21 @@ export type StopDetailsProps = {
   data: Departures | null;
   loading: boolean;
   error: Error | null;
+  /** The stop the board is for — the walk is measured to it. */
+  stop: Stop;
+  /** Where the rider is, when known: turns the board into "when to leave". */
+  userPosition: { lat: number; lon: number } | null;
+  /** Seconds since `data` was fetched; the board counts down by this much between polls. */
+  ageSeconds?: number;
 };
 
+/** A little more than one 30 s departures poll; past it the clock alone is not trusted. */
+const MAX_LOCAL_COUNTDOWN_SECONDS = 40;
+
 /** The next departures from one stop — the board, as it would read at the stop. */
-export function StopDetails({ data, loading, error }: StopDetailsProps) {
+export function StopDetails({ data, loading, error, stop, userPosition, ageSeconds = 0 }: StopDetailsProps) {
   const theme = useTheme();
+  const walk = walkSeconds(userPosition, stop);
 
   if (loading && !data) {
     return (
@@ -108,6 +120,30 @@ export function StopDetails({ data, loading, error }: StopDetailsProps) {
       style={styles.scroll}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}>
+      {/* The walk first: with it, every row below answers "when do I leave"
+          rather than "when does it go". Only when the rider is close enough
+          for the estimate to mean something. */}
+      {walk !== null && (
+        <Pressable
+          onPress={() => openWalkingDirections(stop)}
+          accessibilityRole="button"
+          accessibilityLabel={`Prowadź pieszo, około ${Math.max(1, Math.round(walk / 60))} minut`}
+          accessibilityHint="Otwiera Mapy Apple"
+          style={({ pressed }) => [
+            styles.walk,
+            { backgroundColor: theme.backgroundCard },
+            pressed && styles.pressed,
+          ]}>
+          <Ionicons name="walk" size={18} color={theme.text} />
+          <ThemedText type="callout" weight="semibold" style={styles.walkText}>
+            Prowadź pieszo
+          </ThemedText>
+          <ThemedText type="callout" themeColor="textSecondary">
+            ok. {Math.max(1, Math.round(walk / 60))} min
+          </ThemedText>
+          <Ionicons name="chevron-forward" size={16} color={theme.textTertiary} />
+        </Pressable>
+      )}
       {data.departures.length === 0 ? (
         <View style={[styles.empty, { backgroundColor: theme.backgroundCard }]}>
           <ThemedText type="callout" themeColor="textSecondary">
@@ -122,12 +158,15 @@ export function StopDetails({ data, loading, error }: StopDetailsProps) {
       ) : (
         <View style={[styles.board, { backgroundColor: theme.backgroundCard }]}>
           {data.departures.slice(0, 12).map((departure, index) => {
-            const seconds =
-              departure.realtime && departure.predictedInSeconds != null
+            const seconds = Math.max(
+              0,
+              (departure.realtime && departure.predictedInSeconds != null
                 ? departure.predictedInSeconds
-                : departure.inSeconds;
+                : departure.inSeconds) - Math.min(Math.max(ageSeconds, 0), MAX_LOCAL_COUNTDOWN_SECONDS),
+            );
             const eta = etaParts(seconds);
             const scheduled = formatScheduled(departure.departure);
+            const leave = walk === null ? null : leaveLabel(leaveInSeconds(seconds, walk));
 
             return (
               <View
@@ -135,6 +174,9 @@ export function StopDetails({ data, loading, error }: StopDetailsProps) {
                 style={[
                   styles.row,
                   index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.separator },
+                  // Still listed — it is on the board at the stop too — but it
+                  // steps back so the first catchable one leads.
+                  leave?.missed && styles.missed,
                 ]}>
                 <LineBadge line={departure.line} type={departure.type} size="small" />
 
@@ -152,6 +194,11 @@ export function StopDetails({ data, loading, error }: StopDetailsProps) {
                           na żywo
                         </ThemedText>
                       )}
+                    </ThemedText>
+                  )}
+                  {leave && (
+                    <ThemedText type="footnote" weight="semibold" themeColor="textSecondary" numberOfLines={1}>
+                      {leave.text}
                     </ThemedText>
                   )}
                 </View>
@@ -196,4 +243,15 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, gap: 1, minWidth: 0 },
   eta: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },
   etaValue: { fontVariant: ['tabular-nums'] },
+  missed: { opacity: 0.45 },
+  walk: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Space.lg,
+    minHeight: 52,
+  },
+  walkText: { flex: 1 },
+  pressed: { opacity: Motion.pressedOpacity },
 });
