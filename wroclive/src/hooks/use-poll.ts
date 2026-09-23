@@ -3,6 +3,8 @@ import { AppState } from 'react-native';
 
 export type PollState<T> = {
   data: T | null;
+  /** `Date.now()` when `data` arrived, so a caller can age it between polls. */
+  receivedAt: number | null;
   error: Error | null;
   loading: boolean;
   refresh: () => void;
@@ -24,6 +26,7 @@ export function usePoll<T>(
   { enabled = true, key = '' }: { enabled?: boolean; key?: string } = {},
 ): PollState<T> {
   const [data, setData] = useState<T | null>(null);
+  const [receivedAt, setReceivedAt] = useState<number | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
   const [nonce, setNonce] = useState(0);
@@ -56,6 +59,7 @@ export function usePoll<T>(
         const result = await fetcherRef.current(controller.signal);
         if (cancelled) return;
         setData(result);
+        setReceivedAt(Date.now());
         setError(null);
       } catch (caught) {
         if (cancelled || (caught as Error)?.name === 'AbortError') return;
@@ -109,5 +113,5 @@ export function usePoll<T>(
 
   // Derived, not stored: a disabled poll is not "loading", and setting that
   // from an effect would just be a second render saying the same thing.
-  return { data, error, loading: enabled ? loading : false, refresh };
+  return { data, receivedAt, error, loading: enabled ? loading : false, refresh };
 }

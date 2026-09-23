@@ -59,8 +59,28 @@ export function VehicleSummary({
   );
 }
 
+/**
+ * How far the sheet counts ETAs down on its own between polls.
+ *
+ * The server's ETA is exact only at the instant of the fix; left alone it sits
+ * on "1 min" for a whole poll while the tram is already at the platform. A
+ * little more than one poll is enough to bridge the gap, and the cap keeps a
+ * stalled feed — or a tram held at a red light — from counting to "teraz"
+ * on the strength of the clock alone.
+ */
+const MAX_LOCAL_COUNTDOWN_SECONDS = 12;
+
+/** A server ETA aged by the time since it was fetched. */
+function agedEta(etaSeconds: number | null | undefined, ageSeconds: number) {
+  if (etaSeconds === null || etaSeconds === undefined || !Number.isFinite(etaSeconds)) return etaSeconds;
+  const age = Math.min(Math.max(ageSeconds, 0), MAX_LOCAL_COUNTDOWN_SECONDS);
+  return Math.max(0, etaSeconds - age);
+}
+
 export type VehicleDetailsProps = {
   detail: VehicleDetail | null;
+  /** Seconds since `detail` was fetched; its ETAs are counted down by this much. */
+  ageSeconds?: number;
   loading: boolean;
   error: Error | null;
   /** Recentres the already-highlighted route without leaving the live view. */
@@ -75,7 +95,7 @@ export type VehicleDetailsProps = {
  * is no delay and no clock time to show, only the remaining running time, and
  * this screen says that rather than inventing a number.
  */
-export function VehicleDetails({ detail, loading, error, onOpenRoute }: VehicleDetailsProps) {
+export function VehicleDetails({ detail, ageSeconds = 0, loading, error, onOpenRoute }: VehicleDetailsProps) {
   const theme = useTheme();
 
   if (loading && !detail) {
@@ -104,7 +124,7 @@ export function VehicleDetails({ detail, loading, error, onOpenRoute }: VehicleD
   const stops = trip?.nextStops ?? [];
   const lineColor = colorFor(vehicle.type);
   const nextStop = trip?.nextStop ?? stops[0] ?? null;
-  const nextEta = nextStop ? etaParts(nextStop.etaSeconds) : null;
+  const nextEta = nextStop ? etaParts(agedEta(nextStop.etaSeconds, ageSeconds)) : null;
 
   return (
     <ScrollView
@@ -163,7 +183,7 @@ export function VehicleDetails({ detail, loading, error, onOpenRoute }: VehicleD
       ) : (
         <View style={[styles.timeline, { backgroundColor: theme.backgroundCard }]}>
           {stops.map((stop, index) => {
-            const eta = etaParts(stop.etaSeconds);
+            const eta = etaParts(agedEta(stop.etaSeconds, ageSeconds));
             const scheduled = formatScheduled(stop.scheduled);
             const first = index === 0;
 

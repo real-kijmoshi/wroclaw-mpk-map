@@ -32,7 +32,7 @@ export const API_URL = trimSlash(
 
 /** How often each kind of data is re-fetched. Vehicles move; timetables do not. */
 export const REFRESH_MS = {
-  vehicles: 10_000,
+  vehicles: 5_000,
   departures: 30_000,
   alerts: 5 * 60_000,
 } as const;
