@@ -10,6 +10,8 @@ const { AlertsService } = require('./src/alerts');
 const { AlertArchive } = require('./src/alert-archive');
 const { GtfsStore } = require('./src/gtfs/store');
 const { KlosokService } = require('./src/klosok/service');
+const { ApnsClient } = require('./src/apns');
+const { LiveActivityService } = require('./src/live-activities');
 const { RuntimeSettings } = require('./src/runtime-settings');
 const { StatsTracker } = require('./src/stats');
 const { VehicleTracker } = require('./src/vehicles');
@@ -67,6 +69,19 @@ const stats = config.stats.enabled
     })
   : null;
 
+// Lock-screen countdowns kept current over APNs while the app is suspended.
+// Inert without an operator's APNs key: registration answers 503 and the app
+// keeps updating its own activity while it runs.
+const liveActivities = new LiveActivityService({
+  apns: new ApnsClient(config.apns),
+  gtfs,
+  vehicles,
+  bundleId: config.apns.bundleId,
+  maxActivities: config.apns.maxActivities,
+  maxAgeMs: config.apns.maxAgeMs,
+  logger,
+});
+
 const RETRY_DELAYS_MS = [5_000, 15_000, 60_000, 300_000];
 
 /** Held so tests (and the shutdown path) can stop the timers they schedule. */
@@ -84,6 +99,7 @@ const stopBackgroundWork = () => {
   vehicles.stop();
   alerts.stop();
   klosok.stop();
+  liveActivities.stop();
   stats?.stop();
 };
 
@@ -103,6 +119,7 @@ const loadGtfs = async (attempt = 0) => {
     await gtfs.refresh();
     vehicles.start();
     alerts.start();
+    liveActivities.start();
   } catch {
     const delay = RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
     logger.warn(`Retrying GTFS load in ${delay / 1000}s`);
@@ -118,6 +135,7 @@ const start = () => {
     klosok,
     stats,
     runtimeSettings,
+    liveActivities,
     startedAt: new Date(),
   });
   stats?.start();

@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Linking, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -19,13 +19,15 @@ import { useAreaStops } from '@/hooks/use-area-stops';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePoll } from '@/hooks/use-poll';
 import { useTheme } from '@/hooks/use-theme';
-import { useWidgetSync } from '@/hooks/use-widget-sync';
-import { ApiError, getAlerts, getDeparturesForStops, getIncidents, getLocations, getShape, getStopsNear, getVehicle, vehiclePollDelay, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
+import { useArrivalAlertTracking } from '@/hooks/use-arrival-alert';
+import { useFavouriteBoards } from '@/hooks/use-favourite-boards';
+import { useQuickActions } from '@/hooks/use-quick-actions';
+import { getAlerts, getDeparturesForStops, getIncidents, getLocations, getShape, getStopsNear, getVehicle, vehiclePollDelay, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
 import { REFRESH_MS } from '@/lib/config';
 import { plural } from '@/lib/format';
 import { shareStop, shareVehicle } from '@/lib/share';
 import { colorFor } from '@/lib/lines';
-import { arrivalAlertStore, arrivalAlertsAvailable, useArrivalAlert } from '@/lib/arrival-alerts';
+import { arrivalAlertsAvailable } from '@/lib/arrival-alerts';
 import { favouriteStopsStore, useFavouriteStops } from '@/lib/favourite-stops';
 import { mapIntentStore, useMapIntent } from '@/lib/map-intent';
 import { usePreferences } from '@/lib/preferences';
@@ -227,68 +229,7 @@ export default function MapScreen() {
     setPinnedVehicle(vehicle);
   }, [detail.data, centreOnDetail]);
 
-  /* --- the arrival alert --------------------------------------------------- */
-
-  const arrivalAlert = useArrivalAlert();
-  // The armed vehicle keeps being followed when its sheet is closed, so the
-  // alert tracks the tram rather than the screen. When it is the open vehicle,
-  // the detail poll above already has it and this one stays off.
-  const alertDetail = usePoll(
-    (signal) => getVehicle(arrivalAlert?.vehicleId as string, { signal, retryWhileLoading: false }),
-    REFRESH_MS.vehicles,
-    {
-      enabled: Boolean(arrivalAlert) && arrivalAlert?.vehicleId !== vehicleId,
-      key: arrivalAlert?.vehicleId ?? '',
-      delayMs: followServer,
-    },
-  );
-  useEffect(() => {
-    if (detail.data) void arrivalAlertStore.follow(detail.data);
-  }, [detail.data]);
-  useEffect(() => {
-    if (alertDetail.data) void arrivalAlertStore.follow(alertDetail.data);
-  }, [alertDetail.data]);
-  useEffect(() => {
-    // No longer tracked: the run ended or the vehicle left the feed.
-    if (alertDetail.error instanceof ApiError && alertDetail.error.status === 404) {
-      void arrivalAlertStore.disarm();
-    }
-  }, [alertDetail.error]);
-
-  const toggleArrivalAlert = useCallback(
-    async (stop: { id: string; name: string }) => {
-      tapped();
-      const current = arrivalAlertStore.getSnapshot();
-      const data = detail.data;
-      if (current && current.stopId === stop.id && current.vehicleId === data?.vehicle.id) {
-        await arrivalAlertStore.disarm();
-        return;
-      }
-      if (!data) return;
-      const result = await arrivalAlertStore.arm(
-        {
-          vehicleId: data.vehicle.id,
-          line: data.vehicle.line,
-          towards: data.trip?.towards ?? data.trip?.headsign ?? null,
-          stopId: stop.id,
-          stopName: stop.name,
-        },
-        data,
-      );
-      if (result === 'denied') {
-        failed();
-        Alert.alert(
-          'Powiadomienia są wyłączone',
-          'Włącz je w Ustawieniach systemu, aby dostać powiadomienie przed przyjazdem.',
-          [
-            { text: 'Anuluj', style: 'cancel' },
-            { text: 'Ustawienia', onPress: () => Linking.openSettings() },
-          ],
-        );
-      }
-    },
-    [detail.data],
-  );
+  const arrival = useArrivalAlertTracking(detail, vehicleId);
 
   const departures = usePoll(
     (signal) => {
@@ -400,8 +341,10 @@ export default function MapScreen() {
   }, []);
 
   const favouriteStops = useFavouriteStops();
-  // The home-screen widget shows the first starred stop; this keeps it fed.
-  useWidgetSync(favouriteStops);
+  // The starred stops' next departures: the sheet's "Ulubione" rows and the
+  // home-screen widget, from one fetch.
+  const favouriteBoards = useFavouriteBoards(favouriteStops, userPosition);
+  useQuickActions(favouriteStops);
 
   // A stop opened from search posts an `open-stop` intent. It is consumed
   // here, once: the map recentres on the stop and the existing stop sheet
@@ -689,25 +632,45 @@ export default function MapScreen() {
             ageSeconds={detail.receivedAt === null ? 0 : (now - detail.receivedAt) / 1_000}
             loading={detail.loading}
             error={detail.error}
-            onStopPress={arrivalAlertsAvailable ? toggleArrivalAlert : undefined}
+            onStopPress={arrivalAlertsAvailable ? arrival.toggle : undefined}
             alertStopId={
-              arrivalAlert && arrivalAlert.vehicleId === detail.data?.vehicle.id
-                ? arrivalAlert.stopId
+              arrival.alert && arrival.alert.vehicleId === detail.data?.vehicle.id
+                ? arrival.alert.stopId
                 : null
             }
+            alertStopName={
+              arrival.alert && arrival.alert.vehicleId === detail.data?.vehicle.id
+                ? arrival.alert.stopName
+                : null
+            }
+            onDisarm={() => void arrival.disarm()}
             onOpenRoute={() => {
               const vehicle = detail.data?.vehicle;
               if (vehicle) mapRef.current?.centerOn(vehicle.lat, vehicle.lon, 14);
             }}
           />
         ) : shownStop ? (
-          <StopDetails data={departures.data} loading={departures.loading} error={departures.error} />
+          <StopDetails
+            data={departures.data}
+            loading={departures.loading}
+            error={departures.error}
+            stop={shownStop}
+            userPosition={userPosition}
+            ageSeconds={departures.receivedAt === null ? 0 : (now - departures.receivedAt) / 1_000}
+          />
         ) : classic ? null : (
           <MapSheetHome
             selectedLineCount={selectedLines.length}
             alertCount={incidentCount.data}
             nearbyAreas={nearbyAreas}
+            arrivalAlert={arrival.alert}
+            onOpenAlert={() => arrival.alert && handleVehicle(arrival.alert.vehicleId)}
+            onDisarmAlert={() => void arrival.disarm()}
             favouriteStops={favouriteStops}
+            favouriteBoards={favouriteBoards.boards}
+            boardsAgeSeconds={
+              favouriteBoards.receivedAt === null ? 0 : (now - favouriteBoards.receivedAt) / 1_000
+            }
             located={userPosition !== null}
             locating={locating}
             locateProblem={locateProblem}

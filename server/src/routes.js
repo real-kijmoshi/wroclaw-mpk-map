@@ -201,6 +201,7 @@ const createRouter = ({
   stats,
   klosok = null,
   runtimeSettings = null,
+  liveActivities = null,
   startedAt,
 }) => {
   const router = express.Router();
@@ -486,6 +487,24 @@ const createRouter = ({
     });
   });
 
+  /**
+   * Live Activity push registration (see src/live-activities.js). The app
+   * registers an activity once iOS hands it a push token and removes it when
+   * the rider ends the alert. 503 when no APNs key is configured — the app
+   * then keeps the activity current itself while it runs, as before.
+   */
+  router.post('/live-activities', noStore, express.json({ limit: '4kb' }), (req, res) => {
+    if (!liveActivities) return res.status(503).json({ error: 'Live Activity push is not configured' });
+    const result = liveActivities.register(req.body);
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    return res.status(204).end();
+  });
+
+  router.delete('/live-activities/:token', noStore, (req, res) => {
+    liveActivities?.unregister(req.params.token);
+    return res.status(204).end();
+  });
+
   router.get('/shapes/:line/variants', requireGtfs, revalidateShape, (req, res) => {
     const { line } = req.params;
     const variants = gtfs.getVariants(line);
@@ -648,6 +667,7 @@ const createRouter = ({
       },
       performance: performanceBlock,
       klosok: klosok ? klosok.status : { enabled: false },
+      liveActivities: liveActivities ? liveActivities.status : { enabled: false },
       alerts: alerts.status,
       lines: {
         total: Object.values(gtfs.lines).flat().length,

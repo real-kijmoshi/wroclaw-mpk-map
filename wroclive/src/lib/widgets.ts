@@ -1,4 +1,5 @@
-import type { Departure, Stop } from '@/lib/api';
+import type { Departure } from '@/lib/api';
+import type { FavouriteStop } from '@/lib/favourite-stops';
 
 /**
  * Home-screen widget and Live Activity — not on this platform.
@@ -10,6 +11,7 @@ import type { Departure, Stop } from '@/lib/api';
 
 export type ArrivalActivityInput = {
   vehicleId: string;
+  stopId: string;
   line: string;
   color: string;
   towards: string | null;
@@ -18,9 +20,16 @@ export type ArrivalActivityInput = {
   atStop: boolean;
 };
 
-export const widgetsAvailable = false;
+export type WidgetBoard = { stop: FavouriteStop; departures: Departure[] };
 
-export function syncDeparturesWidget(_stop: Stop | null, _departures: Departure[] | null, _now?: number) {}
+export const widgetsAvailable = false;
+export const WIDGET_STOPS = 3;
+
+export function syncDeparturesWidget(
+  _boards: WidgetBoard[],
+  _position: { lat: number; lon: number } | null,
+  _now?: number,
+) {}
 
 export function showArrivalActivity(_input: ArrivalActivityInput) {}
 

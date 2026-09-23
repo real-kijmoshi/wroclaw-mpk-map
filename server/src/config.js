@@ -221,6 +221,28 @@ module.exports = {
     tlsAllowInvalidCert: bool(process.env.KLOSOK_TLS_ALLOW_INVALID_CERT, DEFAULTS.klosok.tlsAllowInvalidCert),
   },
 
+  // Live Activity updates over Apple's push service, so the lock-screen
+  // countdown stays right while the app is suspended. Off unless an operator
+  // supplies an APNs auth key (.p8) — without one, activities are updated by
+  // the app itself while it runs, which is exactly how they worked before.
+  // Nothing here is a default endpoint anyone else operates: the key is yours.
+  apns: {
+    keyId: process.env.APNS_KEY_ID || '',
+    teamId: process.env.APNS_TEAM_ID || '',
+    // The .p8 contents (PEM), or a path to the file.
+    privateKey: process.env.APNS_PRIVATE_KEY || '',
+    privateKeyPath: process.env.APNS_PRIVATE_KEY_PATH || '',
+    bundleId: process.env.APNS_BUNDLE_ID || DEFAULTS.apns.bundleId,
+    // Development builds get sandbox tokens; TestFlight and the store get production ones.
+    production: bool(process.env.APNS_PRODUCTION, DEFAULTS.apns.production),
+    // Overridable for tests only.
+    origin: process.env.APNS_ORIGIN || '',
+    // Live Activities followed at once; beyond it, registration is refused.
+    maxActivities: num(process.env.LIVE_ACTIVITY_MAX, DEFAULTS.apns.maxActivities),
+    // An activity nobody ended is dropped after this long.
+    maxAgeMs: num(process.env.LIVE_ACTIVITY_MAX_AGE_MS, DEFAULTS.apns.maxAgeMs),
+  },
+
   alerts: {
     pages: ALERT_PAGES,
     refreshIntervalMs: num(process.env.ALERTS_REFRESH_INTERVAL_MS, DEFAULTS.alerts.refreshIntervalMs),

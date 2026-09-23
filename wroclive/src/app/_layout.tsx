@@ -10,6 +10,8 @@ import { getLines } from '@/lib/api';
 import { hydratePreferences, usePreferences } from '@/lib/preferences';
 import { ACCENT } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+// Defines the background task at module scope, where a cold background launch finds it.
+import { registerBackgroundRefresh } from '@/lib/background-refresh';
 import { hydrateFavouriteStops } from '@/lib/favourite-stops';
 import { hydrateRecentStops } from '@/lib/recent-stops';
 import { hydrateSelection, selectionStore } from '@/lib/selection';
@@ -127,6 +129,7 @@ export default function RootLayout() {
    */
   useEffect(() => {
     syncUpdates();
+    void registerBackgroundRefresh();
     return watchForUpdatesOnResume();
   }, []);
 

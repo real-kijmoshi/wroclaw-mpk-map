@@ -162,11 +162,12 @@ web. Do not point `map-view.tsx` back at `native-map.tsx` and do not add
 `android.config.googleMaps.apiKey` to `app.json` — that is the whole of the
 decision, re-stated as config.
 
-`expo-maps` (SDK 57, alpha) was a prototype MapKit surface and is **not wired
-into the live screen**; if it is ever reintroduced it must stay behind an
-`appleMapsAvailable` runtime check (`requireOptionalNativeModule('ExpoMaps')`),
-because `expo-maps` is *not* in Expo Go and importing it unconditionally crashes
-the bundle at module scope. The Leaflet page (`wroclive/src/lib/map-html.ts`) is
+`expo-maps` (SDK 57, alpha) was a prototype MapKit surface that was never
+wired into the live screen; it was removed to keep the binary lean. If it is
+ever reintroduced it must stay behind a `requireOptionalNativeModule('ExpoMaps')`
+check, because `expo-maps` is *not* in Expo Go and importing it unconditionally
+crashes the bundle at module scope — the guard `src/lib/widgets.ios.ts` uses
+for `expo-widgets` is the pattern. The Leaflet page (`wroclive/src/lib/map-html.ts`) is
 therefore a **live native surface again**, not a web-only artefact: it is what
 every Android rider sees, so the bridge rules in `wroclive/AGENTS.md` apply to
 shipped builds and not just to the preview.
@@ -176,11 +177,13 @@ shipped builds and not just to the preview.
 string and no code behind it. An unused permission is an App Review question you
 cannot answer. Still true today: every permission in `wroclive/app.json` maps to
 real code (`expo-location` for the locate button and nearby stops, local
-notifications for the arrival alert). The rule reaches entitlements too:
-`expo-notifications`' config plugin and `expo-widgets` both write a push
-entitlement, the app sends no push, so the first plugin is left out and
-`wroclive/plugins/without-push-entitlement.js` removes what the second adds.
-Android's `RECEIVE_BOOT_COMPLETED` (from `expo-notifications`) is blocked in
+notifications for the arrival alert, background processing for the widget
+refresh). The rule reaches entitlements too. The push entitlement is used, and
+by exactly one thing: Live Activity updates from the server
+(`server/src/live-activities.js`), enabled through `expo-widgets`'
+`enablePushNotifications`. The arrival alert itself stays a *local*
+notification, so `expo-notifications`' config plugin — which would declare
+remote notifications for it — is still left out of `app.json`. Android's `RECEIVE_BOOT_COMPLETED` (from `expo-notifications`) is blocked in
 `app.json` for the same reason — an alert minutes away does not survive a
 reboot worth re-arming. The iOS location strings are "when in use" only; the
 plugin fills in "Always" by default and each unused key is set to `false`.
