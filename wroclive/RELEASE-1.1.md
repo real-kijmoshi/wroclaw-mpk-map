@@ -5,6 +5,32 @@ Run these commands from `wroclive/`. The app is configured for Expo SDK 57,
 `https://api.wroclive.kijmoshi.xyz`. Version 1.1.0 changes native dependencies,
 so existing 1.0 binaries cannot receive it over the air. Build new binaries.
 
+## What ships in 1.1
+
+App Store "Co nowego" (paste as is):
+
+```
+• Ulubione przystanki — gwiazdka przy przystanku, a na starcie od razu najbliższe odjazdy.
+• Widżety na ekranie głównym i blokady, z czasem dojścia na przystanek.
+• Powiadomienie ok. 2 minuty przed przyjazdem i odliczanie na ekranie blokady (Live Activity).
+• „Prowadź pieszo” i „Wyjdź za … min” na tablicy odjazdów.
+• Udostępnianie przystanków i pojazdów — link działa także bez aplikacji.
+• Szybsze pozycje pojazdów i dokładniejsze odliczanie.
+• Szybkie akcje po przytrzymaniu ikony aplikacji.
+• Poprawki dostępności (VoiceOver) i drobne usprawnienia.
+```
+
+Dependencies: Expo SDK 57 is the newest stable SDK (58 is still a preview
+and is not a release base), and every package sits on the version SDK 57
+expects — `npx expo-doctor` reports no version mismatches. `npm audit` lists
+moderate advisories in two transitive packages that cannot be fixed without
+breaking Expo: `uuid` inside `xcode` (build-time tooling only, never in the
+app) and `decode-uri-component` inside `expo-router`'s URL parsing (worst case,
+a malformed link slows the phone that opened it). Both clear when Expo ships
+updated dependencies; `npm audit fix --force` would downgrade Expo and must not
+be run. The app declares its required-reason APIs in `ios.privacyManifests`
+(`app.json`), which App Store Connect checks on upload.
+
 ## Before building
 
 1. Deploy the server change first. Check `https://api.wroclive.kijmoshi.xyz/health`:

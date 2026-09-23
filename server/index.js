@@ -11,7 +11,7 @@ const { AlertArchive } = require('./src/alert-archive');
 const { GtfsStore } = require('./src/gtfs/store');
 const { KlosokService } = require('./src/klosok/service');
 const { ApnsClient } = require('./src/apns');
-const { LiveActivityService } = require('./src/live-activities');
+const { LiveActivityService, bothFleets } = require('./src/live-activities');
 const { RuntimeSettings } = require('./src/runtime-settings');
 const { StatsTracker } = require('./src/stats');
 const { VehicleTracker } = require('./src/vehicles');
@@ -75,7 +75,7 @@ const stats = config.stats.enabled
 const liveActivities = new LiveActivityService({
   apns: new ApnsClient(config.apns),
   gtfs,
-  vehicles,
+  vehicles: bothFleets(vehicles, klosok),
   bundleId: config.apns.bundleId,
   maxActivities: config.apns.maxActivities,
   maxAgeMs: config.apns.maxAgeMs,
