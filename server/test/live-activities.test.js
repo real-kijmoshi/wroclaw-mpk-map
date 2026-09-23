@@ -6,7 +6,7 @@ const http2 = require('node:http2');
 const { after, describe, it } = require('node:test');
 
 const { ApnsClient } = require('../src/apns');
-const { LiveActivityService, parseRegistration } = require('../src/live-activities');
+const { LiveActivityService, bothFleets, parseRegistration } = require('../src/live-activities');
 
 const TOKEN = 'ab'.repeat(32);
 const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -60,6 +60,19 @@ describe('Live Activity registration', () => {
     const service = new LiveActivityService({ apns: new ApnsClient({ keyId: '', teamId: '' }), bundleId: 'x' });
     assert.equal(service.register(registration()).status, 503);
     assert.equal(service.status.enabled, false);
+  });
+});
+
+describe('vehicle lookup', () => {
+  it('finds a Kłosok bus, so an alert armed on one is not ended on the first pass', () => {
+    const mpk = { pollRevision: 7, getVehicle: (id) => (id === '10-1' ? { id } : null) };
+    const klosok = { getVehicle: (id) => (id === 'klosok:931-5' ? { id } : null) };
+    const fleets = bothFleets(mpk, klosok);
+    assert.deepEqual(fleets.getVehicle('klosok:931-5'), { id: 'klosok:931-5' });
+    assert.deepEqual(fleets.getVehicle('10-1'), { id: '10-1' });
+    assert.equal(fleets.getVehicle('klosok:none'), null);
+    assert.equal(fleets.pollRevision, 7);
+    assert.equal(bothFleets(mpk, null).getVehicle('klosok:931-5'), null);
   });
 });
 

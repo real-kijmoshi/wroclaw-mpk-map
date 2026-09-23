@@ -1,7 +1,7 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { usePoll } from '@/hooks/use-poll';
-import { fetchFavouriteBoards, rememberPosition, type FavouriteBoard } from '@/lib/favourite-boards';
+import { fetchFavouriteBoards, lastPosition, rememberPosition, type FavouriteBoard } from '@/lib/favourite-boards';
 import type { FavouriteStop } from '@/lib/favourite-stops';
 import { syncDeparturesWidget, WIDGET_STOPS } from '@/lib/widgets';
 
@@ -28,9 +28,17 @@ export function useFavouriteBoards(
     key,
   });
 
+  // The last position the phone remembers, until the rider locates again —
+  // without it an app opened without tapping "locate" would hand the widget
+  // no walk, wiping the estimate the background refresh had just drawn.
+  const [remembered, setRemembered] = useState<{ lat: number; lon: number } | null>(null);
+  useEffect(() => {
+    void lastPosition().then(setRemembered);
+  }, []);
   useEffect(() => {
     if (userPosition) void rememberPosition(userPosition);
   }, [userPosition]);
+  const position = userPosition ?? remembered;
 
   // Only boards for the stops currently starred: a poll still in flight from
   // before an unstar must not put the old stop back on the widget.
@@ -40,8 +48,8 @@ export function useFavouriteBoards(
   );
 
   useEffect(() => {
-    syncDeparturesWidget(shown.length ? current : [], userPosition, boards.receivedAt ?? Date.now());
-  }, [current, shown.length, userPosition, boards.receivedAt]);
+    syncDeparturesWidget(shown.length ? current : [], position, boards.receivedAt ?? Date.now());
+  }, [current, shown.length, position, boards.receivedAt]);
 
   return { boards: current, receivedAt: boards.receivedAt };
 }

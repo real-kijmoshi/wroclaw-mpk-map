@@ -249,4 +249,16 @@ class LiveActivityService {
   }
 }
 
-module.exports = { LiveActivityService, parseRegistration };
+/**
+ * One lookup over both fleets, the way `/vehicle/:id` resolves them. An alert
+ * armed on a Kłosok bus (`klosok:` ids) must not read as "vehicle gone" and
+ * have its activity ended on the first pass. Polls follow the MPK tracker.
+ */
+const bothFleets = (vehicles, klosok) => ({
+  getVehicle: (id) => (id.startsWith('klosok:') ? (klosok?.getVehicle(id) ?? null) : vehicles.getVehicle(id)),
+  get pollRevision() {
+    return vehicles.pollRevision;
+  },
+});
+
+module.exports = { LiveActivityService, bothFleets, parseRegistration };
