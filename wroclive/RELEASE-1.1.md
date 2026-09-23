@@ -40,9 +40,22 @@ eas build --platform ios --profile preview
 eas build --platform android --profile preview
 ```
 
+1.1 also adds an iOS widget extension (`ExpoWidgetsTarget`) and an App Group
+(`group.com.kijmoshi.wroclive`). EAS reads both from the `expo-widgets` plugin
+and provisions them on the first iOS build — let it create the App Group and
+the extension's profile when it asks. Nothing else in App Store Connect needs
+setting up: the app sends no push, so no APNs key is needed.
+
 Install both preview builds. Check first launch, location denied and granted,
 light and dark map, vehicle movement, line and stop selection, departures,
 alerts, settings, background/resume, and a cold start while the API is loading.
+New in 1.1, check too: starring a stop (it appears under "Ulubione" and in the
+widget), sharing a stop and a vehicle (the link opens `map.html` on that stop
+or vehicle), tapping a stop in a vehicle's list (notification permission is
+asked then, not at launch; the banner arrives about two minutes before; on
+iOS a Live Activity counts down on the lock screen), adding the "Odjazdy"
+widget and tapping it (opens that stop), and the fleet fading when the phone
+goes offline.
 Expo Go does not test EAS Update; use the installed preview builds for that.
 
 To exercise OTA before production, make a small visible JavaScript-only change

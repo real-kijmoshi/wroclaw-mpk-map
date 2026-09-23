@@ -26,6 +26,9 @@
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
       ],
+      "blockedPermissions": [
+        "android.permission.RECEIVE_BOOT_COMPLETED"
+      ],
       "package": "com.kijmoshi.wroclive"
     },
     "web": {
@@ -45,13 +48,31 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Pozwól, aby pokazać Twoją pozycję i najbliższe przystanki na mapie.",
+          "locationAlwaysAndWhenInUsePermission": false,
+          "locationAlwaysPermission": false,
+          "motionUsagePermission": false,
           "locationWhenInUsePermission": "Pozwól, aby pokazać Twoją pozycję i najbliższe przystanki na mapie.",
           "isAndroidBackgroundLocationEnabled": false,
           "isIosBackgroundLocationEnabled": false
         }
       ],
       "expo-maps",
+      "./plugins/without-push-entitlement",
+      [
+        "expo-widgets",
+        {
+          "widgets": [
+            {
+              "name": "Departures",
+              "displayName": "Odjazdy",
+              "description": "Najbliższe odjazdy z ulubionego przystanku.",
+              "ios": {
+                "supportedFamilies": ["systemSmall", "systemMedium"]
+              }
+            }
+          ]
+        }
+      ],
       "expo-image",
       "expo-web-browser"
     ],

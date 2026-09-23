@@ -86,7 +86,7 @@ export async function hydrateRecentStops() {
   }
 }
 
-function isRecentStop(value: unknown): value is RecentStop {
+export function isRecentStop(value: unknown): value is RecentStop {
   if (typeof value !== 'object' || value === null) return false;
   const record = value as Record<string, unknown>;
   return (

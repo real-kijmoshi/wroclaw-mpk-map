@@ -433,15 +433,18 @@ function RawAlertCard({ alert, onLine }: { alert: Alert; onLine: (line: string) 
     if (alert.url) await WebBrowser.openBrowserAsync(alert.url);
   };
 
+  // The link is the text, not the card: an accessible parent hides its
+  // children from VoiceOver, so a card-wide button made the line badges below
+  // it unreachable with a screen reader.
   return (
-    <Pressable
-      onPress={open}
-      disabled={!alert.url}
-      accessibilityRole={alert.url ? 'link' : 'text'}
-      style={({ pressed }) => [pressed && alert.url ? styles.pressed : null]}>
-      <View style={[styles.rawCard, { backgroundColor: theme.backgroundCard }]}>
-        <View style={[styles.stripe, { backgroundColor: accent }]} />
-        <View style={styles.rawCardBody}>
+    <View style={[styles.rawCard, { backgroundColor: theme.backgroundCard }]}>
+      <View style={[styles.stripe, { backgroundColor: accent }]} />
+      <View style={styles.rawCardBody}>
+        <Pressable
+          onPress={open}
+          disabled={!alert.url}
+          accessibilityRole={alert.url ? 'link' : 'text'}
+          style={({ pressed }) => [styles.rawCardText, pressed && alert.url ? styles.pressed : null]}>
           <ThemedText type="footnote" themeColor="textSecondary">{formatAge(alert.timestamp)}</ThemedText>
           {!!title && <ThemedText type="headline">{title}</ThemedText>}
           {!!body && body !== title && (
@@ -449,16 +452,23 @@ function RawAlertCard({ alert, onLine }: { alert: Alert; onLine: (line: string) 
               {body}
             </ThemedText>
           )}
-          <View style={styles.affected}>
-            {alert.affected.map((line) => (
-              <Pressable key={line} hitSlop={Space.sm} onPress={() => onLine(line)}>
-                <LineBadge line={line} type={alert.types[line]} size="small" />
-              </Pressable>
-            ))}
-          </View>
+        </Pressable>
+        <View style={styles.affected}>
+          {alert.affected.map((line) => (
+            <Pressable
+              key={line}
+              hitSlop={Space.sm}
+              onPress={() => onLine(line)}
+              accessibilityRole="button"
+              // The badge alone reads as a bare number.
+              accessibilityLabel={`Linia ${line}`}
+              accessibilityHint="Pokazuje na mapie tylko tę linię">
+              <LineBadge line={line} type={alert.types[line]} size="small" />
+            </Pressable>
+          ))}
         </View>
       </View>
-    </Pressable>
+    </View>
   );
 }
 
@@ -621,6 +631,7 @@ const styles = StyleSheet.create({
   rawCard: { flexDirection: 'row', borderRadius: Radius.lg, overflow: 'hidden' },
   stripe: { width: Space.xs },
   rawCardBody: { flex: 1, padding: Space.lg, gap: Space.sm, minWidth: 0 },
+  rawCardText: { gap: Space.sm },
   backAction: {
     minHeight: HitTarget,
     flexDirection: 'row',

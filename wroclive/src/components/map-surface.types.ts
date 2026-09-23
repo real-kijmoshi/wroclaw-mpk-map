@@ -40,6 +40,12 @@ export type MapSurfaceProps = {
   /** Fit a route only when it was explicitly opened as a line. */
   fitRoute?: boolean;
   userPosition: { lat: number; lon: number } | null;
+  /**
+   * The positions are old — the feed stalled or the connection dropped. The
+   * fleet is drawn faded rather than removed: where the vehicles were a minute
+   * ago is still worth something, as long as it does not look like now.
+   */
+  stale?: boolean;
   /** The stops to draw. Whoever supplies them decides what "nearby" means. */
   nearbyStops: Stop[];
   /** Always drawn with its name, whatever the zoom or the de-collision pass. */

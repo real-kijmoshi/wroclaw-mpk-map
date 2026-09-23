@@ -6,7 +6,7 @@ import { ThemedText } from './themed-text';
 import { Motion, Radius, Space } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
 import type { Vehicle, VehicleDetail, VehicleTripDetail } from '@/lib/api';
-import { etaParts, formatDelay, formatScheduled } from '@/lib/format';
+import { AT_STOP_ETA, etaParts, formatDelay, formatScheduled } from '@/lib/format';
 import { colorFor } from '@/lib/lines';
 
 /**
@@ -19,9 +19,11 @@ import { colorFor } from '@/lib/lines';
  */
 export function VehicleSummary({
   detail,
+  onShare,
   onClose,
 }: {
   detail: VehicleDetail | null;
+  onShare?: () => void;
   onClose: () => void;
 }) {
   const vehicle = detail?.vehicle ?? null;
@@ -54,6 +56,9 @@ export function VehicleSummary({
         </ThemedText>
       </View>
 
+      {onShare && vehicle && (
+        <HeaderButton icon="share-outline" label="Udostępnij pojazd" onPress={onShare} />
+      )}
       <CloseButton onPress={onClose} label="Zamknij szczegóły pojazdu" />
     </View>
   );
@@ -85,6 +90,13 @@ export type VehicleDetailsProps = {
   error: Error | null;
   /** Recentres the already-highlighted route without leaving the live view. */
   onOpenRoute: () => void;
+  /**
+   * Arms or clears the arrival alert for a stop. Absent where local
+   * notifications are not available, and then the rows are not buttons.
+   */
+  onStopPress?: (stop: { id: string; name: string }) => void;
+  /** The stop an arrival alert is armed for on this vehicle, if any. */
+  alertStopId?: string | null;
 };
 
 /**
@@ -95,7 +107,15 @@ export type VehicleDetailsProps = {
  * is no delay and no clock time to show, only the remaining running time, and
  * this screen says that rather than inventing a number.
  */
-export function VehicleDetails({ detail, ageSeconds = 0, loading, error, onOpenRoute }: VehicleDetailsProps) {
+export function VehicleDetails({
+  detail,
+  ageSeconds = 0,
+  loading,
+  error,
+  onOpenRoute,
+  onStopPress,
+  alertStopId = null,
+}: VehicleDetailsProps) {
   const theme = useTheme();
 
   if (loading && !detail) {
@@ -124,7 +144,10 @@ export function VehicleDetails({ detail, ageSeconds = 0, loading, error, onOpenR
   const stops = trip?.nextStops ?? [];
   const lineColor = colorFor(vehicle.type);
   const nextStop = trip?.nextStop ?? stops[0] ?? null;
-  const nextEta = nextStop ? etaParts(agedEta(nextStop.etaSeconds, ageSeconds)) : null;
+  const standingAt = trip?.atStop?.id ?? null;
+  const etaFor = (stop: { id: string; etaSeconds: number | null }) =>
+    stop.id === standingAt ? AT_STOP_ETA : etaParts(agedEta(stop.etaSeconds, ageSeconds));
+  const nextEta = nextStop ? etaFor(nextStop) : null;
 
   return (
     <ScrollView
@@ -181,14 +204,34 @@ export function VehicleDetails({ detail, ageSeconds = 0, loading, error, onOpenR
           Brak danych o kolejnych przystankach.
         </ThemedText>
       ) : (
+        <View style={styles.timelineBlock}>
+        {onStopPress && (
+          <ThemedText type="footnote" themeColor="textSecondary">
+            Dotknij przystanek, aby dostać powiadomienie 2 min przed przyjazdem.
+          </ThemedText>
+        )}
         <View style={[styles.timeline, { backgroundColor: theme.backgroundCard }]}>
           {stops.map((stop, index) => {
-            const eta = etaParts(agedEta(stop.etaSeconds, ageSeconds));
+            const eta = etaFor(stop);
             const scheduled = formatScheduled(stop.scheduled);
             const first = index === 0;
+            const alerting = stop.id === alertStopId;
 
             return (
-              <View key={`${stop.id}-${stop.sequence}`} style={styles.stopRow}>
+              <Pressable
+                key={`${stop.id}-${stop.sequence}`}
+                disabled={!onStopPress}
+                onPress={() => onStopPress?.({ id: stop.id, name: stop.name })}
+                accessibilityRole={onStopPress ? 'button' : undefined}
+                accessibilityState={onStopPress ? { selected: alerting } : undefined}
+                accessibilityHint={
+                  onStopPress
+                    ? alerting
+                      ? 'Wyłącza powiadomienie o przyjeździe'
+                      : 'Włącza powiadomienie 2 minuty przed przyjazdem'
+                    : undefined
+                }
+                style={({ pressed }) => [styles.stopRow, pressed && styles.pressed]}>
                 <View style={styles.rail}>
                   {index > 0 && <View style={[styles.railLine, { backgroundColor: lineColor }]} />}
                   <View
@@ -206,9 +249,23 @@ export function VehicleDetails({ detail, ageSeconds = 0, loading, error, onOpenR
                 </View>
 
                 <View style={styles.stopText}>
-                  <ThemedText type="callout" weight={first ? 'semibold' : 'regular'} numberOfLines={1}>
-                    {stop.name}
-                  </ThemedText>
+                  <View style={styles.stopName}>
+                    <ThemedText
+                      type="callout"
+                      weight={first ? 'semibold' : 'regular'}
+                      numberOfLines={1}
+                      style={styles.stopNameText}>
+                      {stop.name}
+                    </ThemedText>
+                    {alerting && (
+                      <Ionicons
+                        name="notifications"
+                        size={14}
+                        color={theme.textSecondary}
+                        accessibilityLabel="Powiadomienie włączone"
+                      />
+                    )}
+                  </View>
                   {scheduled && (
                     <ThemedText type="footnote" themeColor="textSecondary">
                       wg rozkładu {scheduled}
@@ -226,9 +283,10 @@ export function VehicleDetails({ detail, ageSeconds = 0, loading, error, onOpenR
                     </ThemedText>
                   )}
                 </View>
-              </View>
+              </Pressable>
             );
           })}
+        </View>
         </View>
       )}
 
@@ -354,6 +412,39 @@ function VehicleAmenities({ vehicle, trip }: { vehicle: Vehicle; trip: VehicleTr
   );
 }
 
+/** A secondary action in a selection header — share, star. Same size as the way out. */
+export function HeaderButton({
+  icon,
+  label,
+  onPress,
+  color,
+  selected,
+}: {
+  icon: React.ComponentProps<typeof Ionicons>['name'];
+  label: string;
+  onPress: () => void;
+  color?: string;
+  /** For a toggle: read out as selected, so the star's state is not colour alone. */
+  selected?: boolean;
+}) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={selected === undefined ? undefined : { selected }}
+      hitSlop={8}
+      style={({ pressed }) => [
+        styles.close,
+        { backgroundColor: theme.backgroundElement },
+        pressed && styles.pressed,
+      ]}>
+      <Ionicons name={icon} size={17} color={color ?? theme.textSecondary} />
+    </Pressable>
+  );
+}
+
 /** The one way out, shared by both selection headers. */
 export function CloseButton({ onPress, label }: { onPress: () => void; label: string }) {
   const theme = useTheme();
@@ -419,6 +510,9 @@ const styles = StyleSheet.create({
     marginBottom: 'auto',
   },
   stopText: { flex: 1, gap: 1, minWidth: 0 },
+  stopName: { flexDirection: 'row', alignItems: 'center', gap: Space.xs, minWidth: 0 },
+  stopNameText: { flexShrink: 1 },
+  timelineBlock: { gap: Space.sm },
   eta: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },
   routeAction: {
     minHeight: 52,

@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Linking, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Alert, Linking, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -19,10 +19,14 @@ import { useAreaStops } from '@/hooks/use-area-stops';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePoll } from '@/hooks/use-poll';
 import { useTheme } from '@/hooks/use-theme';
-import { getAlerts, getDeparturesForStops, getIncidents, getLocations, getShape, getStopsNear, getVehicle, vehiclePollDelay, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
+import { useWidgetSync } from '@/hooks/use-widget-sync';
+import { ApiError, getAlerts, getDeparturesForStops, getIncidents, getLocations, getShape, getStopsNear, getVehicle, vehiclePollDelay, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
 import { REFRESH_MS } from '@/lib/config';
 import { plural } from '@/lib/format';
+import { shareStop, shareVehicle } from '@/lib/share';
 import { colorFor } from '@/lib/lines';
+import { arrivalAlertStore, arrivalAlertsAvailable, useArrivalAlert } from '@/lib/arrival-alerts';
+import { favouriteStopsStore, useFavouriteStops } from '@/lib/favourite-stops';
 import { mapIntentStore, useMapIntent } from '@/lib/map-intent';
 import { usePreferences } from '@/lib/preferences';
 import { failed, tapped } from '@/lib/haptics';
@@ -66,6 +70,8 @@ export default function MapScreen() {
   // A searched vehicle must remain visible even when the currently persisted
   // line filter deliberately excludes it.
   const [pinnedVehicle, setPinnedVehicle] = useState<FleetVehicle | null>(null);
+  /** A vehicle opened from a link, waiting for its first detail to centre on. */
+  const [centreOnDetail, setCentreOnDetail] = useState<string | null>(null);
   const [userPosition, setUserPosition] = useState<{ lat: number; lon: number } | null>(null);
   /** Stops around the rider, for the sheet's list. Distinct from what the map draws. */
   const [myStops, setMyStops] = useState<Stop[]>([]);
@@ -152,6 +158,18 @@ export default function MapScreen() {
   );
 
   const filteredVehicles = fleet.data?.locations ?? EMPTY_VEHICLES;
+
+  /**
+   * Whether what the map shows is old enough to say so. Two good polls fit
+   * comfortably inside the window; past it the feed has stalled or the phone
+   * has lost the server, and a crisp marker would be claiming "now".
+   */
+  const lastUpdatedMs = fleet.data?.lastUpdated ? Date.parse(fleet.data.lastUpdated) : Number.NaN;
+  const fleetStale =
+    Boolean(fleet.data) &&
+    (Boolean(fleet.error) ||
+      Boolean(fleet.data?.stale) ||
+      (Number.isFinite(lastUpdatedMs) && now - lastUpdatedMs > STALE_AFTER_MS));
   const vehicles = useMemo(() => {
     if (!pinnedVehicle || filteredVehicles.some((vehicle) => vehicle.id === pinnedVehicle.id)) {
       return filteredVehicles;
@@ -196,6 +214,80 @@ export default function MapScreen() {
     (signal) => getVehicle(vehicleId as string, { signal }),
     REFRESH_MS.vehicles,
     { enabled: Boolean(vehicleId), key: vehicleId ?? '', delayMs: followServer },
+  );
+
+  useEffect(() => {
+    const vehicle = detail.data?.vehicle;
+    if (!vehicle || centreOnDetail !== vehicle.id) return;
+    mapRef.current?.centerOn(vehicle.lat, vehicle.lon, 16);
+    // Pinned so it is drawn even when the line filter would hide it — the
+    // rider asked for this vehicle by following a link to it.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCentreOnDetail(null);
+    setPinnedVehicle(vehicle);
+  }, [detail.data, centreOnDetail]);
+
+  /* --- the arrival alert --------------------------------------------------- */
+
+  const arrivalAlert = useArrivalAlert();
+  // The armed vehicle keeps being followed when its sheet is closed, so the
+  // alert tracks the tram rather than the screen. When it is the open vehicle,
+  // the detail poll above already has it and this one stays off.
+  const alertDetail = usePoll(
+    (signal) => getVehicle(arrivalAlert?.vehicleId as string, { signal, retryWhileLoading: false }),
+    REFRESH_MS.vehicles,
+    {
+      enabled: Boolean(arrivalAlert) && arrivalAlert?.vehicleId !== vehicleId,
+      key: arrivalAlert?.vehicleId ?? '',
+      delayMs: followServer,
+    },
+  );
+  useEffect(() => {
+    if (detail.data) void arrivalAlertStore.follow(detail.data);
+  }, [detail.data]);
+  useEffect(() => {
+    if (alertDetail.data) void arrivalAlertStore.follow(alertDetail.data);
+  }, [alertDetail.data]);
+  useEffect(() => {
+    // No longer tracked: the run ended or the vehicle left the feed.
+    if (alertDetail.error instanceof ApiError && alertDetail.error.status === 404) {
+      void arrivalAlertStore.disarm();
+    }
+  }, [alertDetail.error]);
+
+  const toggleArrivalAlert = useCallback(
+    async (stop: { id: string; name: string }) => {
+      tapped();
+      const current = arrivalAlertStore.getSnapshot();
+      const data = detail.data;
+      if (current && current.stopId === stop.id && current.vehicleId === data?.vehicle.id) {
+        await arrivalAlertStore.disarm();
+        return;
+      }
+      if (!data) return;
+      const result = await arrivalAlertStore.arm(
+        {
+          vehicleId: data.vehicle.id,
+          line: data.vehicle.line,
+          towards: data.trip?.towards ?? data.trip?.headsign ?? null,
+          stopId: stop.id,
+          stopName: stop.name,
+        },
+        data,
+      );
+      if (result === 'denied') {
+        failed();
+        Alert.alert(
+          'Powiadomienia są wyłączone',
+          'Włącz je w Ustawieniach systemu, aby dostać powiadomienie przed przyjazdem.',
+          [
+            { text: 'Anuluj', style: 'cancel' },
+            { text: 'Ustawienia', onPress: () => Linking.openSettings() },
+          ],
+        );
+      }
+    },
+    [detail.data],
   );
 
   const departures = usePoll(
@@ -307,6 +399,10 @@ export default function MapScreen() {
     setPinnedVehicle(null);
   }, []);
 
+  const favouriteStops = useFavouriteStops();
+  // The home-screen widget shows the first starred stop; this keeps it fed.
+  useWidgetSync(favouriteStops);
+
   // A stop opened from search posts an `open-stop` intent. It is consumed
   // here, once: the map recentres on the stop and the existing stop sheet
   // (selection + departures poll) opens beneath it, then the intent is cleared
@@ -329,6 +425,14 @@ export default function MapScreen() {
       setPinnedVehicle(null);
       setFocusedLine({ line: consumed.line, type: consumed.type });
       setDetent('collapsed');
+    } else if (consumed?.kind === 'open-vehicle-id') {
+      // A link knows the id and nothing else; the detail poll below fetches
+      // the vehicle, and the map centres on it once that answer arrives.
+      setCentreOnDetail(consumed.id);
+      setFocusedLine(null);
+      setPinnedVehicle(null);
+      setSelection({ kind: 'vehicle', id: consumed.id });
+      setDetent('medium');
     } else if (consumed?.kind === 'open-vehicle') {
       mapRef.current?.centerOn(consumed.vehicle.lat, consumed.vehicle.lon, 16);
       setFocusedLine(null);
@@ -424,8 +528,8 @@ export default function MapScreen() {
     if (!fleet.data.count) return { text: 'Brak pojazdów', freshness: 'Live', tone: 'loading' };
     return {
       text: `${fleet.data.count} ${plural(fleet.data.count, ['pojazd', 'pojazdy', 'pojazdów'])}`,
-      freshness: freshnessLabel(fleet.data.lastUpdated, fleet.data.stale, now),
-      tone: fleet.data.stale ? 'stale' : 'live',
+      freshness: freshnessLabel(fleet.data.lastUpdated, fleetStale, now),
+      tone: fleetStale ? 'stale' : 'live',
     };
   })();
 
@@ -458,6 +562,7 @@ export default function MapScreen() {
         follow={followSelectedVehicle}
         fitRoute={Boolean(focusedLine)}
         userPosition={userPosition}
+        stale={fleetStale}
         nearbyStops={mapStops}
         selectedStopId={stopId}
         onSelectVehicle={handleVehicle}
@@ -549,11 +654,23 @@ export default function MapScreen() {
         visibleHeight={sheetHeight}
         header={
           shownVehicleId ? (
-            <VehicleSummary detail={detail.data} onClose={closeSelection} />
+            <VehicleSummary
+              detail={detail.data}
+              onShare={() => {
+                if (detail.data) void shareVehicle(detail.data);
+              }}
+              onClose={closeSelection}
+            />
           ) : shownStop ? (
             <StopSummary
               stop={shownStop}
               userPosition={userPosition}
+              favourite={favouriteStops.some((item) => item.id === shownStop.id)}
+              onToggleFavourite={() => {
+                tapped();
+                favouriteStopsStore.toggle(shownStop);
+              }}
+              onShare={() => void shareStop(shownStop)}
               onClose={closeSelection}
             />
           ) : classic ? null : (
@@ -572,6 +689,12 @@ export default function MapScreen() {
             ageSeconds={detail.receivedAt === null ? 0 : (now - detail.receivedAt) / 1_000}
             loading={detail.loading}
             error={detail.error}
+            onStopPress={arrivalAlertsAvailable ? toggleArrivalAlert : undefined}
+            alertStopId={
+              arrivalAlert && arrivalAlert.vehicleId === detail.data?.vehicle.id
+                ? arrivalAlert.stopId
+                : null
+            }
             onOpenRoute={() => {
               const vehicle = detail.data?.vehicle;
               if (vehicle) mapRef.current?.centerOn(vehicle.lat, vehicle.lon, 14);
@@ -584,6 +707,7 @@ export default function MapScreen() {
             selectedLineCount={selectedLines.length}
             alertCount={incidentCount.data}
             nearbyAreas={nearbyAreas}
+            favouriteStops={favouriteStops}
             located={userPosition !== null}
             locating={locating}
             locateProblem={locateProblem}
@@ -606,6 +730,9 @@ export default function MapScreen() {
 // A stable empty array: a new `[]` every render would re-run the effects that
 // push data into the map.
 const EMPTY_VEHICLES: never[] = [];
+
+/** Older than this, the map fades the fleet. Three polls. */
+const STALE_AFTER_MS = 30_000;
 
 /** Vehicle polls land just after the server's own poll rather than on a free-running timer. */
 const followServer = () => vehiclePollDelay(REFRESH_MS.vehicles);

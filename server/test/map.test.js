@@ -385,3 +385,28 @@ describe('browser map', () => {
     );
   });
 });
+
+describe('shared links', () => {
+  // The app shares https links to this page (wroclive/src/lib/links.ts) for
+  // people who do not have the app. The parameter names are the contract; a
+  // rename on either side leaves a link that opens a plain map.
+  const APP_LINKS = path.join(__dirname, '..', '..', 'wroclive', 'src', 'lib', 'links.ts');
+
+  it('reads every parameter the app writes', () => {
+    const app = fs.readFileSync(APP_LINKS, 'utf8');
+    const page = readMap();
+    const written = new Set();
+    for (const [, block] of app.matchAll(/new URLSearchParams\(\{([^}]*)\}\)/g)) {
+      for (const [, key] of block.matchAll(/(\w+)\s*:/g)) written.add(key);
+    }
+    assert.deepEqual([...written].sort(), ['lat', 'lon', 'name', 'stop', 'vehicle']);
+    for (const key of written) {
+      assert.match(page, new RegExp(`shared\\.get\\('${key}'\\)`), `map.html ignores ?${key}=`);
+    }
+  });
+
+  it('points at the page the landing site serves', () => {
+    assert.match(fs.readFileSync(APP_LINKS, 'utf8'), /\/map\.html\?/);
+    assert.ok(fs.existsSync(LANDING_MAP_HTML));
+  });
+});

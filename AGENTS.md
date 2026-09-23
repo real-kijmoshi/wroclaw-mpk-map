@@ -175,7 +175,15 @@ shipped builds and not just to the preview.
 *Historical:* `expo-notifications` was in the old app's config with an iOS usage
 string and no code behind it. An unused permission is an App Review question you
 cannot answer. Still true today: every permission in `wroclive/app.json` maps to
-real code (`expo-location` for the locate button and nearby stops).
+real code (`expo-location` for the locate button and nearby stops, local
+notifications for the arrival alert). The rule reaches entitlements too:
+`expo-notifications`' config plugin and `expo-widgets` both write a push
+entitlement, the app sends no push, so the first plugin is left out and
+`wroclive/plugins/without-push-entitlement.js` removes what the second adds.
+Android's `RECEIVE_BOOT_COMPLETED` (from `expo-notifications`) is blocked in
+`app.json` for the same reason — an alert minutes away does not survive a
+reboot worth re-arming. The iOS location strings are "when in use" only; the
+plugin fills in "Always" by default and each unused key is set to `false`.
 
 **16. Config-wired dependencies are live dependencies — and OTA is one.**
 The old app wired `expo-updates` and `expo-dev-client` through config (an
@@ -194,8 +202,10 @@ they do not have — which crashes on launch, before the app can fetch a fix.
 Never switch that policy to `appVersion` to "unblock" a release. All of
 `wroclive/src` is shippable this way, which is what makes the JS-side bugs on
 this list (7, 8, 11) fixable in hours rather than in an App Review cycle; SDK
-upgrades, `react-native-maps`, and anything touching permissions still need a
-store build.
+upgrades, `react-native-maps`, `expo-widgets`, `expo-notifications` and
+anything touching permissions still need a store build. The widget and Live
+Activity *layouts* are JS and ship over the air — they are strings registered
+at runtime — but the widget extension they run in is native.
 
 That cuts both ways: users sit on whatever bundle they last picked up, so the
 server must change **first and compatibly**, and the app after — invariant 9 is

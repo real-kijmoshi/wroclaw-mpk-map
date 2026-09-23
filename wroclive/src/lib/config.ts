@@ -36,3 +36,10 @@ export const REFRESH_MS = {
   departures: 30_000,
   alerts: 5 * 60_000,
 } as const;
+
+/**
+ * The public site. Its `map.html` is the browser map, which opens a shared
+ * `?stop=` or `?vehicle=` link — what a link sent to someone without the app
+ * has to land on.
+ */
+export const SITE_URL = 'https://wroclive.kijmoshi.xyz';

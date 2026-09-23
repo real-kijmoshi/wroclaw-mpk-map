@@ -204,6 +204,9 @@ const DOT_MIN_BOX = 20;
 /** A heavier ring once the dot is big enough to carry one. */
 const dotBorderFor = (size: number) => (size >= 10 ? 2 : 1.5);
 
+/** How far a stale fleet fades. Lighter than `dimmed`, which means "not this line". */
+const STALE_OPACITY = 0.5;
+
 type VehicleMarkerProps = {
   vehicle: FleetVehicle;
   dimmed: boolean;
@@ -218,6 +221,8 @@ type VehicleMarkerProps = {
   glide: boolean;
   /** The fused badge-and-tail marker, or the classic badge and chevron. */
   markerStyle: MarkerStyle;
+  /** Old positions: faded through the marker's own opacity, so nothing is re-captured. */
+  stale: boolean;
   onPress: (id: string) => void;
 };
 
@@ -231,6 +236,7 @@ const VehicleMarker = memo(
     dotTail,
     glide,
     markerStyle,
+    stale,
     onPress,
   }: VehicleMarkerProps) {
     // Heading is bucketed to 15°: redrawing for every degree of GPS jitter is
@@ -328,6 +334,7 @@ const VehicleMarker = memo(
         anchor={Platform.OS === 'ios' ? undefined : ANCHOR_CENTRE}
         centerOffset={Platform.OS === 'ios' ? APPLE_CENTRE_OFFSET : undefined}
         tracksViewChanges={tracking}
+        opacity={stale ? STALE_OPACITY : 1}
         // The selected vehicle is never allowed to end up under another marker.
         zIndex={selected ? 1000 : labelled ? 10 : 1}
         // Android bubbles a marker tap through to the map underneath, which
@@ -483,6 +490,7 @@ const VehicleMarker = memo(
     previous.dotTail === next.dotTail &&
     previous.glide === next.glide &&
     previous.markerStyle === next.markerStyle &&
+    previous.stale === next.stale &&
     previous.onPress === next.onPress,
 );
 
@@ -612,6 +620,7 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
     follow = false,
     fitRoute = false,
     userPosition,
+    stale = false,
     nearbyStops,
     selectedStopId,
     onSelectVehicle,
@@ -1074,6 +1083,7 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
           dotTail={dotTail}
           glide={!reducedMotion}
           markerStyle={markerStyle}
+          stale={stale}
           onPress={onSelectVehicle}
         />
       ))}

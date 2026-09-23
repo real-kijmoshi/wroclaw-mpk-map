@@ -7,6 +7,7 @@ import { ThemedText } from './themed-text';
 import { Motion, Radius, Space } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
 import type { Stop } from '@/lib/api';
+import type { FavouriteStop } from '@/lib/favourite-stops';
 import { formatDistance, plural } from '@/lib/format';
 import type { StopArea } from '@/lib/stops-api';
 
@@ -90,6 +91,8 @@ export type MapSheetHomeProps = {
   alertCount: number | null;
   /** Places, not platforms — grouped by `groupStopAreas`. */
   nearbyAreas: StopArea[];
+  /** Starred stops, in the order they were starred. */
+  favouriteStops: FavouriteStop[];
   /** Whether the rider's position is known, which is what makes the list mean anything. */
   located: boolean;
   locating: boolean;
@@ -112,6 +115,7 @@ export function MapSheetHome({
   selectedLineCount,
   alertCount,
   nearbyAreas,
+  favouriteStops,
   located,
   locating,
   locateProblem,
@@ -157,6 +161,27 @@ export function MapSheetHome({
             Ponów
           </ThemedText>
         </Pressable>
+      )}
+
+      {/*
+       * Chosen stops above nearby ones: a regular opens the app to ask about
+       * their own stop, and nearest-first answers that only when they are
+       * already standing at it. Absent until something is starred — an empty
+       * "Ulubione" card would be a tutorial, not information.
+       */}
+      {favouriteStops.length > 0 && (
+        <Section title="Ulubione">
+          {favouriteStops.map((stop, index) => (
+            <View key={stop.id}>
+              {index > 0 && <Divider />}
+              <LinkRow
+                label={stop.name}
+                leading={<RowIcon name="star" color={theme.textSecondary} />}
+                onPress={() => onStop(stop)}
+              />
+            </View>
+          ))}
+        </Section>
       )}
 
       {/*

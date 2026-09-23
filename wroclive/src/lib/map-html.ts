@@ -357,6 +357,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
      route. It is one class on the pane — not a single marker is rebuilt for it,
      which is the whole reason it can be done on every selection. */
   .leaflet-vehicles-pane.is-focused .vehicle:not(.vehicle--selected) { opacity: 0.28; }
+  .leaflet-vehicles-pane.is-stale { opacity: 0.5; transition: opacity 200ms ease-out; }
 
   /* Markers glide between polls instead of jumping — but only while *we* are
      the ones moving them.
@@ -1510,6 +1511,17 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     if (pane) pane.classList.toggle('is-classic', markerStyle === 'classic');
   }
 
+  /**
+   * Old positions, faded as one class on the vehicles pane — the same
+   * no-rebuild path as the marker style. The fleet is still drawn: where the
+   * vehicles were a minute ago beats an empty map, as long as it does not read
+   * as now.
+   */
+  function setStale(next) {
+    var pane = map.getPane('vehicles');
+    if (pane) pane.classList.toggle('is-stale', next);
+  }
+
   /* --- commands from the app --------------------------------------------- */
 
   function handle(raw) {
@@ -1528,6 +1540,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
       case 'user': setUser(message.position); break;
       case 'theme': setTheme(Boolean(message.dark)); break;
       case 'markerStyle': setMarkerStyle(message.style); break;
+      case 'stale': setStale(Boolean(message.stale)); break;
       case 'select':
         selectVehicle(message.id || null);
         followId = message.follow ? message.id : null;
