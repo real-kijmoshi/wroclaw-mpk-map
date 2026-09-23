@@ -9,9 +9,12 @@ const logger = require('./logger');
 const { createRateLimit } = require('./rate-limit');
 const { createRouter } = require('./routes');
 
+// Exposed so the web build can read the poll hint (see routes.js); a browser
+// hides every non-safelisted response header from script otherwise.
+const exposedHeaders = ['X-Next-Update-In'];
 const corsOptions = config.cors.origins.includes('*')
-  ? { origin: '*', methods: ['GET', 'HEAD'] }
-  : { origin: config.cors.origins, methods: ['GET', 'HEAD'] };
+  ? { origin: '*', methods: ['GET', 'HEAD'], exposedHeaders }
+  : { origin: config.cors.origins, methods: ['GET', 'HEAD'], exposedHeaders };
 
 /**
  * @param {{ gtfs: any, vehicles: any, alerts: any, klosok?: any, startedAt?: Date }} services

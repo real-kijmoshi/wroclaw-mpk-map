@@ -23,7 +23,16 @@ export type PollState<T> = {
 export function usePoll<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
   intervalMs: number,
-  { enabled = true, key = '' }: { enabled?: boolean; key?: string } = {},
+  {
+    enabled = true,
+    key = '',
+    delayMs,
+  }: {
+    enabled?: boolean;
+    key?: string;
+    /** Picks each wait instead of `intervalMs`, e.g. to follow the server's own poll. */
+    delayMs?: () => number;
+  } = {},
 ): PollState<T> {
   const [data, setData] = useState<T | null>(null);
   const [receivedAt, setReceivedAt] = useState<number | null>(null);
@@ -36,8 +45,10 @@ export function usePoll<T>(
   // rather than during render — this effect is declared first, so it has
   // already run by the time the polling effect below fires.
   const fetcherRef = useRef(fetcher);
+  const delayRef = useRef(delayMs);
   useEffect(() => {
     fetcherRef.current = fetcher;
+    delayRef.current = delayMs;
   });
 
   const refresh = useCallback(() => setNonce((value) => value + 1), []);
@@ -75,7 +86,7 @@ export function usePoll<T>(
       timer = setTimeout(async () => {
         await run();
         schedule();
-      }, intervalMs);
+      }, delayRef.current?.() ?? intervalMs);
     };
 
     const start = () => {

@@ -983,7 +983,7 @@
 
         const HIDDEN_CATEGORIES = new Set(['allBuses', 'allTrams']);
         const STORAGE_KEY = 'wromapa.selectedLines';
-        const VEHICLE_REFRESH_MS = 5000;
+        const VEHICLE_REFRESH_MS = 10000;
         const ALERT_REFRESH_MS = 5 * 60000;
         const DEPARTURE_REFRESH_MS = 30000;
 
@@ -1042,6 +1042,21 @@
         /** Last ETag and payload per request path, so an unchanged fleet poll answers 304. */
         const conditionalCache = new Map();
 
+        /**
+         * Poll just after the server's own poll lands, not on a free-running
+         * timer: two ten-second timers drift, and a fresh position used to wait
+         * up to a whole interval on the server before this page asked for it.
+         * Same number of requests. Mirrors vehiclePollDelay() in the app's
+         * wroclive/src/lib/api.ts.
+         */
+        let nextServerUpdateAt = null;
+        function vehiclePollDelay() {
+            if (nextServerUpdateAt === null) return VEHICLE_REFRESH_MS;
+            let target = nextServerUpdateAt + 750 - Date.now();
+            while (target <= 0) target += VEHICLE_REFRESH_MS;
+            return Math.min(Math.max(target, 1000), VEHICLE_REFRESH_MS);
+        }
+
         async function apiGet(path, { retries = 4 } = {}) {
             let attempt = 0;
             const cached = conditionalCache.get(path);
@@ -1068,6 +1083,9 @@
                 // Nothing moved since the last poll: keep the payload already on
                 // screen instead of re-downloading it. Only /locations sets an
                 // ETag, so this never changes the other endpoints.
+                // When the server's next vehicle poll lands; see vehiclePollDelay().
+                const hint = Number.parseInt(response.headers.get('X-Next-Update-In') || '', 10);
+                if (Number.isFinite(hint) && hint >= 0) nextServerUpdateAt = Date.now() + hint;
                 if (response.status === 304) {
                     if (cached) return cached.data;
                     throw new Error(path + ' → 304 without a cached copy');
@@ -2260,10 +2278,12 @@
         applyDetents();
 
         loadLines();
-        loadVehicles();
+        (async function pollVehicles() {
+            await loadVehicles();
+            setTimeout(pollVehicles, vehiclePollDelay());
+        })();
         loadAlerts();
 
-        setInterval(loadVehicles, VEHICLE_REFRESH_MS);
         setInterval(loadAlerts, ALERT_REFRESH_MS);
         // The pill ages in place, so it has to re-render without new data.
         setInterval(renderStatus, 5000);
