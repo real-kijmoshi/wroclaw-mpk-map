@@ -774,6 +774,7 @@ class VehicleTracker {
   #scheduleNextPoll() {
     if (this._stopped) return;
     if (this.timer) clearTimeout(this.timer);
+    this.nextPollAt = Date.now() + config.vehicles.pollIntervalMs;
     this.timer = setTimeout(() => this.#runPollLoop(), config.vehicles.pollIntervalMs);
     this.timer.unref?.();
   }
@@ -797,11 +798,13 @@ class VehicleTracker {
    * poll() is logged but rescheduled, so one bad poll cannot drop the live fleet.
    */
   async #runPollLoop() {
+    const startedAt = Date.now();
     try {
       await this.poll();
     } catch (error) {
       logger.error(`MPK poll threw, rescheduling: ${error.message}`);
     } finally {
+      this.lastPollDurationMs = Date.now() - startedAt;
       this.#scheduleNextPoll();
     }
   }
@@ -815,6 +818,22 @@ class VehicleTracker {
     } finally {
       this.#scheduleNextOpenDataPoll();
     }
+  }
+
+  /**
+   * Milliseconds until the next MPK poll is expected to have landed in the
+   * snapshot, or null before the loop has been armed.
+   *
+   * Clients poll on their own ten-second timers, which drift against this one
+   * at random — so a position used to wait anything up to a whole extra
+   * interval on the server before a phone asked for it. Handing clients this
+   * hint lets them ask just after the data changes instead, which removes that
+   * wait without a single extra request, here or upstream. The last poll's
+   * duration stands in for how long the next one takes to fetch and describe.
+   */
+  msUntilNextUpdate(now = Date.now()) {
+    if (!Number.isFinite(this.nextPollAt)) return null;
+    return Math.max(0, Math.round(this.nextPollAt + (this.lastPollDurationMs ?? 0) - now));
   }
 
   start() {

@@ -361,7 +361,19 @@ const createRouter = ({
     return res.json({ category, lines: lines[category] });
   });
 
-  router.get('/locations', noStore, (req, res) => {
+  /**
+   * When the next vehicle poll lands, relative to this response. Relative on
+   * purpose: a phone's clock is not the server's, and a difference needs no
+   * agreement between them. A header rather than a body field, because the
+   * /locations body is cached and ETagged and must not change every second.
+   */
+  const nextUpdateHint = (_req, res, next) => {
+    const ms = vehicles.msUntilNextUpdate?.();
+    if (Number.isFinite(ms)) res.set('X-Next-Update-In', String(ms));
+    next();
+  };
+
+  router.get('/locations', noStore, nextUpdateHint, (req, res) => {
     const { line, type, format } = req.query;
     const variantKey = `${line ?? ''}|${type ?? ''}|${format ?? ''}`;
 
@@ -422,7 +434,7 @@ const createRouter = ({
    * for a few hundred of them would be several times the payload for something
    * a rider looks at one vehicle at a time.
    */
-  router.get('/vehicle/:id', requireGtfs, noStore, (req, res) => {
+  router.get('/vehicle/:id', requireGtfs, noStore, nextUpdateHint, (req, res) => {
     const vehicle = req.params.id.startsWith('klosok:')
       ? klosok?.getVehicle(req.params.id)
       : vehicles.getVehicle(req.params.id);

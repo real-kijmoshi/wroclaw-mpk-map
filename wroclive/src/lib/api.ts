@@ -55,6 +55,36 @@ export type GetOptions = {
 const conditionalCache = new Map<string, { etag: string; data: unknown }>();
 const CONDITIONAL_CACHE_MAX = 32;
 
+/**
+ * The server's `X-Next-Update-In` hint, as the local instant it points at.
+ *
+ * The server polls MPK every ten seconds and so does the app; on independent
+ * timers the two drift, and a fresh position could sit on the server for up to
+ * a whole interval before the app asked for it — a tram shown ~400 m short of
+ * the platform it was already standing at. Asking just after the server's poll
+ * lands removes that wait for the same number of requests.
+ */
+let nextServerUpdateAt: number | null = null;
+
+/** Room for the poll to finish writing its snapshot before we ask for it. */
+const NEXT_UPDATE_MARGIN_MS = 750;
+/** Never faster than this, whatever the hint says: a hint of 0 is not a loop. */
+const MIN_POLL_MS = 1_000;
+
+/**
+ * How long a vehicle poll should wait before its next request: until just after
+ * the server's next update, never sooner than `MIN_POLL_MS` and never later
+ * than `fallbackMs` — an old server without the hint keeps the fixed interval.
+ */
+export function vehiclePollDelay(fallbackMs: number, now = Date.now()): number {
+  if (nextServerUpdateAt === null) return fallbackMs;
+  let target = nextServerUpdateAt + NEXT_UPDATE_MARGIN_MS - now;
+  // The hint was for a poll that has already landed (we fetched after it): the
+  // one after is a whole interval on.
+  while (target <= 0) target += fallbackMs;
+  return Math.min(Math.max(target, MIN_POLL_MS), fallbackMs);
+}
+
 export async function apiGet<T>(path: string, options: GetOptions = {}): Promise<T> {
   const { signal, retryWhileLoading = true } = options;
   let attempt = 0;
@@ -81,6 +111,9 @@ export async function apiGet<T>(path: string, options: GetOptions = {}): Promise
       await sleep(wait, signal);
       continue;
     }
+
+    const hint = Number.parseInt(response.headers.get('X-Next-Update-In') ?? '', 10);
+    if (Number.isFinite(hint) && hint >= 0) nextServerUpdateAt = Date.now() + hint;
 
     // Nothing changed since the last poll — keep the payload we already hold.
     if (response.status === 304) {

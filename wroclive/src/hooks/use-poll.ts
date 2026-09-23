@@ -3,6 +3,8 @@ import { AppState } from 'react-native';
 
 export type PollState<T> = {
   data: T | null;
+  /** `Date.now()` when `data` arrived, so a caller can age it between polls. */
+  receivedAt: number | null;
   error: Error | null;
   loading: boolean;
   refresh: () => void;
@@ -21,9 +23,19 @@ export type PollState<T> = {
 export function usePoll<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
   intervalMs: number,
-  { enabled = true, key = '' }: { enabled?: boolean; key?: string } = {},
+  {
+    enabled = true,
+    key = '',
+    delayMs,
+  }: {
+    enabled?: boolean;
+    key?: string;
+    /** Picks each wait instead of `intervalMs`, e.g. to follow the server's own poll. */
+    delayMs?: () => number;
+  } = {},
 ): PollState<T> {
   const [data, setData] = useState<T | null>(null);
+  const [receivedAt, setReceivedAt] = useState<number | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
   const [nonce, setNonce] = useState(0);
@@ -33,8 +45,10 @@ export function usePoll<T>(
   // rather than during render — this effect is declared first, so it has
   // already run by the time the polling effect below fires.
   const fetcherRef = useRef(fetcher);
+  const delayRef = useRef(delayMs);
   useEffect(() => {
     fetcherRef.current = fetcher;
+    delayRef.current = delayMs;
   });
 
   const refresh = useCallback(() => setNonce((value) => value + 1), []);
@@ -56,6 +70,7 @@ export function usePoll<T>(
         const result = await fetcherRef.current(controller.signal);
         if (cancelled) return;
         setData(result);
+        setReceivedAt(Date.now());
         setError(null);
       } catch (caught) {
         if (cancelled || (caught as Error)?.name === 'AbortError') return;
@@ -71,7 +86,7 @@ export function usePoll<T>(
       timer = setTimeout(async () => {
         await run();
         schedule();
-      }, intervalMs);
+      }, delayRef.current?.() ?? intervalMs);
     };
 
     const start = () => {
@@ -109,5 +124,5 @@ export function usePoll<T>(
 
   // Derived, not stored: a disabled poll is not "loading", and setting that
   // from an effect would just be a second render saying the same thing.
-  return { data, error, loading: enabled ? loading : false, refresh };
+  return { data, receivedAt, error, loading: enabled ? loading : false, refresh };
 }
