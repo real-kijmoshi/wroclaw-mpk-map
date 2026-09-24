@@ -254,7 +254,73 @@ export default function MapScreen() {
    */
   const vehicleRoute = fetchedVehicle?.vehicleId === vehicleId ? fetchedVehicle.route : null;
   const lineRoute = fetchedLine && fetchedLine.line === focusedLine?.line ? fetchedLine.route : null;
-  const route = vehicleRoute ?? lineRoute;
+
+  /**
+   * The vehicle an alert or a trip is armed on stays on the map after its
+   * sheet is closed: marked, its route drawn, the rider's stop picked out on
+   * it. That is the whole point of arming it — "where is my tram now" should
+   * not take a search. It gives way to anything the rider opens, and comes
+   * back when that is put away.
+   */
+  const trackedId = arrival.alert?.vehicleId ?? null;
+  const [trackedRoute, setTrackedRoute] = useState<{ vehicleId: string; route: MapRoute } | null>(null);
+  const trackedPosition = arrival.tracked?.vehicle ?? null;
+  const hasTrackedPosition = Boolean(trackedPosition);
+  // Read by the fetch below without making every position poll refetch the
+  // shape; synced first, so the render that brings the first fix sees it.
+  const trackedPositionRef = useRef(trackedPosition);
+  useEffect(() => {
+    trackedPositionRef.current = trackedPosition;
+  }, [trackedPosition]);
+  useEffect(() => {
+    if (!trackedId || !hasTrackedPosition || trackedRoute?.vehicleId === trackedId) return;
+    const vehicle = trackedPositionRef.current;
+    if (!vehicle) return;
+    const controller = new AbortController();
+    getShape(
+      vehicle.line,
+      { lat: vehicle.lat, lon: vehicle.lon, heading: vehicle.heading },
+      { signal: controller.signal },
+    )
+      .then((shape) => {
+        if (controller.signal.aborted) return;
+        setTrackedRoute({
+          vehicleId: trackedId,
+          route: { points: shape.points, color: colorFor(vehicle.type), stops: shape.stops },
+        });
+      })
+      .catch(() => {
+        // No geometry: the vehicle is still marked, only the line is missing.
+      });
+    return () => controller.abort();
+  }, [trackedId, hasTrackedPosition, trackedRoute?.vehicleId]);
+
+  /** Nothing opened over it: the map shows the tracked vehicle as if selected. */
+  const showTracked = Boolean(trackedId) && !selection && !focusedLine;
+  const openedTracked = Boolean(trackedId) && vehicleId === trackedId;
+  const route =
+    vehicleRoute ??
+    lineRoute ??
+    (showTracked && trackedRoute?.vehicleId === trackedId ? trackedRoute.route : null);
+  const mapVehicleId = showTracked ? trackedId : vehicleId;
+  // The stop the alert is for, picked out on the route — while the tracked
+  // vehicle is what the map is about, and a stop the rider opened wins.
+  const mapStopId = stopId ?? (showTracked || openedTracked ? (arrival.alert?.stopId ?? null) : null);
+
+  /**
+   * Drawn even when the line filter would hide it: the rider asked to follow
+   * this vehicle, and a filter chosen last week is not a reason to lose it.
+   */
+  const mapVehicles = useMemo(() => {
+    const vehicle = arrival.tracked?.vehicle;
+    if (!vehicle || vehicles.some((entry) => entry.id === vehicle.id)) return vehicles;
+    const trip = arrival.tracked?.trip;
+    const pinned: FleetVehicle = {
+      ...vehicle,
+      trip: trip ? { headsign: trip.headsign, towards: trip.towards } : null,
+    };
+    return [pinned, ...vehicles];
+  }, [arrival.tracked, vehicles]);
 
   useEffect(() => {
     if (!vehicleId) return;
@@ -532,15 +598,17 @@ export default function MapScreen() {
       <MapView
         ref={mapRef}
         dark={dark}
-        vehicles={vehicles}
+        vehicles={mapVehicles}
         route={route}
-        selectedVehicleId={vehicleId}
-        follow={followSelectedVehicle}
+        selectedVehicleId={mapVehicleId}
+        // Following is for a vehicle the rider opened; a tracked one sits on
+        // the map without taking the camera away from whatever they are doing.
+        follow={followSelectedVehicle && !showTracked}
         fitRoute={Boolean(focusedLine)}
         userPosition={userPosition}
         stale={fleetStale}
         nearbyStops={mapStops}
-        selectedStopId={stopId}
+        selectedStopId={mapStopId}
         onSelectVehicle={handleVehicle}
         onSelectStop={handleStop}
         onBackground={handleBackground}
