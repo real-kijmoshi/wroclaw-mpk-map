@@ -31,6 +31,7 @@ const fakeVehicles = {
         trip: {
           headsign: 'Oporów',
           towards: 'Oporów',
+          tripId: 'trip-4-1',
           nextStop: { id: '2', name: 'Świdnicka' },
         },
         updatedAt: null,
@@ -158,7 +159,9 @@ describe('HTTP API', () => {
       lat: 51.11,
       lon: 17.032,
       heading: 90,
-      trip: { headsign: 'Oporów', towards: 'Oporów' },
+      // The run id stays: a stop board finds the vehicle already driving a
+      // departure by it.
+      trip: { headsign: 'Oporów', towards: 'Oporów', tripId: 'trip-4-1' },
     });
     assert.equal('updatedAt' in body.locations[0], false);
     assert.equal('nextStop' in body.locations[0].trip, false);

@@ -22,9 +22,9 @@ import { useTheme } from '@/hooks/use-theme';
 import { useArrivalAlertTracking } from '@/hooks/use-arrival-alert';
 import { useFavouriteBoards } from '@/hooks/use-favourite-boards';
 import { useQuickActions } from '@/hooks/use-quick-actions';
-import { getAlerts, getDeparturesForStops, getIncidents, getLocations, getShape, getStopsNear, getVehicle, vehiclePollDelay, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
+import { getAlerts, getDeparturesForStops, getIncidents, getLocations, getShape, getStopsNear, getVehicle, vehiclePollDelay, type Departure, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
 import { REFRESH_MS } from '@/lib/config';
-import { directionsLabel } from '@/lib/departures';
+import { directionsLabel, runningVehicle } from '@/lib/departures';
 import { plural } from '@/lib/format';
 import { shareStop, shareVehicle } from '@/lib/share';
 import { colorFor } from '@/lib/lines';
@@ -328,6 +328,38 @@ export default function MapScreen() {
     setDetent('collapsed');
     setLayersOpen(false);
   }, []);
+  /**
+   * A departure on the stop board that is already on the road: the map goes to
+   * its vehicle and the sheet swaps to it.
+   *
+   * When the server matched it live but the map's list does not hold it — the
+   * line filter hides that line — the id alone is enough: the vehicle is
+   * selected, and the map centres once its detail arrives, the same path a
+   * shared vehicle link takes.
+   */
+  const canOpenDeparture = useCallback(
+    (departure: Departure) => Boolean(departure.vehicleId) || runningVehicle(departure, vehicles) !== null,
+    [vehicles],
+  );
+  const openDeparture = useCallback(
+    (departure: Departure) => {
+      const vehicle = runningVehicle(departure, fleetRef.current);
+      if (vehicle) {
+        mapRef.current?.centerOn(vehicle.lat, vehicle.lon, 16);
+        handleVehicle(vehicle.id);
+        return;
+      }
+      if (!departure.vehicleId) return;
+      tapped();
+      setCentreOnDetail(departure.vehicleId);
+      setFocusedLine(null);
+      setPinnedVehicle(null);
+      setSelection({ kind: 'vehicle', id: departure.vehicleId });
+      setDetent('medium');
+    },
+    [handleVehicle],
+  );
+
   /**
    * Putting the open selection away.
    *
@@ -655,6 +687,8 @@ export default function MapScreen() {
             stop={shownStop}
             userPosition={userPosition}
             ageSeconds={departures.receivedAt === null ? 0 : (now - departures.receivedAt) / 1_000}
+            canOpenVehicle={canOpenDeparture}
+            onOpenVehicle={openDeparture}
           />
         ) : classic ? null : (
           <MapSheetHome

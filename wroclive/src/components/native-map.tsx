@@ -574,10 +574,13 @@ const StopMarker = memo(function StopMarker({
         onPress={press}
         accessibilityLabel={`Przystanek ${stop.name}`}>
         <View style={styles.stopDotBox}>
-          {/* A white keyline outside the ring: without it the dark ring sinks
-              into satellite trees and roofs and only a white speck is left. */}
+          {/* A white keyline around the plate: without it a dark mark sinks
+              into satellite trees and roofs. Square rather than round, so a
+              stop is never read as a zoomed-out vehicle's dot. */}
           <View style={[styles.stopKeyline, selected && styles.stopDotSelected]}>
-            <View style={[styles.stopDot, { borderColor: tint }]} />
+            <View style={[styles.stopDot, { backgroundColor: tint }]}>
+              <View style={styles.stopPip} />
+            </View>
           </View>
         </View>
       </Marker>
@@ -1134,6 +1137,10 @@ const STOP_TINT = '#1C1C1E';
 const STOP_DOT = 13;
 /** The white keyline around the dot, which is what keeps it visible on imagery. */
 const STOP_KEYLINE = 2;
+/** A rounded plate, not a disc: vehicle dots are round, and a stop must not read as one. */
+const STOP_CORNER = 3.5;
+/** The white centre that marks the boarding point. */
+const STOP_PIP = 5;
 const STOP_DOT_OUTER = STOP_DOT + STOP_KEYLINE * 2;
 /** Room for the outer circle at the selected 1.25 scale. */
 const STOP_DOT_BOX = 22;
@@ -1375,8 +1382,8 @@ const styles = StyleSheet.create({
   stopKeyline: {
     width: STOP_DOT_OUTER,
     height: STOP_DOT_OUTER,
-    borderRadius: Radius.pill,
-    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderRadius: STOP_CORNER + STOP_KEYLINE,
+    backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center',
     ...Elevation.marker,
@@ -1384,10 +1391,11 @@ const styles = StyleSheet.create({
   stopDot: {
     width: STOP_DOT,
     height: STOP_DOT,
-    borderRadius: Radius.pill,
-    backgroundColor: '#ffffff',
-    borderWidth: 3.5,
+    borderRadius: STOP_CORNER,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  stopPip: { width: STOP_PIP, height: STOP_PIP, borderRadius: Radius.pill, backgroundColor: '#ffffff' },
   stopDotSelected: { transform: [{ scale: 1.25 }] },
   stopName: {
     maxWidth: STOP_LABEL_WIDTH,

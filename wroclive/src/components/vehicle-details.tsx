@@ -28,8 +28,16 @@ export function VehicleSummary({
   onShare?: () => void;
   onClose: () => void;
 }) {
+  const theme = useTheme();
   const vehicle = detail?.vehicle ?? null;
   const trip = detail?.trip ?? null;
+  const delay = formatDelay(trip?.delaySeconds);
+  const delayColor =
+    delay.tone === 'late' ? theme.danger : delay.tone === 'early' ? theme.success : theme.textSecondary;
+  const stopsLeft =
+    trip?.stopsAhead === null || trip?.stopsAhead === undefined
+      ? null
+      : `${trip.stopsAhead} ${pluralStops(trip.stopsAhead)}`;
 
   return (
     <View style={styles.summary}>
@@ -44,17 +52,17 @@ export function VehicleSummary({
         <ThemedText type="headline" numberOfLines={1}>
           {trip?.towards ?? trip?.headsign ?? 'Kierunek nieznany'}
         </ThemedText>
+        {/* How it is running, not where: where is the first row of the stop
+            list, and saying it here too put the same stop on screen three
+            times. The delay keeps its colour — late is the thing to notice. */}
         <ThemedText type="footnote" themeColor="textSecondary" numberOfLines={1}>
-          {[
-            vehicle?.operator,
-            trip?.atStop
-              ? `Na przystanku ${trip.atStop.name}`
-              : trip?.previousStop
-                ? `Minął ${trip.previousStop.name}`
-                : 'W trasie',
-          ]
-            .filter(Boolean)
-            .join(' · ')}
+          {vehicle?.operator ? `${vehicle.operator} · ` : null}
+          {detail ? (
+            <ThemedText type="footnote" weight="semibold" color={delayColor}>
+              {delay.text}
+            </ThemedText>
+          ) : null}
+          {detail && stopsLeft ? ` · ${stopsLeft}` : null}
         </ThemedText>
       </View>
 
@@ -142,9 +150,6 @@ export function VehicleDetails({
   }
 
   const { vehicle, trip } = detail;
-  const delay = formatDelay(trip?.delaySeconds);
-  const delayColor =
-    delay.tone === 'late' ? theme.danger : delay.tone === 'early' ? theme.success : theme.textSecondary;
 
   const stops = trip?.nextStops ?? [];
   const lineColor = colorFor(vehicle.type);
@@ -162,27 +167,18 @@ export function VehicleDetails({
       style={styles.scroll}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}>
-      {/* The one number a rider is actually waiting for, given the room that
-          deserves. Amber is reserved for countdowns and nothing competes. */}
+      {/* The next stop on its own only when there is no stop list: with one,
+          its first row is this card, and both on screen said the same stop
+          twice. Amber is reserved for countdowns and nothing competes. */}
+      {stops.length === 0 && nextStop && (
       <View style={[styles.nextStop, { backgroundColor: theme.backgroundCard }]}>
         <View style={styles.nextStopCopy}>
           <ThemedText type="caption" themeColor="textSecondary">
             NASTĘPNY PRZYSTANEK
           </ThemedText>
           <ThemedText type="headline" numberOfLines={1}>
-            {nextStop?.name ?? 'Brak danych o trasie'}
+            {nextStop.name}
           </ThemedText>
-          <View style={styles.metaRow}>
-            <ThemedText type="footnote" weight="semibold" color={delayColor}>
-              {delay.text}
-            </ThemedText>
-            <View style={[styles.metaDot, { backgroundColor: theme.textTertiary }]} />
-            <ThemedText type="footnote" themeColor="textSecondary">
-              {trip?.stopsAhead === null || trip?.stopsAhead === undefined
-                ? 'Brak liczby przystanków'
-                : `${trip.stopsAhead} ${pluralStops(trip.stopsAhead)}`}
-            </ThemedText>
-          </View>
         </View>
 
         {nextEta && (
@@ -198,6 +194,7 @@ export function VehicleDetails({
           </View>
         )}
       </View>
+      )}
 
       <VehicleAmenities vehicle={vehicle} trip={trip} />
 
@@ -324,11 +321,13 @@ export function VehicleDetails({
                 </View>
 
                 <View style={styles.eta}>
-                  <ThemedText type="headline" color={theme.amber}>
+                  {/* The next stop's countdown leads — it is what the card
+                      above the list used to be for. */}
+                  <ThemedText type={first ? 'title' : 'headline'} color={theme.amber} style={styles.etaValue}>
                     {eta.value}
                   </ThemedText>
                   {!!eta.unit && (
-                    <ThemedText type="footnote" color={theme.amber}>
+                    <ThemedText type="footnote" weight={first ? 'semibold' : 'regular'} color={theme.amber}>
                       {eta.unit}
                     </ThemedText>
                   )}
@@ -438,13 +437,15 @@ function VehicleAmenities({ vehicle, trip }: { vehicle: Vehicle; trip: VehicleTr
     .filter(Boolean)
     .join(' · ');
 
+  // What nobody stated is still said — as one quiet line rather than a row
+  // each, which gave two thirds of the card to "brak danych".
+  const unknown = rows.filter((row) => row.state === null);
+
   return (
     <View style={[styles.amenities, { backgroundColor: theme.backgroundCard }]}>
       <View style={styles.amenitiesHead}>
-        <ThemedText type="caption" themeColor="textSecondary">
-          POJAZD
-        </ThemedText>
-        <ThemedText type="headline" numberOfLines={1}>
+        <Ionicons name={vehicle.type.startsWith('tram') ? 'train-outline' : 'bus-outline'} size={18} color={theme.textSecondary} />
+        <ThemedText type="callout" weight="semibold" numberOfLines={1} style={styles.amenitiesModel}>
           {heading}
         </ThemedText>
         {!!subtitle && (
@@ -454,24 +455,31 @@ function VehicleAmenities({ vehicle, trip }: { vehicle: Vehicle; trip: VehicleTr
         )}
       </View>
 
-      {rows.map((row) => (
-        <View key={row.label} style={styles.amenityRow}>
-          <Ionicons
-            name={row.icon}
-            size={18}
-            color={row.state === true ? theme.success : theme.textTertiary}
-          />
-          <ThemedText type="callout" style={styles.amenityLabel} numberOfLines={1}>
-            {row.label}
-          </ThemedText>
-          <ThemedText
-            type="callout"
-            weight={row.state === null ? 'regular' : 'semibold'}
-            themeColor={row.state === null ? 'textTertiary' : 'textSecondary'}>
-            {row.value}
-          </ThemedText>
+      {stated.length > 0 && (
+        <View style={styles.amenityChips}>
+          {stated.map((row) => (
+            <View
+              key={row.label}
+              style={[styles.amenityChip, { backgroundColor: theme.backgroundElement }]}
+              accessible
+              accessibilityLabel={`${row.label}: ${row.value}`}>
+              <Ionicons name={row.icon} size={15} color={row.state ? theme.success : theme.textTertiary} />
+              <ThemedText type="footnote" numberOfLines={1}>
+                {row.label}
+              </ThemedText>
+              <ThemedText type="footnote" weight="semibold" themeColor="textSecondary">
+                {row.value}
+              </ThemedText>
+            </View>
+          ))}
         </View>
-      ))}
+      )}
+
+      {unknown.length > 0 && (
+        <ThemedText type="footnote" themeColor="textTertiary">
+          Brak danych: {unknown.map((row) => row.label.toLowerCase()).join(', ')}
+        </ThemedText>
+      )}
     </View>
   );
 }
@@ -554,12 +562,18 @@ const styles = StyleSheet.create({
   nextStopCopy: { flex: 1, gap: 2, minWidth: 0 },
   nextEta: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },
   nextEtaValue: { fontVariant: ['tabular-nums'] },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: Space.sm, paddingTop: 2 },
-  metaDot: { width: 3, height: 3, borderRadius: Radius.pill },
-  amenities: { borderRadius: Radius.lg, paddingHorizontal: Space.lg, paddingVertical: Space.md, gap: 2 },
-  amenitiesHead: { gap: 1, paddingBottom: Space.xs, minWidth: 0 },
-  amenityRow: { flexDirection: 'row', alignItems: 'center', gap: Space.md, minHeight: 34 },
-  amenityLabel: { flex: 1, minWidth: 0 },
+  amenities: { borderRadius: Radius.lg, paddingHorizontal: Space.lg, paddingVertical: Space.md, gap: Space.sm },
+  amenitiesHead: { flexDirection: 'row', alignItems: 'center', gap: Space.sm, minWidth: 0 },
+  amenitiesModel: { flexShrink: 1 },
+  amenityChips: { flexDirection: 'row', flexWrap: 'wrap', gap: Space.xs },
+  amenityChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.xs,
+    minHeight: 28,
+    paddingHorizontal: Space.sm,
+    borderRadius: Radius.sm,
+  },
   timeline: { borderRadius: Radius.lg, paddingHorizontal: Space.lg, paddingVertical: Space.xs },
   stopRow: { flexDirection: 'row', alignItems: 'center', gap: Space.md, minHeight: 48 },
   rail: { width: 12, alignItems: 'center', alignSelf: 'stretch' },
@@ -590,6 +604,7 @@ const styles = StyleSheet.create({
   alertText: { flex: 1, gap: 1, minWidth: 0 },
   alertAction: { minHeight: 32, justifyContent: 'center' },
   eta: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },
+  etaValue: { fontVariant: ['tabular-nums'] },
   routeAction: {
     minHeight: 52,
     borderRadius: Radius.lg,
