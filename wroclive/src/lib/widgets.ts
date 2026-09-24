@@ -1,5 +1,6 @@
 import type { Departure } from '@/lib/api';
 import type { FavouriteStop } from '@/lib/favourite-stops';
+import type { FavouriteTrip } from '@/lib/favourite-trips';
 
 /**
  * Home-screen widget and Live Activities — not on this platform.
@@ -28,12 +29,21 @@ export type TripActivityInput = ArrivalActivityInput & {
 };
 
 export type WidgetBoard = { stop: FavouriteStop; departures: Departure[] };
+/** A saved trip's departures: only those that reach its destination, each with its arrival. */
+export type TripBoard = { trip: FavouriteTrip; departures: Departure[]; supported: boolean };
+
+/** Everything the widget can be set to show. */
+export type WidgetInput = {
+  favourites: FavouriteStop[];
+  boards: WidgetBoard[];
+  trips: FavouriteTrip[];
+  tripBoards: TripBoard[];
+};
 
 export const widgetsAvailable = false;
 
 export function syncDeparturesWidget(
-  _favourites: FavouriteStop[],
-  _boards: WidgetBoard[],
+  _input: WidgetInput,
   _position: { lat: number; lon: number } | null,
   _now?: number,
 ) {}

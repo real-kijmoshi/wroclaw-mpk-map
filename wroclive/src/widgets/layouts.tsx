@@ -54,10 +54,21 @@ export type DeparturesWidgetRow = {
   clock: string;
   /** A live prediction rather than the timetable. */
   live: boolean;
+  /** Saved trips only: when this departure reaches the destination. */
+  arriveAt?: number | null;
+  arriveClock?: string | null;
 };
 
 export type DeparturesWidgetStop = {
+  /**
+   * A starred stop's board, or a saved trip — the board of its origin with
+   * only the departures that reach the destination, each with its arrival.
+   */
+  kind: 'stop' | 'trip';
+  /** A stop's id, or `trip:<id>`. */
   id: string;
+  /** Saved trips only: where it goes. */
+  destination?: string;
   name: string;
   /** The rider's own name for it ("Dom"), or null. */
   label: string | null;
@@ -183,8 +194,13 @@ const DeparturesWidget = (
     final ? row.clock : minutesTo(row) < 1 ? 'teraz' : `${minutesTo(row)} min`;
   const reachable = (row: DeparturesWidgetRow) => stop.walk === null || row.at - now >= (stop.walk + 30) * 1_000;
   const countdownStyle = (row: DeparturesWidgetRow) => (reachable(row) ? amber : tertiary);
+  const trip = stop.kind === 'trip';
   const title = stop.label || stop.name;
-  const subtitle = stop.label ? stop.name : stop.detail;
+  const subtitle = trip ? (stop.label ? stop.detail : '') : stop.label ? stop.name : stop.detail;
+  // A trip's rows are read "leaves in 3 min, there at 7:54": the arrival
+  // takes the place a board gives the headsign.
+  const arriving = (row: DeparturesWidgetRow) => (row.arriveClock ? `na miejscu ${row.arriveClock}` : row.headsign);
+  const rowText = (row: DeparturesWidgetRow) => (trip ? arriving(row) : row.headsign);
   const walkMinutes = stop.walk === null ? null : Math.max(1, Math.round(stop.walk / 60));
   const updated = new Date(props?.updatedAt ?? now);
   const updatedClock = `${String(updated.getHours()).padStart(2, '0')}:${String(updated.getMinutes()).padStart(2, '0')}`;
@@ -214,7 +230,11 @@ const DeparturesWidget = (
     const next = upcoming.find(reachable) ?? upcoming[0];
     return (
       <Text modifiers={[widgetURL(stop.url)]}>
-        {next ? `${next.line} ${next.headsign} · ${when(next)}` : title}
+        {next
+          ? trip
+            ? `${next.line} ${final ? next.clock : `za ${when(next)}`} · ${arriving(next)}`
+            : `${next.line} ${next.headsign} · ${when(next)}`
+          : title}
       </Text>
     );
   }
@@ -240,7 +260,10 @@ const DeparturesWidget = (
     return (
       <VStack alignment="leading" spacing={1} modifiers={[widgetURL(stop.url)]}>
         <HStack spacing={3}>
-          <Image systemName={upcoming[0]?.tram === false ? 'bus.fill' : 'tram.fill'} size={10} />
+          <Image
+            systemName={trip ? 'arrow.triangle.turn.up.right.circle.fill' : upcoming[0]?.tram === false ? 'bus.fill' : 'tram.fill'}
+            size={10}
+          />
           <Text modifiers={[font({ textStyle: 'caption', weight: 'bold' }), lineLimit(1)]}>{title}</Text>
         </HStack>
         {upcoming.length === 0 ? (
@@ -249,7 +272,9 @@ const DeparturesWidget = (
           upcoming.slice(0, 2).map((row) => (
             <HStack key={`${row.line}-${row.at}`} spacing={4}>
               <Text modifiers={[font({ textStyle: 'caption', weight: 'bold' }), monospacedDigit()]}>{row.line}</Text>
-              <Text modifiers={[font({ textStyle: 'caption' }), lineLimit(1)]}>{row.headsign}</Text>
+              <Text modifiers={[font({ textStyle: 'caption' }), lineLimit(1)]}>
+                {trip && row.arriveClock ? `→ ${row.arriveClock}` : row.headsign}
+              </Text>
               <Spacer />
               <Text modifiers={[font({ textStyle: 'caption', weight: 'semibold' }), monospacedDigit()]}>{when(row)}</Text>
             </HStack>
@@ -264,7 +289,11 @@ const DeparturesWidget = (
   const empty = (
     <VStack alignment="leading" spacing={2}>
       <Text modifiers={[font({ textStyle: 'footnote', weight: 'semibold' })]}>
-        {stop.rows.length === 0 ? 'Brak danych o odjazdach' : 'Brak kolejnych odjazdów'}
+        {trip
+          ? 'Brak połączeń w najbliższych godzinach'
+          : stop.rows.length === 0
+            ? 'Brak danych o odjazdach'
+            : 'Brak kolejnych odjazdów'}
       </Text>
       <Text modifiers={[font({ textStyle: 'caption' }), foregroundStyle(secondary)]}>
         Otwórz aplikację, aby odświeżyć.
@@ -282,6 +311,11 @@ const DeparturesWidget = (
         <Text modifiers={[font({ textStyle: 'caption', weight: 'semibold' }), foregroundStyle(secondary), lineLimit(1)]}>
           {title}
         </Text>
+        {trip && !!stop.label && !!stop.destination && (
+          <Text modifiers={[font({ textStyle: 'caption2' }), foregroundStyle(tertiary), lineLimit(1)]}>
+            {`→ ${stop.destination}`}
+          </Text>
+        )}
         <Spacer />
         {!first ? (
           empty
@@ -289,7 +323,7 @@ const DeparturesWidget = (
           <VStack alignment="leading" spacing={2}>
             <HStack spacing={5}>
               {badge(first, 13, 30)}
-              <Text modifiers={[font({ textStyle: 'caption', weight: 'medium' }), lineLimit(1)]}>{first.headsign}</Text>
+              <Text modifiers={[font({ textStyle: 'caption', weight: 'medium' }), lineLimit(1)]}>{rowText(first)}</Text>
             </HStack>
             {/* The one number a glance is for, given the room it deserves. */}
             <Text
@@ -356,13 +390,17 @@ const DeparturesWidget = (
               {badge(row, large ? 14 : 13, large ? 36 : 32)}
               {large ? (
                 <VStack alignment="leading" spacing={0}>
-                  <Text modifiers={[font({ textStyle: 'subheadline', weight: 'medium' }), lineLimit(1)]}>{row.headsign}</Text>
-                  <Text modifiers={[font({ textStyle: 'caption2' }), foregroundStyle(secondary), monospacedDigit()]}>
-                    {row.live ? `${row.clock} · na żywo` : `${row.clock} · rozkład`}
+                  <Text modifiers={[font({ textStyle: 'subheadline', weight: 'medium' }), lineLimit(1)]}>{rowText(row)}</Text>
+                  <Text modifiers={[font({ textStyle: 'caption2' }), foregroundStyle(secondary), monospacedDigit(), lineLimit(1)]}>
+                    {trip
+                      ? `odjazd ${row.clock} · ${row.headsign}`
+                      : row.live
+                        ? `${row.clock} · na żywo`
+                        : `${row.clock} · rozkład`}
                   </Text>
                 </VStack>
               ) : (
-                <Text modifiers={[font({ textStyle: 'subheadline' }), lineLimit(1)]}>{row.headsign}</Text>
+                <Text modifiers={[font({ textStyle: 'subheadline' }), lineLimit(1)]}>{rowText(row)}</Text>
               )}
               <Spacer />
               <Text

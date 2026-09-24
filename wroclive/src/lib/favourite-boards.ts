@@ -1,10 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { getDeparturesForStops } from '@/lib/api';
+import { getDeparturesForStops, getJourneyDepartures } from '@/lib/api';
 import type { FavouriteStop } from '@/lib/favourite-stops';
-import { syncDeparturesWidget, type WidgetBoard } from '@/lib/widgets';
+import type { FavouriteTrip } from '@/lib/favourite-trips';
+import { syncDeparturesWidget, type TripBoard, type WidgetBoard } from '@/lib/widgets';
 
-export type { WidgetBoard as FavouriteBoard } from '@/lib/widgets';
+export type { TripBoard, WidgetBoard as FavouriteBoard } from '@/lib/widgets';
+
+export type SavedBoards = { stops: WidgetBoard[]; trips: TripBoard[] };
 
 /**
  * The departures of every starred stop, and where they go.
@@ -50,23 +53,39 @@ export async function lastPosition(): Promise<{ lat: number; lon: number } | nul
   return null;
 }
 
-/** Fetch the boards; a stop whose board fails is left out rather than failing the rest. */
+/**
+ * Fetch the boards of every starred stop and every saved trip. One that fails
+ * is left out rather than failing the rest.
+ */
 export async function fetchFavouriteBoards(
   favourites: FavouriteStop[],
+  trips: FavouriteTrip[],
   signal?: AbortSignal,
-): Promise<WidgetBoard[]> {
-  const results = await Promise.allSettled(
-    favourites.map(async (stop) => ({
+): Promise<SavedBoards> {
+  const options = { signal, retryWhileLoading: false };
+  const [stops, journeys] = await Promise.all([
+    Promise.allSettled(
+      favourites.map(async (stop) => ({
         stop,
-      departures: (await getDeparturesForStops(stop, { signal, retryWhileLoading: false })).departures,
-    })),
-  );
-  return results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
+        departures: (await getDeparturesForStops(stop, options)).departures,
+      })),
+    ),
+    Promise.allSettled(
+      trips.map(async (trip) => ({ trip, ...(await getJourneyDepartures(trip.from.ids, trip.to.ids, options)) })),
+    ),
+  ]);
+  const settled = <T,>(results: PromiseSettledResult<T>[]) =>
+    results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
+  return { stops: settled(stops), trips: settled(journeys) };
 }
 
 /** Fetch and hand the widget a new timeline — what the background task runs. */
-export async function refreshFavouriteBoards(favourites: FavouriteStop[], signal?: AbortSignal) {
-  const boards = await fetchFavouriteBoards(favourites, signal);
-  syncDeparturesWidget(favourites, boards, await lastPosition());
+export async function refreshFavouriteBoards(
+  favourites: FavouriteStop[],
+  trips: FavouriteTrip[],
+  signal?: AbortSignal,
+) {
+  const boards = await fetchFavouriteBoards(favourites, trips, signal);
+  syncDeparturesWidget({ favourites, boards: boards.stops, trips, tripBoards: boards.trips }, await lastPosition());
   return boards;
 }

@@ -10,8 +10,10 @@ import type { Stop } from '@/lib/api';
 import type { ArrivalAlert } from '@/lib/arrival-alerts';
 import type { FavouriteBoard } from '@/lib/favourite-boards';
 import type { FavouriteStop } from '@/lib/favourite-stops';
+import { tripTitle, type FavouriteTrip } from '@/lib/favourite-trips';
+import type { TripBoard } from '@/lib/widgets';
 import { LineBadge } from './line-badge';
-import { departureSeconds } from '@/lib/departures';
+import { arrivalSeconds, clockIn, departureSeconds } from '@/lib/departures';
 import { etaParts, formatDistance, plural } from '@/lib/format';
 import type { StopArea } from '@/lib/stops-api';
 
@@ -119,6 +121,13 @@ export type MapSheetHomeProps = {
   onStop: (stop: Stop) => void;
   /** Rename, reorder, remove — and how to put a stop on a widget. */
   onManageFavourites: () => void;
+  /** Saved journeys and their next departures that get there. */
+  trips: FavouriteTrip[];
+  tripBoards: TripBoard[];
+  /** When the boards were fetched: a trip's arrival clock is counted from it. */
+  boardsReceivedAt: number | null;
+  onTrip: (trip: FavouriteTrip) => void;
+  onNewTrip: () => void;
 };
 
 /** How many places fit before the list stops being a glance and becomes a scroll. */
@@ -145,6 +154,11 @@ export function MapSheetHome({
   onRetry,
   onStop,
   onManageFavourites,
+  trips,
+  tripBoards,
+  boardsReceivedAt,
+  onTrip,
+  onNewTrip,
 }: MapSheetHomeProps) {
   const theme = useTheme();
 
@@ -266,6 +280,27 @@ export function MapSheetHome({
       )}
 
       {/*
+       * A saved journey answers the regular's real question — which of my
+       * trams, and when am I there — so it sits with the favourites.
+       */}
+      {trips.length > 0 && (
+        <Section title="Przejazdy">
+          {trips.map((trip, index) => (
+            <View key={trip.id}>
+              {index > 0 && <Divider />}
+              <TripRow
+                trip={trip}
+                board={tripBoards.find((board) => board.trip.id === trip.id) ?? null}
+                ageSeconds={boardsAgeSeconds}
+                receivedAt={boardsReceivedAt}
+                onPress={() => onTrip(trip)}
+              />
+            </View>
+          ))}
+        </Section>
+      )}
+
+      {/*
        * Nearest first, because it is the only thing here a rider needs *now*.
        * The line filter and the alerts are settings you visit; where the next
        * tram goes from is the question you opened the app with.
@@ -345,6 +380,13 @@ export function MapSheetHome({
           value={alertCount === null ? null : String(alertCount)}
           onPress={onAlerts}
         />
+        <Divider />
+        <LinkRow
+          label={trips.length ? 'Nowy przejazd' : 'Zapisz stały przejazd'}
+          hint={trips.length ? null : 'Np. dom → szkoła: kiedy wyjść i o której będziesz na miejscu'}
+          leading={<RowIcon name="navigate-circle" color={theme.textSecondary} />}
+          onPress={onNewTrip}
+        />
       </Section>
     </ScrollView>
   );
@@ -413,10 +455,83 @@ function FavouriteRow({
   );
 }
 
+/**
+ * A saved journey: the next departure that gets there, and when it does —
+ * "4 za 3 min · na miejscu 7:54" — with the one after it for a rider who
+ * will not make the first.
+ */
+function TripRow({
+  trip,
+  board,
+  ageSeconds,
+  receivedAt,
+  onPress,
+}: {
+  trip: FavouriteTrip;
+  board: TripBoard | null;
+  ageSeconds: number;
+  receivedAt: number | null;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  const age = Math.min(Math.max(ageSeconds, 0), 90);
+  const next = (board?.departures ?? [])
+    .map((departure) => ({ departure, seconds: departureSeconds(departure) - age, arrives: arrivalSeconds(departure) }))
+    .filter((entry) => entry.seconds > -30)
+    .slice(0, 2);
+  const first = next[0];
+  const eta = first ? etaParts(first.seconds) : null;
+  const status = !board
+    ? 'Sprawdzamy połączenia…'
+    : !board.supported
+      ? 'Wymaga nowszej wersji serwera'
+      : !first
+        ? 'Brak bezpośrednich połączeń w najbliższych godzinach'
+        : [
+            first.arrives === null || receivedAt === null ? null : `na miejscu ${clockIn(first.arrives, receivedAt)}`,
+            next[1] ? `potem ${next[1].departure.line} za ${etaParts(next[1].seconds).value} min` : null,
+          ]
+            .filter(Boolean)
+            .join(' · ');
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${tripTitle(trip)}, ${trip.from.name} do ${trip.to.name}. ${
+        first ? `Linia ${first.departure.line} za ${eta?.value} ${eta?.unit}. ${status}` : status
+      }`}
+      style={({ pressed }) => [styles.trip, pressed && styles.pressed]}>
+      <View style={styles.favouriteName}>
+        <ThemedText type="callout" weight="semibold" numberOfLines={1}>
+          {tripTitle(trip)}
+        </ThemedText>
+        {!!trip.label && (
+          <ThemedText type="caption" themeColor="textSecondary" numberOfLines={1}>
+            {trip.from.name} → {trip.to.name}
+          </ThemedText>
+        )}
+        <ThemedText type="footnote" themeColor="textSecondary" numberOfLines={1}>
+          {status}
+        </ThemedText>
+      </View>
+      {first && eta && (
+        <View style={styles.favouriteNext}>
+          <LineBadge line={first.departure.line} type={first.departure.type} size="small" />
+          <ThemedText type="headline" color={theme.amber} style={styles.favouriteEta}>
+            {eta.unit ? `${eta.value} ${eta.unit}` : eta.value}
+          </ThemedText>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   favourite: { flexDirection: 'row', alignItems: 'center', gap: Space.sm, minHeight: 52, paddingHorizontal: Space.lg },
   favouriteName: { flex: 1, minWidth: 0 },
   manage: { minHeight: 44, justifyContent: 'center', paddingHorizontal: Space.lg },
+  trip: { flexDirection: 'row', alignItems: 'center', gap: Space.md, minHeight: 64, paddingHorizontal: Space.lg, paddingVertical: Space.sm },
   favouriteNext: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   favouriteEta: { fontVariant: ['tabular-nums'] },
   header: { gap: Space.sm, paddingBottom: Space.md },

@@ -17,6 +17,7 @@ import {
   useFavouriteStops,
   type FavouriteStop,
 } from '@/lib/favourite-stops';
+import { favouriteTripsStore, MAX_FAVOURITE_TRIPS, tripTitle, useFavouriteTrips } from '@/lib/favourite-trips';
 import { tapped } from '@/lib/haptics';
 import { mapIntentStore } from '@/lib/map-intent';
 
@@ -35,6 +36,7 @@ export default function FavouritesScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const favourites = useFavouriteStops();
+  const trips = useFavouriteTrips();
   const [editing, setEditing] = useState<string | null>(null);
 
   return (
@@ -86,6 +88,44 @@ export default function FavouritesScreen() {
               ))}
             </Section>
           )}
+
+          <Section
+            title="Przejazdy"
+            icon="navigate-circle-outline"
+            footer="Przejazd pokazuje tylko to, co dojeżdża bez przesiadki, i o której będziesz na miejscu — w aplikacji i na widżecie.">
+            {trips.map((trip, index) => (
+              <View key={trip.id}>
+                {index > 0 && <Divider />}
+                <View style={styles.row}>
+                  <View style={styles.rowMain}>
+                    <Ionicons name="navigate-circle" size={18} color={theme.textSecondary} />
+                    <View style={styles.rowText}>
+                      <ThemedText type="body" numberOfLines={1}>
+                        {tripTitle(trip)}
+                      </ThemedText>
+                      <ThemedText type="footnote" themeColor="textSecondary" numberOfLines={1}>
+                        {trip.from.name} → {trip.to.name}
+                      </ThemedText>
+                    </View>
+                  </View>
+                  <IconButton
+                    icon="trash-outline"
+                    label={`Usuń przejazd ${tripTitle(trip)}`}
+                    onPress={() => favouriteTripsStore.remove(trip.id)}
+                  />
+                </View>
+              </View>
+            ))}
+            {trips.length > 0 && <Divider />}
+            {trips.length < MAX_FAVOURITE_TRIPS ? (
+              <LinkRow
+                label="Nowy przejazd"
+                hint={trips.length ? null : 'Np. Biskupin → Reja, do szkoły'}
+                leading={<RowIcon name="add" color={theme.accent} />}
+                onPress={() => router.push('/new-trip')}
+              />
+            ) : null}
+          </Section>
 
           <Section>
             <LinkRow
@@ -261,7 +301,7 @@ function WidgetHowTo() {
   const steps = [
     'Przytrzymaj puste miejsce na ekranie głównym lub blokady i dotknij „Edytuj” → „Dodaj widżet”.',
     'Wybierz Wroclive i rozmiar — mały pokazuje najbliższy odjazd, duży osiem kolejnych.',
-    'Przytrzymaj dodany widżet, wybierz „Edytuj widżet” i w polu „Przystanek” wskaż, który z ulubionych ma pokazywać.',
+    'Przytrzymaj dodany widżet, wybierz „Edytuj widżet” i w polu „Przystanek” wskaż ulubiony przystanek albo zapisany przejazd.',
   ];
   return (
     <Section

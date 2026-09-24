@@ -2,15 +2,16 @@ import { requireOptionalNativeModule } from 'expo';
 
 import { apiSend } from '@/lib/api';
 import { Colors } from '@/constants/theme';
-import { departureSeconds, directionsLabel } from '@/lib/departures';
+import { arrivalSeconds, departureSeconds, directionsLabel } from '@/lib/departures';
 import { stopAppUrl, vehicleAppUrl } from '@/lib/links';
 import type { FavouriteStop } from '@/lib/favourite-stops';
 import { colorFor } from '@/lib/lines';
 import { walkSeconds } from '@/lib/walking';
-import type { ArrivalActivityInput, TripActivityInput, WidgetBoard } from '@/lib/widgets';
+import type { FavouriteTrip } from '@/lib/favourite-trips';
+import type { ArrivalActivityInput, TripActivityInput, TripBoard, WidgetBoard, WidgetInput } from '@/lib/widgets';
 import type { DeparturesWidgetProps, DeparturesWidgetStop } from '@/widgets/layouts';
 
-export type { ArrivalActivityInput, TripActivityInput, WidgetBoard } from '@/lib/widgets';
+export type { ArrivalActivityInput, TripActivityInput, TripBoard, WidgetBoard, WidgetInput } from '@/lib/widgets';
 
 /**
  * The iOS home-screen widget and the Live Activities.
@@ -54,6 +55,25 @@ const clock = (at: number) => {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 };
 
+function widgetRows(departures: WidgetBoard['departures'], now: number) {
+  return departures.map((departure) => {
+    const at = now + departureSeconds(departure) * 1_000;
+    const arrives = arrivalSeconds(departure);
+    const arriveAt = arrives === null ? null : now + arrives * 1_000;
+    return {
+      line: departure.line,
+      color: colorFor(departure.type),
+      tram: departure.type.startsWith('tram'),
+      headsign: departure.headsign ?? '',
+      at,
+      clock: clock(at),
+      live: Boolean(departure.realtime),
+      arriveAt,
+      arriveClock: arriveAt === null ? null : clock(arriveAt),
+    };
+  });
+}
+
 function widgetStop(
   stop: FavouriteStop,
   board: WidgetBoard | undefined,
@@ -62,58 +82,85 @@ function widgetStop(
 ): DeparturesWidgetStop {
   const departures = board?.departures ?? [];
   return {
+    kind: 'stop',
     id: stop.id,
     name: stop.name,
     label: stop.label ?? null,
     detail: directionsLabel(departures),
     url: stopAppUrl(stop),
     walk: walkSeconds(position, stop),
-    rows: departures.map((departure) => {
-      const at = now + departureSeconds(departure) * 1_000;
-      return {
-        line: departure.line,
-        color: colorFor(departure.type),
-        tram: departure.type.startsWith('tram'),
-        headsign: departure.headsign ?? '',
-        at,
-        clock: clock(at),
-        live: Boolean(departure.realtime),
-      };
-    }),
+    rows: widgetRows(departures, now),
+  };
+}
+
+/** A saved trip, drawn as the board of its origin with only the departures that get there. */
+function widgetTrip(
+  trip: FavouriteTrip,
+  board: TripBoard | undefined,
+  position: { lat: number; lon: number } | null,
+  now: number,
+): DeparturesWidgetStop {
+  const origin = { id: trip.from.ids[0], ids: trip.from.ids, name: trip.from.name, lat: trip.from.lat, lon: trip.from.lon };
+  return {
+    kind: 'trip',
+    id: `trip:${trip.id}`,
+    name: `${trip.from.name} → ${trip.to.name}`,
+    label: trip.label || null,
+    detail: `${trip.from.name} → ${trip.to.name}`,
+    destination: trip.to.name,
+    url: stopAppUrl(origin),
+    walk: walkSeconds(position, trip.from),
+    rows: board?.supported === false ? [] : widgetRows(board?.departures ?? [], now),
   };
 }
 
 /**
- * Hand the widget a fresh timeline for the starred stops.
+ * Hand the widget a fresh timeline for the starred stops and saved trips.
  *
  * `position` is where the rider last was, for the walking estimate; it never
- * leaves the phone. No favourites puts the widget back to "star a stop".
+ * leaves the phone. Nothing saved puts the widget back to "star a stop".
  */
 export function syncDeparturesWidget(
-  favourites: FavouriteStop[],
-  boards: WidgetBoard[],
+  { favourites, boards, trips, tripBoards }: WidgetInput,
   position: { lat: number; lon: number } | null,
   now = Date.now(),
 ) {
   if (!layouts) return;
   try {
-    const stops = favourites.map((stop) =>
-      widgetStop(
-        stop,
-        boards.find((board) => board.stop.id === stop.id),
-        position,
-        now,
+    const stops = [
+      ...favourites.map((stop) =>
+        widgetStop(
+          stop,
+          boards.find((board) => board.stop.id === stop.id),
+          position,
+          now,
+        ),
       ),
-    );
+      ...trips.map((trip) =>
+        widgetTrip(
+          trip,
+          tripBoards.find((board) => board.trip.id === trip.id),
+          position,
+          now,
+        ),
+      ),
+    ];
     const base: DeparturesWidgetProps = {
       ...amber,
       stops,
       favourites: stops.map((stop) => ({
         id: stop.id,
-        name: stop.label || stop.name,
+        name: stop.kind === 'trip' ? `Przejazd: ${stop.label || stop.name}` : stop.label || stop.name,
         // The picker's second line: the real name under a label, otherwise
         // where it goes — which is what tells two platforms of one stop apart.
-        detail: stop.label ? [stop.name, stop.detail].filter(Boolean).join(' · ') : stop.detail,
+        detail:
+          stop.kind === 'trip'
+            ? stop.label
+              ? stop.detail
+              : ''
+            : stop.label
+              ? [stop.name, stop.detail].filter(Boolean).join(' · ')
+              : stop.detail,
       })),
       updatedAt: now,
       final: false,

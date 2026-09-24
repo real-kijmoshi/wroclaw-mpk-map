@@ -177,6 +177,26 @@ describe('GtfsStore', () => {
     assert.deepEqual(store.getDepartures('1', { now: sunday, limit: 10, horizonSeconds: 7200 }), []);
   });
 
+  it('narrows a board to the trips that reach a destination, with their arrival there', () => {
+    const monday = new Date('2026-06-15T05:00:00Z'); // 07:00 in Warsaw
+    // Stop 1 → 3: only t4a goes on to 3; t4a2 stops at 2, t128 turns off to 5.
+    const toThree = store.getDepartures('1', { now: monday, limit: 10, to: ['3'] });
+    assert.deepEqual(toThree.map((departure) => departure.tripId), ['t4a']);
+    assert.equal(toThree[0].arrival, '08:15:00');
+    assert.equal(toThree[0].arrivalInSeconds - toThree[0].inSeconds, 15 * 60);
+    assert.equal(toThree[0].arrivalStopId, '3');
+
+    // Either platform of a destination counts: 2 or 5 is "anything useful".
+    const either = store.getDepartures('1', { now: monday, limit: 10, to: ['2', '5'] });
+    assert.deepEqual(either.map((departure) => departure.tripId).sort(), ['t128', 't4a', 't4a2']);
+
+    // A stop the trip called at *before* this one is not a destination.
+    assert.deepEqual(store.getDepartures('3', { now: monday, limit: 10, to: ['1'] }), []);
+    // And without `to`, nothing about the board changes.
+    const plain = store.getDepartures('1', { now: monday, limit: 10 });
+    assert.ok(plain.every((departure) => departure.arrival === undefined));
+  });
+
   it('keeps departures on their own nearby same-name platform', () => {
     const anchor = store.getStop('4');
     const platformRows = store.departuresByStop.get('4');

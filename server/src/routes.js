@@ -340,7 +340,7 @@ const createRouter = ({
         { method: 'GET', path: '/stops/near', description: 'Stops near ?lat=&lon=; ?radius= (m) and ?limit=' },
         { method: 'GET', path: '/stops/:line', description: 'Stops served by a line' },
         { method: 'GET', path: '/stop/:id', description: 'Stop details' },
-        { method: 'GET', path: '/stop/:id/departures', description: 'Next departures; ?limit= and ?within= (minutes)' },
+        { method: 'GET', path: '/stop/:id/departures', description: 'Next departures; ?limit=, ?within= (minutes), ?to=<stop ids> for trips reaching them, with arrival' },
         { method: 'GET', path: '/alerts', description: 'Service alerts; ?since= (ms epoch) and ?line=' },
         { method: 'GET', path: '/incidents', description: 'Grouped incident timelines; ?since=, ?line= and ?status=' },
         { method: 'GET', path: '/health', description: 'Health and upstream source report' },
@@ -593,7 +593,17 @@ const createRouter = ({
 
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 20, 100);
     const withinMinutes = Math.min(Number.parseInt(req.query.within, 10) || 1440, 1440);
-    const departures = gtfs.getDeparturesForStop(stop.id, { limit, horizonSeconds: withinMinutes * 60 });
+    // ?to=a,b — only trips that go on to one of these stops, with their
+    // arrival there. Absent, the board is exactly what it always was.
+    const to =
+      typeof req.query.to === 'string'
+        ? req.query.to.split(',').map((id) => id.trim()).filter(Boolean).slice(0, 20)
+        : null;
+    const departures = gtfs.getDeparturesForStop(stop.id, {
+      limit,
+      horizonSeconds: withinMinutes * 60,
+      to,
+    });
     return res.json({
       stop: { ...stop, lines: gtfs.getLinesForStop(stop.id) },
       departures: enrichDepartures(departures, stop.id, vehicles),

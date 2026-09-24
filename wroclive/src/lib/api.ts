@@ -370,6 +370,10 @@ export type Departure = {
   realtime?: boolean;
   predictedInSeconds?: number | null;
   vehicleId?: string | null;
+  /** With `?to=`: when this trip reaches the destination, by the timetable. */
+  arrivalInSeconds?: number;
+  arrival?: string;
+  arrivalStopId?: string | null;
 };
 
 export type Departures = {
@@ -763,6 +767,14 @@ export function normaliseDepartures(payload: unknown): Departures {
           typeof item.vehicleId === 'string' && item.vehicleId
             ? item.vehicleId
             : null,
+        // Only on a board asked for with `?to=`; an older server never sends them.
+        ...(Number.isFinite(item.arrivalInSeconds)
+          ? {
+              arrivalInSeconds: item.arrivalInSeconds as number,
+              arrival: typeof item.arrival === 'string' ? item.arrival : '',
+              arrivalStopId: optionalString(item.arrivalStopId) ?? null,
+            }
+          : null),
       },
     ];
   });
@@ -773,7 +785,7 @@ export function normaliseDepartures(payload: unknown): Departures {
   }
   return {
     stop,
-    departures: departures.slice(0, 12),
+    departures: departures.slice(0, BOARD_LIMIT),
   };
 }
 
@@ -962,6 +974,52 @@ export const getDeparturesForStops = async (stop: Stop, options?: GetOptions): P
     .sort((a, b) => a.inSeconds - b.inSeconds)
     .slice(0, BOARD_LIMIT);
   return { stop: boards[0]?.stop ?? stop, departures };
+};
+
+export type JourneyBoard = {
+  /** Departures from any platform of the origin that go on to the destination, soonest first. */
+  departures: Departure[];
+  /**
+   * False when the server answered without arrival times — a deployment from
+   * before `?to=` existed, which ignores it and serves the whole board. Shown
+   * as "needs a server update", never as a board of trams that may not go there.
+   */
+  supported: boolean;
+};
+
+/** How far ahead a saved trip looks: a commute is planned in hours, not a day. */
+const JOURNEY_WITHIN_MINUTES = 240;
+
+/** The departures of a saved trip — `from` platforms, reaching any `to` platform. */
+export const getJourneyDepartures = async (
+  fromIds: string[],
+  toIds: string[],
+  options?: GetOptions,
+): Promise<JourneyBoard> => {
+  const to = toIds.slice(0, 20).map(encodeURIComponent).join(',');
+  const boards = await Promise.all(
+    [...new Set(fromIds)].map(async (id) =>
+      normaliseDepartures(
+        await apiGet<unknown>(
+          `/stop/${encodeURIComponent(id)}/departures?limit=20&within=${JOURNEY_WITHIN_MINUTES}&to=${to}`,
+          options,
+        ),
+      ),
+    ),
+  );
+  const all = boards.flatMap((board) => board.departures);
+  const seen = new Set<string>();
+  const departures = all
+    .filter((departure) => departure.arrivalInSeconds !== undefined)
+    .filter((departure) => {
+      const key = `${departure.tripId}|${departure.departure}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.inSeconds - b.inSeconds)
+    .slice(0, 12);
+  return { departures, supported: all.length === 0 || departures.length > 0 };
 };
 
 /**
