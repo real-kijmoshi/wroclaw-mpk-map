@@ -932,9 +932,16 @@ export const getShape = async (
   );
 };
 
+/**
+ * Departures fetched per board. Enough for a line's third departure in the
+ * grouped view at a busy interchange, and for the widget's later timeline
+ * entries to still have rows to show half an hour on.
+ */
+const BOARD_LIMIT = 30;
+
 export const getDepartures = async (stopId: string, options?: GetOptions) =>
   normaliseDepartures(
-    await apiGet<unknown>(`/stop/${encodeURIComponent(stopId)}/departures?limit=12&within=1440`, options),
+    await apiGet<unknown>(`/stop/${encodeURIComponent(stopId)}/departures?limit=${BOARD_LIMIT}&within=1440`, options),
   );
 
 /** Merge only GTFS records that search identified as one physical platform. */
@@ -951,7 +958,7 @@ export const getDeparturesForStops = async (stop: Stop, options?: GetOptions): P
       return true;
     })
     .sort((a, b) => a.inSeconds - b.inSeconds)
-    .slice(0, 12);
+    .slice(0, BOARD_LIMIT);
   return { stop: boards[0]?.stop ?? stop, departures };
 };
 

@@ -1,16 +1,36 @@
 import { useCallback, useEffect } from 'react';
-import { Alert, Linking } from 'react-native';
+import { ActionSheetIOS, Alert, Linking, Platform } from 'react-native';
 
 import { usePoll, type PollState } from '@/hooks/use-poll';
 import { ApiError, getVehicle, vehiclePollDelay, type VehicleDetail } from '@/lib/api';
-import { arrivalAlertStore, useArrivalAlert } from '@/lib/arrival-alerts';
+import { arrivalAlertStore, useArrivalAlert, type AlertKind } from '@/lib/arrival-alerts';
 import { REFRESH_MS } from '@/lib/config';
 import { failed, tapped } from '@/lib/haptics';
 
 const followServer = () => vehiclePollDelay(REFRESH_MS.vehicles);
 
 /**
- * The arrival alert, wired to the screen.
+ * A stop in a vehicle's list means one of two things, and only the rider
+ * knows which: they are waiting there for this tram, or they are on it and
+ * getting off there. Asked, not guessed — a phone position a few metres from a
+ * tram cannot tell "on board" from "standing at the kerb beside it".
+ */
+function askKind(stopName: string): Promise<AlertKind | null> {
+  if (Platform.OS !== 'ios') return Promise.resolve('arrival');
+  return new Promise((resolve) =>
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        title: stopName,
+        options: ['Jadę tym pojazdem — wysiadam tutaj', 'Czekam tutaj na ten pojazd', 'Anuluj'],
+        cancelButtonIndex: 2,
+      },
+      (index) => resolve(index === 0 ? 'trip' : index === 1 ? 'arrival' : null),
+    ),
+  );
+}
+
+/**
+ * The arrival alert and the trip, wired to the screen.
  *
  * The armed vehicle keeps being followed when its sheet is closed, so the
  * alert tracks the tram rather than the screen: while it is the open vehicle
@@ -50,8 +70,11 @@ export function useArrivalAlertTracking(detail: PollState<VehicleDetail>, openVe
         return;
       }
       if (!data) return;
+      const kind = await askKind(stop.name);
+      if (!kind) return;
       const result = await arrivalAlertStore.arm(
         {
+          kind,
           vehicleId: data.vehicle.id,
           line: data.vehicle.line,
           towards: data.trip?.towards ?? data.trip?.headsign ?? null,
@@ -64,7 +87,9 @@ export function useArrivalAlertTracking(detail: PollState<VehicleDetail>, openVe
         failed();
         Alert.alert(
           'Powiadomienia są wyłączone',
-          'Włącz je w Ustawieniach systemu, aby dostać powiadomienie przed przyjazdem.',
+          kind === 'trip'
+            ? 'Włącz je w Ustawieniach systemu, aby dostać powiadomienie przed wysiadką.'
+            : 'Włącz je w Ustawieniach systemu, aby dostać powiadomienie przed przyjazdem.',
           [
             { text: 'Anuluj', style: 'cancel' },
             { text: 'Ustawienia', onPress: () => Linking.openSettings() },

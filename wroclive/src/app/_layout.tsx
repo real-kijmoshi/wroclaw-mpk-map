@@ -150,6 +150,7 @@ export default function RootLayout() {
           <Stack.Screen name="lines" options={LINE_MODAL_OPTIONS} />
           <Stack.Screen name="alerts" options={MODAL_OPTIONS} />
           <Stack.Screen name="settings" options={MODAL_OPTIONS} />
+          <Stack.Screen name="favourites" options={MODAL_OPTIONS} />
           <Stack.Screen name="search" options={SEARCH_MODAL_OPTIONS} />
         </Stack>
       </ThemeProvider>

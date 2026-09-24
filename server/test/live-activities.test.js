@@ -6,7 +6,7 @@ const http2 = require('node:http2');
 const { after, describe, it } = require('node:test');
 
 const { ApnsClient } = require('../src/apns');
-const { LiveActivityService, bothFleets, parseRegistration } = require('../src/live-activities');
+const { LiveActivityService, bothFleets, parseRegistration, tripProgress } = require('../src/live-activities');
 
 const TOKEN = 'ab'.repeat(32);
 const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -56,6 +56,19 @@ describe('Live Activity registration', () => {
     assert.match(record.view.color, /^#[0-9A-Fa-f]{6}$/);
   });
 
+  it('reads a registration without a kind as an arrival, so builds from before trips keep working', () => {
+    assert.equal(parseRegistration(registration()).kind, 'arrival');
+    assert.equal(parseRegistration(registration()).view.totalStops, undefined);
+  });
+
+  it('accepts a trip with its stop count clamped, and refuses a kind it does not know', () => {
+    const trip = parseRegistration(registration({ kind: 'trip', view: { ...registration().view, totalStops: 9999 } }));
+    assert.equal(trip.kind, 'trip');
+    assert.equal(trip.view.totalStops, 200);
+    assert.equal(parseRegistration(registration({ kind: 'trip', view: { ...registration().view, totalStops: 'x' } })).view.totalStops, 1);
+    assert.match(parseRegistration(registration({ kind: 'boat' })), /kind/);
+  });
+
   it('answers 503 without an APNs key, so the app keeps updating the activity itself', () => {
     const service = new LiveActivityService({ apns: new ApnsClient({ keyId: '', teamId: '' }), bundleId: 'x' });
     assert.equal(service.register(registration()).status, 503);
@@ -73,6 +86,28 @@ describe('vehicle lookup', () => {
     assert.equal(fleets.getVehicle('klosok:none'), null);
     assert.equal(fleets.pollRevision, 7);
     assert.equal(bothFleets(mpk, null).getVehicle('klosok:931-5'), null);
+  });
+});
+
+describe('trip progress', () => {
+  const stop = (id, etaSeconds = 60) => ({ id, name: `Stop ${id}`, etaSeconds });
+
+  it('counts the destination itself as one of the stops to go', () => {
+    const trip = { atStop: null, nextStops: [stop('A'), stop('B'), stop('C', 240)] };
+    assert.deepEqual(tripProgress(trip, 'C'), { arrived: false, stopsAway: 3, etaSeconds: 240, nextStop: 'Stop A' });
+  });
+
+  it('does not count the stop the vehicle is standing at — it is being left, not reached', () => {
+    const trip = { atStop: { id: 'A' }, nextStops: [stop('A', 0), stop('B'), stop('C')] };
+    const progress = tripProgress(trip, 'C');
+    assert.equal(progress.stopsAway, 2);
+    assert.equal(progress.nextStop, 'Stop B');
+  });
+
+  it('says arrived when standing at the destination, and null once it is behind', () => {
+    assert.equal(tripProgress({ atStop: { id: 'C' }, nextStops: [stop('C', 0)] }, 'C').stopsAway, 0);
+    assert.equal(tripProgress({ atStop: { id: 'C' }, nextStops: [stop('C', 0)] }, 'C').arrived, true);
+    assert.equal(tripProgress({ atStop: null, nextStops: [stop('D')] }, 'C'), null);
   });
 });
 
@@ -130,7 +165,7 @@ describe('Live Activity service', () => {
       bundleId: 'com.kijmoshi.wroclive',
       describe: () => ({
         atStop: null,
-        nextStops: state.stops.map((id) => ({ id, etaSeconds: state.eta })),
+        nextStops: state.stops.map((id) => ({ id, name: id, etaSeconds: state.eta })),
       }),
     });
     assert.equal(service.register(registration()).ok, true);
@@ -179,6 +214,30 @@ describe('Live Activity service', () => {
     await service.tick(Date.now());
     service.stop();
     assert.equal(fake.received[0].body.aps.event, 'end');
+  });
+
+  it('draws a trip with its own layout, and pushes when a stop is passed even if the clock has not moved', async () => {
+    const { fake, state, service } = await setup();
+    service.unregister(TOKEN);
+    assert.equal(service.register(registration({ kind: 'trip', view: { ...registration().view, totalStops: 6 } })).ok, true);
+    state.stops = ['S0', 'S1', 'S2'];
+    const now = Date.now();
+    await service.tick(now);
+    state.stops = ['S1', 'S2'];
+    state.eta = 290; // ten seconds later and ten seconds closer: the clock alone would stay quiet
+    await service.tick(now + 10_000);
+    service.stop();
+
+    assert.equal(fake.received.length, 2);
+    const first = fake.received[0].body.aps['content-state'];
+    assert.equal(first.name, 'Trip');
+    const props = JSON.parse(first.props);
+    assert.equal(props.stopsAway, 3);
+    assert.equal(props.nextStop, 'S0');
+    assert.equal(props.totalStops, 6);
+    assert.equal(JSON.parse(fake.received[1].body.aps['content-state'].props).stopsAway, 2);
+    // One stop out is the push the rider notices late.
+    assert.equal(fake.received[0].headers['apns-priority'], '5');
   });
 
   it('forgets a token APNs says is dead', async () => {

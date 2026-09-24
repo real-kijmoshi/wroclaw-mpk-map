@@ -4,27 +4,42 @@ import { useSyncExternalStore } from 'react';
 
 import type { VehicleDetail } from '@/lib/api';
 import { colorFor } from '@/lib/lines';
-import { endArrivalActivity, showArrivalActivity } from '@/lib/widgets';
+import { tripProgress } from '@/lib/trip-progress';
+import { endLiveActivity, showArrivalActivity, showTripActivity } from '@/lib/widgets';
 
 /**
- * "Tell me when my tram is two minutes from this stop."
+ * "Tell me when my tram is two minutes from this stop" — and its other half,
+ * "tell me before I have to get off".
  *
- * A *local* notification, scheduled on the phone from the ETA the server
- * already serves — no push service, no server state, no token. That is the
- * whole reason it can exist without a backend change, and also its one limit:
- * the phone reschedules it on every poll while the app is running, and once
- * the app is suspended the last schedule stands. A tram that loses time after
- * that is announced a little early, never silently dropped.
+ * Two kinds, one at a time:
  *
- * One alert at a time. It is armed from a stop row in the vehicle sheet and
- * disarms itself when the stop is passed or the vehicle stops being tracked.
- * On iOS it also drives a Live Activity — the same countdown on the lock
- * screen and in the Dynamic Island — which is why it outlives the
- * notification: the tram is still two minutes out when the banner has gone.
+ * - **arrival** — the rider is waiting at a stop for this vehicle. The alert
+ *   fires two minutes before it gets there.
+ * - **trip** — the rider is on board and the stop is where they get off. The
+ *   Live Activity counts the stops down, and the alert fires when the next
+ *   stop is theirs.
+ *
+ * Both are *local* notifications, scheduled on the phone from the ETAs the
+ * server already serves — no push service, no server state, no token. That is
+ * why they exist without a backend dependency, and also their one limit: the
+ * phone reschedules on every poll while the app runs, and once the app is
+ * suspended the last schedule stands. A tram that loses time after that is
+ * announced a little early, never silently dropped. The Live Activity, where
+ * the server has an APNs key, keeps following the vehicle while suspended.
+ *
+ * It disarms itself when the stop is passed or the vehicle stops being
+ * tracked, and outlives the notification: the tram is still two minutes out
+ * when the banner has gone.
  */
 
-/** How long before the arrival the alert fires. */
+/** How long before the arrival an arrival alert fires. */
 export const ARRIVAL_LEAD_SECONDS = 120;
+/**
+ * A trip alert fires when the destination is the next stop — but never later
+ * than this before it, because between two stops a long way apart "next stop"
+ * arrives too late to stand up and make for the door.
+ */
+export const TRIP_LEAD_SECONDS = 90;
 /** A reschedule that moves the alert by less than this is churn, not news. */
 const RESCHEDULE_THRESHOLD_SECONDS = 15;
 
@@ -35,12 +50,19 @@ const RESCHEDULE_THRESHOLD_SECONDS = 15;
  */
 export const arrivalAlertsAvailable = Platform.OS === 'ios';
 
+export type AlertKind = 'arrival' | 'trip';
+
 export type ArrivalAlert = {
+  kind: AlertKind;
   vehicleId: string;
   line: string;
   towards: string | null;
+  /** The stop waited at (arrival), or got off at (trip). */
   stopId: string;
   stopName: string;
+  /** Trip only: stops left, and how many there were when it was started. */
+  stopsAway?: number;
+  totalStops?: number;
 };
 
 type Armed = ArrivalAlert & {
@@ -80,17 +102,24 @@ async function cancelScheduled() {
   }
 }
 
-const content = (alert: ArrivalAlert): Notifications.NotificationContentInput => ({
-  title: `Linia ${alert.line}${alert.towards ? ` → ${alert.towards}` : ''}`,
-  body: `Za około 2 min na przystanku ${alert.stopName}.`,
-  sound: true,
-});
+const content = (alert: ArrivalAlert): Notifications.NotificationContentInput =>
+  alert.kind === 'trip'
+    ? {
+        title: `Wysiadasz na następnym: ${alert.stopName}`,
+        body: `Linia ${alert.line} — przygotuj się do wyjścia.`,
+        sound: true,
+      }
+    : {
+        title: `Linia ${alert.line}${alert.towards ? ` → ${alert.towards}` : ''}`,
+        body: `Za około 2 min na przystanku ${alert.stopName}.`,
+        sound: true,
+      };
 
 /** Refresh the lock-screen countdown from a fresh answer. */
 function showActivity(alert: ArrivalAlert, detail: VehicleDetail) {
   const stop = detail.trip?.nextStops.find((entry) => entry.id === alert.stopId);
   if (!stop) return;
-  showArrivalActivity({
+  const input = {
     vehicleId: alert.vehicleId,
     stopId: alert.stopId,
     line: alert.line,
@@ -99,18 +128,45 @@ function showActivity(alert: ArrivalAlert, detail: VehicleDetail) {
     stopName: alert.stopName,
     arrivesAt: Date.now() + (stop.etaSeconds ?? 0) * 1_000,
     atStop: detail.trip?.atStop?.id === alert.stopId,
-  });
+  };
+  if (alert.kind === 'trip') {
+    const progress = tripProgress(detail.trip, alert.stopId);
+    if (!progress) return;
+    showTripActivity({
+      ...input,
+      stopsAway: progress.stopsAway,
+      totalStops: Math.max(alert.totalStops ?? progress.stopsAway, progress.stopsAway, 1),
+      nextStop: progress.nextStop,
+    });
+    return;
+  }
+  showArrivalActivity(input);
 }
 
-/** When the alert should fire, given what the server just said, or null if the stop is behind. */
+/**
+ * When the alert should fire, given what the server just said — or `passed`
+ * once the stop is behind the vehicle.
+ *
+ * A trip alert fires as the vehicle leaves the stop before the rider's — the
+ * moment "next stop" becomes true — or `TRIP_LEAD_SECONDS` before arriving,
+ * whichever is later. Either way, when it fires the next stop is theirs.
+ */
 export function alertFireTime(
   detail: VehicleDetail,
-  stopId: string,
+  alert: Pick<ArrivalAlert, 'kind' | 'stopId'>,
   now: number,
 ): { at: number } | { passed: true } {
-  const stop = detail.trip?.nextStops.find((entry) => entry.id === stopId);
-  if (!stop || !Number.isFinite(stop.etaSeconds)) return { passed: true };
-  return { at: now + Math.max(0, (stop.etaSeconds as number) - ARRIVAL_LEAD_SECONDS) * 1_000 };
+  const stops = detail.trip?.nextStops ?? [];
+  const index = stops.findIndex((entry) => entry.id === alert.stopId);
+  const stop = stops[index];
+  if (!stop || stop.etaSeconds === null || !Number.isFinite(stop.etaSeconds)) return { passed: true };
+  if (alert.kind === 'trip') {
+    const previous = index > 0 ? stops[index - 1].etaSeconds : null;
+    const leaving = previous !== null && Number.isFinite(previous) ? previous : 0;
+    const at = Math.max(leaving, stop.etaSeconds - TRIP_LEAD_SECONDS, 0);
+    return { at: now + at * 1_000 };
+  }
+  return { at: now + Math.max(0, stop.etaSeconds - ARRIVAL_LEAD_SECONDS) * 1_000 };
 }
 
 async function schedule(at: number) {
@@ -138,10 +194,14 @@ export const arrivalAlertStore = {
   getSnapshot: (): ArrivalAlert | null => armed,
 
   /**
-   * Arm an alert for one stop of one vehicle. Asks for permission the first
-   * time — at the moment the rider asked for an alert, never at launch.
+   * Arm an alert for one stop of one vehicle, replacing whatever was armed.
+   * Asks for permission the first time — at the moment the rider asked for
+   * an alert, never at launch.
    */
-  async arm(alert: ArrivalAlert, detail: VehicleDetail): Promise<'armed' | 'denied' | 'passed'> {
+  async arm(
+    alert: Omit<ArrivalAlert, 'stopsAway' | 'totalStops'>,
+    detail: VehicleDetail,
+  ): Promise<'armed' | 'denied' | 'passed'> {
     if (!arrivalAlertsAvailable) return 'denied';
     let permission = await Notifications.getPermissionsAsync();
     if (!permission.granted && permission.canAskAgain) {
@@ -149,13 +209,22 @@ export const arrivalAlertStore = {
     }
     if (!permission.granted) return 'denied';
 
-    const when = alertFireTime(detail, alert.stopId, Date.now());
+    const when = alertFireTime(detail, alert, Date.now());
     if ('passed' in when) return 'passed';
+    const progress = alert.kind === 'trip' ? tripProgress(detail.trip, alert.stopId) : null;
+    if (alert.kind === 'trip' && !progress) return 'passed';
 
     await cancelScheduled();
-    armed = { ...alert, notificationId: null, firesAt: null, delivered: false };
+    endLiveActivity();
+    armed = {
+      ...alert,
+      ...(progress ? { stopsAway: progress.stopsAway, totalStops: Math.max(progress.stopsAway, 1) } : null),
+      notificationId: null,
+      firesAt: null,
+      delivered: false,
+    };
     emit();
-    showActivity(alert, detail);
+    showActivity(armed, detail);
     await schedule(when.at);
     return 'armed';
   },
@@ -163,7 +232,7 @@ export const arrivalAlertStore = {
   async disarm() {
     if (armed && !armed.delivered) await cancelScheduled();
     armed = null;
-    endArrivalActivity();
+    endLiveActivity();
     emit();
   },
 
@@ -174,10 +243,17 @@ export const arrivalAlertStore = {
   async follow(detail: VehicleDetail) {
     if (!armed || detail.vehicle.id !== armed.vehicleId) return;
     const now = Date.now();
-    const when = alertFireTime(detail, armed.stopId, now);
+    const when = alertFireTime(detail, armed, now);
     if ('passed' in when) {
       await arrivalAlertStore.disarm();
       return;
+    }
+    if (armed.kind === 'trip') {
+      const progress = tripProgress(detail.trip, armed.stopId);
+      if (progress && progress.stopsAway !== armed.stopsAway) {
+        armed = { ...armed, stopsAway: progress.stopsAway };
+        emit();
+      }
     }
     showActivity(armed, detail);
     if (armed.firesAt !== null && armed.firesAt <= now) {

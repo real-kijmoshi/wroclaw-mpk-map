@@ -187,6 +187,13 @@ remote notifications for it — is still left out of `app.json`. Android's `RECE
 `app.json` for the same reason — an alert minutes away does not survive a
 reboot worth re-arming. The iOS location strings are "when in use" only; the
 plugin fills in "Always" by default and each unused key is set to `false`.
+The one exception is `NSMotionUsageDescription`: `expo-location` compiles
+`CMMotionActivityManager` into every binary whether or not motion is used (and
+Reanimated links `CMMotionManager` for its sensor API), so App Store Connect
+flags a build without the key. `motionUsagePermission: false` only deletes the
+string, it does not unlink the API. The app never asks for motion access, and
+the string says exactly that — never describe a motion feature that does not
+exist.
 
 **16. Config-wired dependencies are live dependencies — and OTA is one.**
 The old app wired `expo-updates` and `expo-dev-client` through config (an
