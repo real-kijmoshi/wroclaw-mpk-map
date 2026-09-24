@@ -100,5 +100,16 @@ export function useArrivalAlertTracking(detail: PollState<VehicleDetail>, openVe
     [detail.data],
   );
 
-  return { alert, toggle, disarm: arrivalAlertStore.disarm };
+  /**
+   * The armed vehicle's latest answer, from whichever poll is following it —
+   * so the map can keep drawing it after its sheet is closed.
+   */
+  const tracked =
+    alert && detail.data?.vehicle.id === alert.vehicleId
+      ? detail.data
+      : alert && own.data?.vehicle.id === alert.vehicleId
+        ? own.data
+        : null;
+
+  return { alert, tracked, toggle, disarm: arrivalAlertStore.disarm };
 }
