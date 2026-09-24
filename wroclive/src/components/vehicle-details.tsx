@@ -250,11 +250,7 @@ export function VehicleDetails({
               />
             )}
           </View>
-        ) : onStopPress && (
-          <ThemedText type="footnote" themeColor="textSecondary">
-            Dotknij przystanek, jeśli na nim czekasz albo na nim wysiadasz — powiadomimy Cię w porę.
-          </ThemedText>
-        )}
+        ) : null}
         <View style={[styles.timeline, { backgroundColor: theme.backgroundCard }]}>
           {stops.map((stop, index) => {
             const eta = etaFor(stop);
@@ -314,8 +310,13 @@ export function VehicleDetails({
                     )}
                   </View>
                   {scheduled && (
-                    <ThemedText type="footnote" themeColor="textSecondary">
-                      wg rozkładu {scheduled}
+                    // The bare clock time: the live countdown is on the right,
+                    // so the time under the name can only be the timetable's.
+                    <ThemedText
+                      type="footnote"
+                      themeColor="textTertiary"
+                      accessibilityLabel={`wg rozkładu ${scheduled}`}>
+                      {scheduled}
                     </ThemedText>
                   )}
                 </View>
@@ -336,6 +337,13 @@ export function VehicleDetails({
             );
           })}
         </View>
+        {/* Under the list, not over it: above, it pushed the stops the rider
+            came for down the sheet. */}
+        {!alert && onStopPress && (
+          <ThemedText type="caption" themeColor="textTertiary" style={styles.hint}>
+            Dotknij przystanku, by dostać powiadomienie.
+          </ThemedText>
+        )}
         </View>
       )}
 
@@ -453,6 +461,12 @@ function VehicleAmenities({ vehicle, trip }: { vehicle: Vehicle; trip: VehicleTr
             {subtitle}
           </ThemedText>
         )}
+        {/* Nothing stated at all is the common case: one row, still saying so. */}
+        {stated.length === 0 && (
+          <ThemedText type="footnote" themeColor="textTertiary" numberOfLines={1} style={styles.amenitiesNone}>
+            wyposażenie: brak danych
+          </ThemedText>
+        )}
       </View>
 
       {stated.length > 0 && (
@@ -475,7 +489,7 @@ function VehicleAmenities({ vehicle, trip }: { vehicle: Vehicle; trip: VehicleTr
         </View>
       )}
 
-      {unknown.length > 0 && (
+      {stated.length > 0 && unknown.length > 0 && (
         <ThemedText type="footnote" themeColor="textTertiary">
           Brak danych: {unknown.map((row) => row.label.toLowerCase()).join(', ')}
         </ThemedText>
@@ -565,6 +579,8 @@ const styles = StyleSheet.create({
   amenities: { borderRadius: Radius.lg, paddingHorizontal: Space.lg, paddingVertical: Space.md, gap: Space.sm },
   amenitiesHead: { flexDirection: 'row', alignItems: 'center', gap: Space.sm, minWidth: 0 },
   amenitiesModel: { flexShrink: 1 },
+  amenitiesNone: { marginLeft: 'auto', flexShrink: 0 },
+  hint: { textAlign: 'center' },
   amenityChips: { flexDirection: 'row', flexWrap: 'wrap', gap: Space.xs },
   amenityChip: {
     flexDirection: 'row',
