@@ -49,6 +49,22 @@ const AT_STOP_METERS = 45;
 const MAX_DELAY_SECONDS = 45 * 60;
 
 /**
+ * How much more a minute early costs than a minute late when choosing the run.
+ *
+ * Buses and trams here run late all the time and early almost never — a driver
+ * ahead of the timetable waits at the stop. Scoring both the same meant a 143
+ * running 13 minutes late was read as the *next* departure 7 minutes early
+ * ("7 min przed czasem"), and every scheduled time on its stop list belonged
+ * to a run 20 minutes behind it. With the weight, 7 minutes early costs 21 and
+ * loses to 13 late, while a vehicle that really is a minute or two ahead
+ * still matches its own run over one a whole headway behind.
+ *
+ * Not applied at the first stop: a vehicle waiting there on layover is early
+ * for its next departure by design.
+ */
+const EARLY_WEIGHT = 3;
+
+/**
  * How far around a vehicle's last known position, in route metres, the fast
  * path is willing to look before it hands back to the full matcher.
  *
@@ -259,12 +275,17 @@ const nextStopIndex = (stops, segmentIndex, alongMeters) => {
  * frame — is replaced with a binary search. The delay window caps the answer
  * to `±MAX_DELAY_SECONDS` around the target start, so only the small band of
  * departures inside it is examined at all. The band is walked in the same
- * ascending order the scan used, and the same strict `|delay| < |best|`
- * comparison keeps the winner identical: a nearer departure with a service
- * that is not running today is skipped, and a slightly farther one with an
- * active service wins, exactly as before.
+ * ascending order the scan used, and the same strict `cost < best` comparison
+ * keeps the winner identical: a nearer departure with a service that is not
+ * running today is skipped, and a slightly farther one with an active service
+ * wins, exactly as before.
+ *
+ * `earlyWeight` scales the cost of running early (see `EARLY_WEIGHT`); at the
+ * default of 1 the cost is plain `|delay|`.
  */
-const matchTrip = (gtfs, variant, progressOffset, now) => {
+const matchTrip = (gtfs, variant, progressOffset, now, { earlyWeight = 1 } = {}) => {
+  const costOf = (delay) => (delay >= 0 ? delay : -delay * earlyWeight);
+
   const local = inWarsaw(now);
   const yesterday = new Date(local);
   yesterday.setDate(yesterday.getDate() - 1);
@@ -278,6 +299,7 @@ const matchTrip = (gtfs, variant, progressOffset, now) => {
   const tripStart = gtfs.tripStart;
 
   let best = null;
+  let bestCost = Infinity;
   for (const frame of frames) {
     const targetStart = frame.seconds - progressOffset;
 
@@ -288,12 +310,14 @@ const matchTrip = (gtfs, variant, progressOffset, now) => {
       if (start - targetStart > MAX_DELAY_SECONDS) break;
 
       const delaySeconds = targetStart - start;
-      if (best && Math.abs(delaySeconds) >= Math.abs(best.delaySeconds)) continue;
+      const cost = costOf(delaySeconds);
+      if (cost >= bestCost) continue;
 
       const trip = gtfs.trips[trips[i]];
       if (!gtfs.isServiceActive(trip.serviceId, frame.date)) continue;
 
       best = { trip, start, delaySeconds: Math.round(delaySeconds), serviceDay: frame.label };
+      bestCost = cost;
     }
   }
 
@@ -469,7 +493,10 @@ const describeVehicle = (
 
   const progress = offsetAt(stops, projection.along);
   const progressOffset = progress.offset;
-  const run = matchTrip(gtfs, variant, progressOffset, now);
+  const departed = projection.along > stops[0].alongMeters + AT_STOP_METERS;
+  const run = matchTrip(gtfs, variant, progressOffset, now, {
+    earlyWeight: departed ? EARLY_WEIGHT : 1,
+  });
 
   if (run) {
     described.tripId = run.trip.id;
@@ -564,6 +591,7 @@ const summarise = (described) => {
 
 module.exports = {
   AT_STOP_METERS,
+  EARLY_WEIGHT,
   MAX_DELAY_SECONDS,
   MAX_OFF_ROUTE_METERS,
   describeVehicle,
