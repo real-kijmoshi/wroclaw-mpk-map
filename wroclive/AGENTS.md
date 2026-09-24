@@ -371,6 +371,17 @@ Activity push, and it is optional.
   carry the rider's own label ("Dom"), shown *above* the stop name and never
   instead of it, and are ordered by the rider: the order is the sheet's, the
   quick actions', and what an unconfigured widget falls back to.
+- **Saved trips** (`src/lib/favourite-trips.ts`, `src/app/new-trip.tsx`).
+  "Szkoła" is Biskupin → Reja: both ends are *places*, every platform
+  included, and `/stop/:id/departures?to=<ids>` keeps only the trips that go
+  on to the destination, each with its arrival — so the server, not the
+  rider, picks the side of the street. Arrival is the timetable's, moved by
+  the delay at the origin (`arrivalSeconds()` in `src/lib/departures.ts`).
+  Direct services only; there is no transfer planning. An older server
+  ignores `?to=` and serves the whole board without arrivals, which
+  `getJourneyDepartures()` reports as `supported: false` rather than showing
+  trams that may not go there. A trip is one more entry in the Departures
+  widget (`kind: 'trip'`, id `trip:<id>`), offered by the same picker.
 - **Background refresh** (`src/lib/background-refresh.ios.ts`,
   `expo-background-task`). iOS wakes the app now and then to rebuild the
   widget's timeline. *When* is the system's call — often overnight or while

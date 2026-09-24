@@ -30,6 +30,7 @@ import { shareStop, shareVehicle } from '@/lib/share';
 import { colorFor } from '@/lib/lines';
 import { arrivalAlertsAvailable } from '@/lib/arrival-alerts';
 import { favouriteStopsStore, useFavouriteStops } from '@/lib/favourite-stops';
+import { useFavouriteTrips } from '@/lib/favourite-trips';
 import { mapIntentStore, useMapIntent } from '@/lib/map-intent';
 import { usePreferences } from '@/lib/preferences';
 import { failed, tapped } from '@/lib/haptics';
@@ -442,7 +443,8 @@ export default function MapScreen() {
   const favouriteStops = useFavouriteStops();
   // The starred stops' next departures: the sheet's "Ulubione" rows and the
   // home-screen widget, from one fetch.
-  const favouriteBoards = useFavouriteBoards(favouriteStops, userPosition);
+  const favouriteTrips = useFavouriteTrips();
+  const favouriteBoards = useFavouriteBoards(favouriteStops, favouriteTrips, userPosition);
   useQuickActions(favouriteStops);
 
   // A stop opened from search posts an `open-stop` intent. It is consumed
@@ -780,6 +782,24 @@ export default function MapScreen() {
             onAlerts={() => router.push('/alerts')}
             onLocate={locate}
             onManageFavourites={() => router.push('/favourites')}
+            trips={favouriteTrips}
+            tripBoards={favouriteBoards.tripBoards}
+            boardsReceivedAt={favouriteBoards.receivedAt}
+            onNewTrip={() => router.push('/new-trip')}
+            onTrip={(trip) => {
+              // The origin's board, every platform of it: the trip's own
+              // departures are among them, and the stop sheet is where a
+              // rider already knows how to read a board.
+              const origin: Stop = {
+                id: trip.from.ids[0],
+                ids: trip.from.ids.length > 1 ? trip.from.ids : undefined,
+                name: trip.from.name,
+                lat: trip.from.lat,
+                lon: trip.from.lon,
+              };
+              mapRef.current?.centerOn(origin.lat, origin.lon, 17);
+              handleStop(origin);
+            }}
             onStop={(stop) => {
               mapRef.current?.centerOn(stop.lat, stop.lon, 17);
               handleStop(stop);

@@ -2,6 +2,7 @@ import { requireOptionalNativeModule } from 'expo';
 
 import { refreshFavouriteBoards } from '@/lib/favourite-boards';
 import { favouriteStopsStore, hydrateFavouriteStops } from '@/lib/favourite-stops';
+import { favouriteTripsStore, hydrateFavouriteTrips } from '@/lib/favourite-trips';
 import { widgetsAvailable } from '@/lib/widgets';
 
 /**
@@ -41,8 +42,8 @@ if (TaskManager && BackgroundTask) {
   TaskManager.defineTask(TASK, async () => {
     try {
       // A background launch starts cold: nothing has read storage yet.
-      await hydrateFavouriteStops();
-      await refreshFavouriteBoards(favouriteStopsStore.getSnapshot());
+      await Promise.all([hydrateFavouriteStops(), hydrateFavouriteTrips()]);
+      await refreshFavouriteBoards(favouriteStopsStore.getSnapshot(), favouriteTripsStore.getSnapshot());
       return BackgroundTask.BackgroundTaskResult.Success;
     } catch {
       return BackgroundTask.BackgroundTaskResult.Failed;

@@ -13,6 +13,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 // Defines the background task at module scope, where a cold background launch finds it.
 import { registerBackgroundRefresh } from '@/lib/background-refresh';
 import { hydrateFavouriteStops } from '@/lib/favourite-stops';
+import { hydrateFavouriteTrips } from '@/lib/favourite-trips';
 import { hydrateRecentStops } from '@/lib/recent-stops';
 import { hydrateSelection, selectionStore } from '@/lib/selection';
 import { syncUpdates, watchForUpdatesOnResume } from '@/lib/updates';
@@ -99,7 +100,7 @@ export default function RootLayout() {
     const init = async () => {
       try {
         const hasStoredSelection = await hydrateSelection();
-        await Promise.all([hydratePreferences(), hydrateRecentStops(), hydrateFavouriteStops()]);
+        await Promise.all([hydratePreferences(), hydrateRecentStops(), hydrateFavouriteStops(), hydrateFavouriteTrips()]);
 
         // On the very first launch there is no saved filter — defaulting to the
         // whole fleet can lag the first paint on a phone. Start with trams only;
@@ -151,6 +152,7 @@ export default function RootLayout() {
           <Stack.Screen name="alerts" options={MODAL_OPTIONS} />
           <Stack.Screen name="settings" options={MODAL_OPTIONS} />
           <Stack.Screen name="favourites" options={MODAL_OPTIONS} />
+          <Stack.Screen name="new-trip" options={SEARCH_MODAL_OPTIONS} />
           <Stack.Screen name="search" options={SEARCH_MODAL_OPTIONS} />
         </Stack>
       </ThemeProvider>

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { usePoll } from '@/hooks/use-poll';
-import { fetchFavouriteBoards, lastPosition, rememberPosition, type FavouriteBoard } from '@/lib/favourite-boards';
+import { fetchFavouriteBoards, lastPosition, rememberPosition, type FavouriteBoard, type TripBoard } from '@/lib/favourite-boards';
 import type { FavouriteStop } from '@/lib/favourite-stops';
+import type { FavouriteTrip } from '@/lib/favourite-trips';
 import { syncDeparturesWidget } from '@/lib/widgets';
 
 /** Often enough for the sheet's countdowns; the widget's timeline covers the gaps. */
@@ -18,15 +19,16 @@ const REFRESH_MS = 60_000;
  */
 export function useFavouriteBoards(
   favourites: FavouriteStop[],
+  trips: FavouriteTrip[],
   userPosition: { lat: number; lon: number } | null,
 ) {
   const shown = favourites;
-  // Ids only: renaming or reordering a favourite re-syncs the widget below
-  // without fetching every board again.
-  const key = [...shown.map((stop) => stop.id)].sort().join(',');
+  // Ids only: renaming or reordering re-syncs the widget below without
+  // fetching every board again.
+  const key = [...shown.map((stop) => stop.id), ...trips.map((trip) => `trip:${trip.id}`)].sort().join(',');
 
-  const boards = usePoll((signal) => fetchFavouriteBoards(shown, signal), REFRESH_MS, {
-    enabled: shown.length > 0,
+  const boards = usePoll((signal) => fetchFavouriteBoards(shown, trips, signal), REFRESH_MS, {
+    enabled: shown.length + trips.length > 0,
     key,
   });
 
@@ -45,15 +47,23 @@ export function useFavouriteBoards(
   // Only boards for the stops currently starred: a poll still in flight from
   // before an unstar must not put the old stop back on the widget.
   const current = useMemo(
-    () => (boards.data ?? []).filter((board) => shown.some((stop) => stop.id === board.stop.id)),
+    () => (boards.data?.stops ?? []).filter((board) => shown.some((stop) => stop.id === board.stop.id)),
     [boards.data, shown],
+  );
+  const tripBoards = useMemo(
+    () => (boards.data?.trips ?? []).filter((board) => trips.some((trip) => trip.id === board.trip.id)),
+    [boards.data, trips],
   );
 
   useEffect(() => {
-    syncDeparturesWidget(shown, current, position, boards.receivedAt ?? Date.now());
-  }, [current, shown, position, boards.receivedAt]);
+    syncDeparturesWidget(
+      { favourites: shown, boards: current, trips, tripBoards },
+      position,
+      boards.receivedAt ?? Date.now(),
+    );
+  }, [current, shown, trips, tripBoards, position, boards.receivedAt]);
 
-  return { boards: current, receivedAt: boards.receivedAt };
+  return { boards: current, tripBoards, receivedAt: boards.receivedAt };
 }
 
-export type { FavouriteBoard };
+export type { FavouriteBoard, TripBoard };

@@ -1102,14 +1102,40 @@ class GtfsStore {
   }
 
   /**
+   * When each trip calling at any of `stopIds` gets there: trip index →
+   * `[arrivalSeconds, stopId]` pairs in time order. A loop can call twice.
+   */
+  #arrivalsAt(stopIds) {
+    const arrivals = new Map();
+    for (const stopId of stopIds) {
+      for (const row of this.departuresByStop.get(stopId) ?? []) {
+        const trip = this.stopTimes.trip[row];
+        const arrival = this.stopTimes.arrival[row] >= 0 ? this.stopTimes.arrival[row] : this.stopTimes.departure[row];
+        let list = arrivals.get(trip);
+        if (!list) arrivals.set(trip, (list = []));
+        list.push([arrival, stopId]);
+      }
+    }
+    for (const list of arrivals.values()) list.sort((a, b) => a[0] - b[0]);
+    return arrivals;
+  }
+
+  /**
    * Upcoming departures from a stop, filtered to services running today.
    *
+   * With `to`, only the departures whose trip goes on to one of those stops,
+   * each carrying when it gets there — a saved journey ("the 2 or the 4 to
+   * Reja") is exactly this question. No stop sequence is needed: the same
+   * trip's first arrival at the destination after it leaves here is, by the
+   * timetable's own clock, the later call.
+   *
    * @param {string} stopId
-   * @param {{ limit?: number, now?: Date, horizonSeconds?: number }} options
+   * @param {{ limit?: number, now?: Date, horizonSeconds?: number, to?: string[] }} options
    */
-  getDepartures(stopId, { limit = 20, now = new Date(), horizonSeconds = 86_400 } = {}) {
+  getDepartures(stopId, { limit = 20, now = new Date(), horizonSeconds = 86_400, to = null } = {}) {
     const rows = this.departuresByStop.get(stopId);
     if (!rows || !rows.length) return [];
+    const destinations = to?.length ? this.#arrivalsAt(to.filter((id) => id !== stopId)) : null;
 
     const localNow = inWarsaw(now);
     const secondsNow =
@@ -1138,7 +1164,13 @@ class GtfsStore {
         const departure = this.stopTimes.departure[rows[i]];
         // rows is sorted, so the first departure past the horizon ends the scan.
         if (departure - offset - secondsNow > horizonSeconds) break;
-        const trip = this.trips[this.stopTimes.trip[rows[i]]];
+        const tripIndex = this.stopTimes.trip[rows[i]];
+        let reaches = null;
+        if (destinations) {
+          reaches = destinations.get(tripIndex)?.find(([arrival]) => arrival > departure) ?? null;
+          if (!reaches) continue;
+        }
+        const trip = this.trips[tripIndex];
         if (!this.isServiceActive(trip.serviceId, serviceDate)) continue;
         found.push({
           line: trip.line,
@@ -1148,6 +1180,13 @@ class GtfsStore {
           inSeconds: departure - offset - secondsNow,
           tripId: trip.id,
           serviceDay: label,
+          ...(reaches
+            ? {
+                arrival: secondsToTime(reaches[0]),
+                arrivalInSeconds: reaches[0] - offset - secondsNow,
+                arrivalStopId: reaches[1],
+              }
+            : null),
         });
       }
       return found;

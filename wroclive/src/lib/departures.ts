@@ -113,3 +113,23 @@ export function runningVehicle<V extends RunningVehicle>(departure: Departure, v
     ) ?? null
   );
 }
+
+/**
+ * Seconds until a saved trip's departure reaches the destination, or null on
+ * a board that was not asked for one.
+ *
+ * The timetable's arrival, moved by however late the vehicle is running at
+ * the origin. A delay does not stay constant along a route, but it is the one
+ * the rider can see, and "on time at Reja" from a tram already four minutes
+ * late is the answer that makes someone late for school.
+ */
+export const arrivalSeconds = (departure: Departure) =>
+  departure.arrivalInSeconds === undefined
+    ? null
+    : departure.arrivalInSeconds + (departureSeconds(departure) - departure.inSeconds);
+
+/** "7:54" — a wall-clock time `seconds` from `now`, the way a rider says it. */
+export function clockIn(seconds: number, now = Date.now()) {
+  const date = new Date(now + seconds * 1_000);
+  return `${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
