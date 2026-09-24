@@ -85,3 +85,31 @@ export function boardLines(departures: Departure[]): Pick<Departure, 'line' | 't
   }
   return [...lines.values()].sort((a, b) => compareLines(a.line, b.line));
 }
+
+/** The part of a map vehicle a departure is matched against. */
+type RunningVehicle = { id: string; line: string; trip: { tripId?: string | null } | null; tripId?: string | null };
+
+/**
+ * The vehicle already driving this departure, when it is on the road.
+ *
+ * The server's own live match (`vehicleId`) comes first, but it only exists
+ * once the vehicle's next stop *is* this one. Before that the vehicle is still
+ * found by the run it was matched to — so a tram five stops out is one tap
+ * away, not only the one pulling in. Tomorrow's departures never match: GTFS
+ * reuses a trip id every day it runs, and today's vehicle on it is not
+ * tomorrow's. The run is inferred (invariant 18), so the line must agree too.
+ */
+export function runningVehicle<V extends RunningVehicle>(departure: Departure, vehicles: readonly V[]): V | null {
+  if (departure.vehicleId) {
+    const live = vehicles.find((vehicle) => vehicle.id === departure.vehicleId);
+    if (live) return live;
+  }
+  if (!departure.tripId || departure.serviceDay === 'tomorrow') return null;
+  return (
+    vehicles.find(
+      (vehicle) =>
+        vehicle.line === departure.line &&
+        (vehicle.trip?.tripId === departure.tripId || vehicle.tripId === departure.tripId),
+    ) ?? null
+  );
+}

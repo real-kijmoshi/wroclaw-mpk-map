@@ -250,7 +250,8 @@ export type Vehicle = {
 
 /** The deliberately small vehicle record repeated on every map refresh. */
 export type FleetVehicle = Omit<Vehicle, 'trip' | 'updatedAt'> & {
-  trip: Pick<VehicleTrip, 'headsign' | 'towards'> | null;
+  /** `tripId` is absent from servers that predate it; a stop board uses it to find a departure's vehicle. */
+  trip: (Pick<VehicleTrip, 'headsign' | 'towards'> & Partial<Pick<VehicleTrip, 'tripId'>>) | null;
 };
 
 export type Locations = {
@@ -530,6 +531,7 @@ export function normaliseLocations(payload: unknown): Locations {
       ? {
           headsign: typeof vehicle.trip.headsign === 'string' ? vehicle.trip.headsign : null,
           towards: typeof vehicle.trip.towards === 'string' ? vehicle.trip.towards : null,
+          tripId: optionalString(vehicle.trip.tripId),
         }
       : null,
     operator: optionalString(vehicle.operator),

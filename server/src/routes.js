@@ -117,6 +117,10 @@ const toMapVehicle = (vehicle) => {
       ? {
           headsign: vehicle.trip.headsign ?? null,
           towards: vehicle.trip.towards ?? null,
+          // The run the vehicle was matched to (inferred — invariant 18), so a
+          // departure on a stop board can find the vehicle already driving it.
+          // Additive: clients that predate it ignore the field.
+          tripId: vehicle.trip.tripId ?? null,
         }
       : vehicle.destination != null
         ? { headsign: vehicle.destination, towards: null }

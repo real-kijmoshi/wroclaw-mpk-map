@@ -406,19 +406,33 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding-top: 6px;
+    /* 5 + half the 15px plate = the 12.5 STOP_DOT_CENTRE_Y anchors on. */
+    padding-top: 5px;
     box-sizing: border-box;
     pointer-events: none;
   }
+  /* The native surface's stop: a dark rounded plate, a white keyline and a
+     white centre. Square so it is never read as a zoomed-out vehicle's round
+     dot; the keyline keeps it off the tiles in either theme. */
   .stop__dot {
-    width: 13px; height: 13px;
+    position: relative;
+    width: 15px; height: 15px;
     box-sizing: border-box;
-    border-radius: 50%;
-    background: #ffffff;
-    border: 3.5px solid ${dark ? '#e5e5ea' : '#1C1C1E'};
+    border-radius: 5px;
+    background: #1C1C1E;
+    border: 2px solid #ffffff;
     box-shadow: 0 1px 3px rgba(0,0,0,0.45);
     pointer-events: auto;
     cursor: pointer;
+  }
+  .stop__dot::after {
+    content: '';
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 5px; height: 5px;
+    margin: -2.5px 0 0 -2.5px;
+    border-radius: 50%;
+    background: #ffffff;
   }
   .stop__name {
     display: none;
@@ -447,7 +461,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     -webkit-line-clamp: 2;
     line-clamp: 2;
   }
-  .stop--selected .stop__dot { transform: scale(1.25); border-width: 4px; }
+  .stop--selected .stop__dot { transform: scale(1.3); }
   .stop--selected .stop__name { font-weight: 800; }
   /*
    * The icon box is 104x56 — room for a two-line name — and Leaflet makes the

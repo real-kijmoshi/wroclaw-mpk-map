@@ -64,8 +64,11 @@ export function StopSummary({
 
   return (
     <View style={styles.summary}>
+      {/* The map's stop plate, larger: the sheet names the thing that was tapped. */}
       <View style={[styles.mark, { backgroundColor: theme.backgroundElement }]}>
-        <View style={[styles.markInner, { borderColor: theme.accent }]} />
+        <View style={[styles.markPlate, { backgroundColor: theme.text }]}>
+          <View style={[styles.markPip, { backgroundColor: theme.backgroundElement }]} />
+        </View>
       </View>
 
       <View style={styles.summaryText}>
@@ -102,6 +105,10 @@ export type StopDetailsProps = {
   /** Seconds since `data` was fetched; the board counts down by this much between polls. */
   ageSeconds?: number;
   onRetry?: () => void;
+  /** Whether this departure's vehicle is already on the road, so a tap can show it. */
+  canOpenVehicle?: (departure: Departure) => boolean;
+  /** Takes the map to the vehicle driving this departure and selects it. */
+  onOpenVehicle?: (departure: Departure) => void;
 };
 
 /** A little more than one 30 s departures poll; past it the clock alone is not trusted. */
@@ -110,6 +117,8 @@ const MAX_LOCAL_COUNTDOWN_SECONDS = 40;
 const TIME_ROWS = 15;
 /** Departures shown per route in the grouped view: the next one, and the two after it. */
 const ROUTE_DEPARTURES = 3;
+/** A small line badge (26) inside its 2pt ring and 2pt padding: every control in the row is this tall. */
+const CONTROL_HEIGHT = 34;
 
 /**
  * The next departures from one stop — the board, as it would read at the stop,
@@ -121,7 +130,17 @@ const ROUTE_DEPARTURES = 3;
  * else. The filter belongs to this stop and this visit, so it resets with the
  * selection rather than being remembered; the view is a habit, and is.
  */
-export function StopDetails({ data, loading, error, stop, userPosition, ageSeconds = 0, onRetry }: StopDetailsProps) {
+export function StopDetails({
+  data,
+  loading,
+  error,
+  stop,
+  userPosition,
+  ageSeconds = 0,
+  onRetry,
+  canOpenVehicle,
+  onOpenVehicle,
+}: StopDetailsProps) {
   const theme = useTheme();
   const { boardView } = usePreferences();
   const [lineFilter, setLineFilter] = useState<string | null>(null);
@@ -203,50 +222,33 @@ export function StopDetails({ data, loading, error, stop, userPosition, ageSecon
         </View>
       ) : (
         <>
+          {/* One row, not two: the filter and the view are both "how do I
+              want to read this board", and stacked they pushed the first
+              departure half a screen down. The chips scroll; the toggle stays. */}
           <View style={styles.controls}>
-            <View style={[styles.segmented, { backgroundColor: theme.backgroundElement }]} accessibilityRole="tablist">
-              {(
-                [
-                  ['time', 'Kolejno'],
-                  ['route', 'Wg linii'],
-                ] as const
-              ).map(([view, title]) => {
-                const selected = boardView === view;
-                return (
-                  <Pressable
-                    key={view}
-                    onPress={() => setView(view)}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected }}
-                    style={[styles.segment, selected && { backgroundColor: theme.backgroundCard }]}>
-                    <ThemedText type="footnote" weight={selected ? 'semibold' : 'regular'}>
-                      {title}
-                    </ThemedText>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-
-          {lines.length > 1 && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.chips}
-              accessibilityLabel="Filtruj linie">
-              <Pressable
-                onPress={() => setLineFilter(null)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: !activeFilter }}
-                style={[
-                  styles.chip,
-                  { backgroundColor: !activeFilter ? theme.text : theme.backgroundElement },
-                ]}>
-                <ThemedText type="footnote" weight="semibold" color={!activeFilter ? theme.background : theme.text}>
-                  Wszystkie
-                </ThemedText>
-              </Pressable>
-              {lines.map(({ line, type }) => {
+            {lines.length > 1 ? (
+              <ScrollView
+                horizontal
+                style={styles.chipScroll}
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.chips}
+                accessibilityLabel="Filtruj linie">
+                <Pressable
+                  onPress={() => {
+                    tapped();
+                    setLineFilter(null);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: !activeFilter }}
+                  style={[
+                    styles.chip,
+                    { backgroundColor: theme.backgroundElement, borderColor: !activeFilter ? theme.text : 'transparent' },
+                  ]}>
+                  <ThemedText type="footnote" weight="semibold">
+                    Wszystkie
+                  </ThemedText>
+                </Pressable>
+                {lines.map(({ line, type }) => {
                 const selected = activeFilter === line;
                 return (
                   <Pressable
@@ -268,8 +270,37 @@ export function StopDetails({ data, loading, error, stop, userPosition, ageSecon
                   </Pressable>
                 );
               })}
-            </ScrollView>
-          )}
+              </ScrollView>
+            ) : (
+              <View style={styles.chipScroll} />
+            )}
+
+            <View style={[styles.segmented, { backgroundColor: theme.backgroundElement }]} accessibilityRole="tablist">
+              {(
+                [
+                  ['time', 'Kolejno'],
+                  ['route', 'Wg linii'],
+                ] as const
+              ).map(([view, title]) => {
+                const selected = boardView === view;
+                return (
+                  <Pressable
+                    key={view}
+                    onPress={() => setView(view)}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected }}
+                    style={[styles.segment, selected && { backgroundColor: theme.backgroundCard }]}>
+                    <ThemedText
+                      type="caption"
+                      weight={selected ? 'semibold' : 'regular'}
+                      themeColor={selected ? 'text' : 'textSecondary'}>
+                      {title}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
 
           {boardView === 'route' ? (
             <View style={[styles.board, { backgroundColor: theme.backgroundCard }]}>
@@ -283,6 +314,11 @@ export function StopDetails({ data, loading, error, stop, userPosition, ageSecon
                   seconds={route.departures.slice(0, ROUTE_DEPARTURES).map(secondsTo)}
                   live={Boolean(route.departures[0]?.realtime)}
                   walk={walk}
+                  onOpen={
+                    onOpenVehicle && route.departures[0] && canOpenVehicle?.(route.departures[0])
+                      ? () => onOpenVehicle(route.departures[0])
+                      : undefined
+                  }
                 />
               ))}
             </View>
@@ -293,16 +329,22 @@ export function StopDetails({ data, loading, error, stop, userPosition, ageSecon
                 const eta = etaParts(seconds);
                 const scheduled = formatScheduled(departure.departure);
                 const leave = walk === null ? null : leaveLabel(leaveInSeconds(seconds, walk));
+                const openable = Boolean(onOpenVehicle && canOpenVehicle?.(departure));
 
                 return (
-                  <View
+                  <Pressable
                     key={`${departure.tripId}-${departure.departure}`}
-                    style={[
+                    disabled={!openable}
+                    onPress={() => onOpenVehicle?.(departure)}
+                    accessibilityRole={openable ? 'button' : undefined}
+                    accessibilityHint={openable ? 'Pokazuje pojazd na mapie' : undefined}
+                    style={({ pressed }) => [
                       styles.row,
                       index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.separator },
                       // Still listed — it is on the board at the stop too — but it
                       // steps back so the first catchable one leads.
                       leave?.missed && styles.missed,
+                      pressed && styles.pressed,
                     ]}>
                     <LineBadge line={departure.line} type={departure.type} size="small" />
 
@@ -340,7 +382,8 @@ export function StopDetails({ data, loading, error, stop, userPosition, ageSecon
                         </ThemedText>
                       )}
                     </View>
-                  </View>
+                    <OpenMark visible={openable} />
+                  </Pressable>
                 );
               })}
             </View>
@@ -363,6 +406,7 @@ function RouteRow({
   seconds,
   live,
   walk,
+  onOpen,
 }: {
   first: boolean;
   line: string;
@@ -371,6 +415,8 @@ function RouteRow({
   seconds: number[];
   live: boolean;
   walk: number | null;
+  /** Present when the next departure's vehicle is on the road. */
+  onOpen?: () => void;
 }) {
   const theme = useTheme();
   const [next, ...later] = seconds;
@@ -382,12 +428,17 @@ function RouteRow({
     .join(', ');
 
   return (
-    <View
-      style={[
+    <Pressable
+      disabled={!onOpen}
+      onPress={onOpen}
+      style={({ pressed }) => [
         styles.row,
         !first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.separator },
+        pressed && styles.pressed,
       ]}
       accessible
+      accessibilityRole={onOpen ? 'button' : undefined}
+      accessibilityHint={onOpen ? 'Pokazuje pojazd na mapie' : undefined}
       accessibilityLabel={`Linia ${line}${headsign ? ` do ${headsign}` : ''}: ${eta.value} ${eta.unit}${laterText ? `, potem ${laterText}` : ''}`}>
       <LineBadge line={line} type={type} size="small" />
       <View style={styles.rowText}>
@@ -419,6 +470,20 @@ function RouteRow({
           </ThemedText>
         )}
       </View>
+      <OpenMark visible={Boolean(onOpen)} />
+    </Pressable>
+  );
+}
+
+/**
+ * The chevron on a row whose vehicle can be shown. The space is kept when it
+ * cannot, so the countdowns stay in one column down the board.
+ */
+function OpenMark({ visible }: { visible: boolean }) {
+  const theme = useTheme();
+  return (
+    <View style={styles.openMark}>
+      {visible && <Ionicons name="chevron-forward" size={16} color={theme.textTertiary} />}
     </View>
   );
 }
@@ -426,24 +491,35 @@ function RouteRow({
 const styles = StyleSheet.create({
   summary: { flexDirection: 'row', alignItems: 'center', gap: Space.md, paddingBottom: Space.md, minHeight: 48 },
   mark: { width: 38, height: 38, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
-  markInner: { width: 14, height: 14, borderRadius: Radius.pill, borderWidth: 4 },
+  markPlate: { width: 16, height: 16, borderRadius: 4.5, alignItems: 'center', justifyContent: 'center' },
+  markPip: { width: 6, height: 6, borderRadius: Radius.pill },
   summaryText: { flex: 1, gap: 1, minWidth: 0 },
   scroll: { flex: 1 },
   content: { paddingHorizontal: Space.lg, paddingBottom: Space.xxl, gap: Space.md },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Space.xl, gap: Space.sm },
   empty: { borderRadius: Radius.lg, padding: Space.lg, gap: Space.xs },
-  controls: { flexDirection: 'row' },
-  segmented: { flex: 1, flexDirection: 'row', borderRadius: Radius.md, padding: 2 },
+  controls: { flexDirection: 'row', alignItems: 'center', gap: Space.sm },
+  chipScroll: { flex: 1 },
+  segmented: { flexDirection: 'row', borderRadius: Radius.sm + 2, padding: 2 },
   segment: {
-    flex: 1,
-    minHeight: 32,
+    height: CONTROL_HEIGHT - 4,
+    paddingHorizontal: Space.sm + 2,
     borderRadius: Radius.sm,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  chips: { gap: Space.xs, alignItems: 'center', paddingRight: Space.lg },
-  chip: { minHeight: 32, paddingHorizontal: Space.md, borderRadius: Radius.pill, justifyContent: 'center' },
+  chips: { gap: Space.xs, alignItems: 'center', paddingRight: Space.sm },
+  // The same height and selection ring as a line chip, so "Wszystkie" reads as
+  // one of the choices rather than a black button shouting over them.
+  chip: {
+    height: CONTROL_HEIGHT,
+    paddingHorizontal: Space.md,
+    borderRadius: Radius.sm,
+    borderWidth: 2,
+    justifyContent: 'center',
+  },
   lineChip: { borderWidth: 2, borderRadius: Radius.sm, padding: 2 },
+  openMark: { width: 16, marginLeft: -Space.xs, alignItems: 'flex-end' },
   dimmed: { opacity: 0.45 },
   board: { borderRadius: Radius.lg, paddingHorizontal: Space.lg },
   row: {
