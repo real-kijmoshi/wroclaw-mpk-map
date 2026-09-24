@@ -246,7 +246,10 @@ nearer explanation is a different departure, and guessing produces a confident
 matches, `scheduled` is null everywhere and only `etaSeconds` — remaining
 scheduled running time from the vehicle's real position — is served. Never
 substitute the variant's own sample times there; they belong to some other
-departure. This all rests on every trip of a shape sharing one relative profile,
+departure. Early and late are not scored alike (`EARLY_WEIGHT`): vehicles here
+run late constantly and early almost never, so a 143 thirteen minutes late was
+read as the next run "7 min przed czasem", with that run's times on every stop.
+The weight is dropped at the first stop, where waiting early is a layover. This all rests on every trip of a shape sharing one relative profile,
 which is true of this feed and is what makes the offsets reusable.
 
 **19. `/map` is a second client, and the app's rules apply to it too.**

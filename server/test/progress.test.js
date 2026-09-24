@@ -6,6 +6,7 @@ const { before, describe, it } = require('node:test');
 const { GtfsStore } = require('../src/gtfs/store');
 const { inWarsaw } = require('../src/gtfs/parse');
 const {
+  EARLY_WEIGHT,
   MAX_DELAY_SECONDS,
   describeVehicle,
   matchTrip,
@@ -614,6 +615,46 @@ describe('matchTrip binary search vs linear scan (differential)', () => {
     assertSameTrip([28_800 - MAX_DELAY_SECONDS - 100], { now: morning, label: 'way late' });
     assertSameTrip([0, 86_400], { now: morning, label: 'dead timetable' });
     assertSameTrip([], { now: morning, label: 'no trips at all' });
+  });
+});
+
+describe('matchTrip prefers late over early', () => {
+  // Observed live on 2026-09-24: a 143 at Klimasa at 15:49, timetabled there
+  // at 15:36 and 15:56. It was the 15:36 run 13 minutes late; scoring early
+  // and late alike read it as the 15:56 run "7 min przed czasem" and printed
+  // that run's times on every stop ahead.
+  const now = new Date('2026-09-24T15:49:00+02:00');
+  const at = (hh, mm) => hh * 3600 + mm * 60;
+  // Klimasa sits 20 minutes into the run.
+  const progressOffset = 20 * 60;
+  const starts = [at(15, 16), at(15, 36)];
+
+  it('reads a vehicle between two runs as the earlier one running late', () => {
+    const { gtfs, variant } = makeVariant(starts);
+    assert.deepEqual(asResult(matchTrip(gtfs, variant, progressOffset, now, { earlyWeight: EARLY_WEIGHT })), {
+      tripId: 't0',
+      start: at(15, 16),
+      delaySeconds: 13 * 60,
+      serviceDay: 'today',
+    });
+  });
+
+  it('still matches a vehicle that really is slightly early', () => {
+    // At 15:54 the 15:36 run is due at 15:56: two minutes early (cost 6)
+    // beats the 15:16 run eighteen minutes late.
+    const { gtfs, variant } = makeVariant(starts);
+    const early = new Date('2026-09-24T15:54:00+02:00');
+    assert.deepEqual(asResult(matchTrip(gtfs, variant, progressOffset, early, { earlyWeight: EARLY_WEIGHT })), {
+      tripId: 't1',
+      start: at(15, 36),
+      delaySeconds: -2 * 60,
+      serviceDay: 'today',
+    });
+  });
+
+  it('scores early and late alike without a weight (layover at the first stop)', () => {
+    const { gtfs, variant } = makeVariant(starts);
+    assert.equal(asResult(matchTrip(gtfs, variant, progressOffset, now)).tripId, 't1');
   });
 });
 
