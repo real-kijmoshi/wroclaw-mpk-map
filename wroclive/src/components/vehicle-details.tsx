@@ -6,8 +6,10 @@ import { ThemedText } from './themed-text';
 import { Motion, Radius, Space } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
 import type { Vehicle, VehicleDetail, VehicleTripDetail } from '@/lib/api';
-import { AT_STOP_ETA, etaParts, formatDelay, formatScheduled } from '@/lib/format';
+import type { ArrivalAlert } from '@/lib/arrival-alerts';
+import { AT_STOP_ETA, etaParts, formatDelay, formatScheduled, plural } from '@/lib/format';
 import { colorFor } from '@/lib/lines';
+import { tripProgress } from '@/lib/trip-progress';
 
 /**
  * The selected vehicle, as the sheet's header.
@@ -91,14 +93,13 @@ export type VehicleDetailsProps = {
   /** Recentres the already-highlighted route without leaving the live view. */
   onOpenRoute: () => void;
   /**
-   * Arms or clears the arrival alert for a stop. Absent where local
-   * notifications are not available, and then the rows are not buttons.
+   * Arms (asking: waiting here, or getting off here) or clears the alert for a
+   * stop. Absent where local notifications are not available, and then the
+   * rows are not buttons.
    */
   onStopPress?: (stop: { id: string; name: string }) => void;
-  /** The stop an arrival alert is armed for on this vehicle, if any. */
-  alertStopId?: string | null;
-  /** Its name, for the card that says what the alert will do. */
-  alertStopName?: string | null;
+  /** What is armed on *this* vehicle, if anything. */
+  alert?: ArrivalAlert | null;
   onDisarm?: () => void;
 };
 
@@ -117,8 +118,7 @@ export function VehicleDetails({
   error,
   onOpenRoute,
   onStopPress,
-  alertStopId = null,
-  alertStopName = null,
+  alert = null,
   onDisarm,
 }: VehicleDetailsProps) {
   const theme = useTheme();
@@ -153,6 +153,9 @@ export function VehicleDetails({
   const etaFor = (stop: { id: string; etaSeconds: number | null }) =>
     stop.id === standingAt ? AT_STOP_ETA : etaParts(agedEta(stop.etaSeconds, ageSeconds));
   const nextEta = nextStop ? etaFor(nextStop) : null;
+  const alertStopId = alert?.stopId ?? null;
+  const riding = alert?.kind === 'trip' ? tripProgress(trip, alert.stopId) : null;
+  const destinationIndex = riding ? stops.findIndex((stop) => stop.id === alertStopId) : -1;
 
   return (
     <ScrollView
@@ -212,33 +215,47 @@ export function VehicleDetails({
         <View style={styles.timelineBlock}>
         {/* Armed: say what will happen and offer the way out, rather than
             leaving a small bell on one row to explain itself. */}
-        {alertStopId && alertStopName ? (
+        {alert ? (
           <View style={[styles.alertCard, { backgroundColor: theme.backgroundCard }]}>
-            <Ionicons name="notifications" size={18} color={theme.text} />
-            <View style={styles.alertText}>
-              <ThemedText type="callout" weight="semibold" numberOfLines={1}>
-                {alertStopName}
-              </ThemedText>
-              <ThemedText type="footnote" themeColor="textSecondary">
-                Powiadomimy Cię ok. 2 min przed przyjazdem.
-              </ThemedText>
-            </View>
-            {onDisarm && (
-              <Pressable
-                onPress={onDisarm}
-                accessibilityRole="button"
-                accessibilityLabel="Wyłącz powiadomienie o przyjeździe"
-                hitSlop={8}
-                style={({ pressed }) => [styles.alertAction, pressed && styles.pressed]}>
-                <ThemedText type="footnote" weight="semibold" color={theme.accent}>
-                  Wyłącz
+            <View style={styles.alertRow}>
+              <Ionicons name={alert.kind === 'trip' ? 'flag' : 'notifications'} size={18} color={theme.text} />
+              <View style={styles.alertText}>
+                <ThemedText type="callout" weight="semibold" numberOfLines={1}>
+                  {alert.kind === 'trip' ? `Wysiadasz: ${alert.stopName}` : alert.stopName}
                 </ThemedText>
-              </Pressable>
+                <ThemedText type="footnote" themeColor="textSecondary">
+                  {alert.kind === 'trip'
+                    ? riding?.arrived
+                      ? 'To Twój przystanek.'
+                      : riding
+                        ? `${riding.stopsAway === 1 ? 'Następny przystanek' : `Jeszcze ${riding.stopsAway} ${plural(riding.stopsAway, ['przystanek', 'przystanki', 'przystanków'])}`} · powiadomimy przed wysiadką.`
+                        : 'Powiadomimy Cię przed wysiadką.'
+                    : 'Powiadomimy Cię ok. 2 min przed przyjazdem.'}
+                </ThemedText>
+              </View>
+              {onDisarm && (
+                <Pressable
+                  onPress={onDisarm}
+                  accessibilityRole="button"
+                  accessibilityLabel={alert.kind === 'trip' ? 'Zakończ śledzenie przejazdu' : 'Wyłącz powiadomienie o przyjeździe'}
+                  hitSlop={8}
+                  style={({ pressed }) => [styles.alertAction, pressed && styles.pressed]}>
+                  <ThemedText type="footnote" weight="semibold" color={theme.accent}>
+                    {alert.kind === 'trip' ? 'Zakończ' : 'Wyłącz'}
+                  </ThemedText>
+                </Pressable>
+              )}
+            </View>
+            {riding && (
+              <TripBar
+                done={riding.arrived ? 1 : 1 - riding.stopsAway / Math.max(alert.totalStops ?? 1, riding.stopsAway, 1)}
+                color={lineColor}
+              />
             )}
           </View>
         ) : onStopPress && (
           <ThemedText type="footnote" themeColor="textSecondary">
-            Dotknij przystanek, aby dostać powiadomienie 2 min przed przyjazdem.
+            Dotknij przystanek, jeśli na nim czekasz albo na nim wysiadasz — powiadomimy Cię w porę.
           </ThemedText>
         )}
         <View style={[styles.timeline, { backgroundColor: theme.backgroundCard }]}>
@@ -247,6 +264,8 @@ export function VehicleDetails({
             const scheduled = formatScheduled(stop.scheduled);
             const first = index === 0;
             const alerting = stop.id === alertStopId;
+            // Riding: the stops past the rider's own are not their journey.
+            const beyond = destinationIndex >= 0 && index > destinationIndex;
 
             return (
               <Pressable
@@ -258,11 +277,11 @@ export function VehicleDetails({
                 accessibilityHint={
                   onStopPress
                     ? alerting
-                      ? 'Wyłącza powiadomienie o przyjeździe'
-                      : 'Włącza powiadomienie 2 minuty przed przyjazdem'
+                      ? 'Wyłącza powiadomienie'
+                      : 'Pozwala wybrać powiadomienie o przyjeździe albo o wysiadce'
                     : undefined
                 }
-                style={({ pressed }) => [styles.stopRow, pressed && styles.pressed]}>
+                style={({ pressed }) => [styles.stopRow, beyond && styles.beyond, pressed && styles.pressed]}>
                 <View style={styles.rail}>
                   {index > 0 && <View style={[styles.railLine, { backgroundColor: lineColor }]} />}
                   <View
@@ -290,10 +309,10 @@ export function VehicleDetails({
                     </ThemedText>
                     {alerting && (
                       <Ionicons
-                        name="notifications"
+                        name={alert?.kind === 'trip' ? 'flag' : 'notifications'}
                         size={14}
                         color={theme.textSecondary}
-                        accessibilityLabel="Powiadomienie włączone"
+                        accessibilityLabel={alert?.kind === 'trip' ? 'Tu wysiadasz' : 'Powiadomienie włączone'}
                       />
                     )}
                   </View>
@@ -337,6 +356,20 @@ export function VehicleDetails({
         <Ionicons name="chevron-forward" size={16} color={theme.textTertiary} />
       </Pressable>
     </ScrollView>
+  );
+}
+
+/** How much of the ride is behind the rider — the Live Activity's bar, in the sheet. */
+function TripBar({ done, color }: { done: number; color: string }) {
+  const theme = useTheme();
+  const fraction = Math.min(1, Math.max(0, done));
+  return (
+    <View
+      style={[styles.tripTrack, { backgroundColor: theme.backgroundElement }]}
+      accessibilityRole="progressbar"
+      accessibilityValue={{ min: 0, max: 100, now: Math.round(fraction * 100) }}>
+      <View style={[styles.tripFill, { width: `${Math.max(fraction * 100, 4)}%`, backgroundColor: color }]} />
+    </View>
   );
 }
 
@@ -545,13 +578,15 @@ const styles = StyleSheet.create({
   stopNameText: { flexShrink: 1 },
   timelineBlock: { gap: Space.sm },
   alertCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: Space.md,
     borderRadius: Radius.lg,
     paddingHorizontal: Space.lg,
     paddingVertical: Space.md,
   },
+  alertRow: { flexDirection: 'row', alignItems: 'center', gap: Space.md },
+  tripTrack: { height: 6, borderRadius: Radius.pill, overflow: 'hidden' },
+  tripFill: { height: '100%', borderRadius: Radius.pill },
+  beyond: { opacity: 0.4 },
   alertText: { flex: 1, gap: 1, minWidth: 0 },
   alertAction: { minHeight: 32, justifyContent: 'center' },
   eta: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },

@@ -5,26 +5,26 @@
   "license": "SEE LICENSE IN LICENSE",
   "private": true,
   "dependencies": {
-    "@expo/ui": "~57.0.19",
+    "@expo/ui": "~57.0.20",
     "@expo/vector-icons": "^15.0.2",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "expo": "~57.0.24",
-    "expo-background-task": "~57.0.19",
+    "expo": "~57.0.25",
+    "expo-background-task": "~57.0.20",
     "expo-blur": "~57.0.3",
     "expo-constants": "~57.0.19",
     "expo-dev-client": "~57.0.19",
     "expo-font": "~57.0.4",
-    "expo-glass-effect": "~57.0.3",
+    "expo-glass-effect": "~57.0.4",
     "expo-haptics": "~57.0.3",
-    "expo-linking": "~57.0.10",
-    "expo-location": "~57.0.19",
-    "expo-notifications": "~57.0.20",
+    "expo-linking": "~57.0.11",
+    "expo-location": "~57.0.20",
+    "expo-notifications": "~57.0.21",
     "expo-quick-actions": "~6.0.2",
-    "expo-router": "~57.0.22",
+    "expo-router": "~57.0.23",
     "expo-splash-screen": "~57.0.9",
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.4",
-    "expo-task-manager": "~57.0.19",
+    "expo-task-manager": "~57.0.20",
     "expo-updates": "~57.0.23",
     "expo-web-browser": "~57.0.3",
     "expo-widgets": "~57.0.20",
@@ -49,7 +49,10 @@
   "overrides": {
     "metro": "0.84.5",
     "metro-config": "0.84.5",
-    "metro-transform-worker": "0.84.5"
+    "metro-transform-worker": "0.84.5",
+    "expo-quick-actions": {
+      "@expo/image-utils": "^0.11.5"
+    }
   },
   "scripts": {
     "start": "expo start",

@@ -574,7 +574,11 @@ const StopMarker = memo(function StopMarker({
         onPress={press}
         accessibilityLabel={`Przystanek ${stop.name}`}>
         <View style={styles.stopDotBox}>
-          <View style={[styles.stopDot, { borderColor: tint }, selected && styles.stopDotSelected]} />
+          {/* A white keyline outside the ring: without it the dark ring sinks
+              into satellite trees and roofs and only a white speck is left. */}
+          <View style={[styles.stopKeyline, selected && styles.stopDotSelected]}>
+            <View style={[styles.stopDot, { borderColor: tint }]} />
+          </View>
         </View>
       </Marker>
 
@@ -970,6 +974,17 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
   }, [nearbyStops, route, selectedStopId, tier, viewport.height, viewport.width, visibleRegion]);
 
   const osm = mapProvider === 'osm';
+  /**
+   * Stop names are read against what the map is *drawing*, not the phone's
+   * scheme — the `useMapChrome()` rule, applied to the names. Satellite and
+   * hybrid imagery is dark in either scheme, so dark text on it was dark on
+   * dark; OSM tiles are light in either, and a native `UrlTile` takes no filter.
+   */
+  const namesOnDark = osm
+    ? false
+    : Platform.OS === 'ios' && (appleMapType === 'satellite' || appleMapType === 'hybrid')
+      ? true
+      : dark;
   // On iOS the system map is MapKit: let the rider pick its base style. On
   // Android the system map is Google's, which stays standard. OSM always rides
   // on a standard base and tiles over it.
@@ -1068,7 +1083,7 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
           tint={route?.color ?? STOP_TINT}
           labelled={labelled}
           selected={stop.id === selectedStopId}
-          onDark={dark}
+          onDark={namesOnDark}
           onPress={handleStop}
         />
       ))}
@@ -1117,7 +1132,11 @@ const STOP_TINT = '#1C1C1E';
  * mirror of the gap and the two lines that hang below the dot.
  */
 const STOP_DOT = 13;
-const STOP_DOT_BOX = 20;
+/** The white keyline around the dot, which is what keeps it visible on imagery. */
+const STOP_KEYLINE = 2;
+const STOP_DOT_OUTER = STOP_DOT + STOP_KEYLINE * 2;
+/** Room for the outer circle at the selected 1.25 scale. */
+const STOP_DOT_BOX = 22;
 const STOP_LABEL_GAP = 2;
 const STOP_NAME_LINE = 14;
 const STOP_NAME_LINES = 2;
@@ -1125,7 +1144,7 @@ const STOP_LABEL_WIDTH = 104;
 /** The name is drawn with a halo, which needs room past its own line box. */
 const STOP_NAME_HALO = 3;
 /** Dot centre → the gap, the lines and the halo below it — and the same above. */
-const STOP_NAME_DROP = STOP_DOT / 2 + STOP_LABEL_GAP;
+const STOP_NAME_DROP = STOP_DOT_OUTER / 2 + STOP_LABEL_GAP;
 const STOP_NAME_BLOCK = STOP_NAME_LINE * STOP_NAME_LINES + STOP_NAME_HALO;
 const STOP_NAME_HEIGHT = (STOP_NAME_DROP + STOP_NAME_BLOCK) * 2;
 
@@ -1353,15 +1372,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: STOP_NAME_HEIGHT / 2 + STOP_NAME_DROP,
   },
+  stopKeyline: {
+    width: STOP_DOT_OUTER,
+    height: STOP_DOT_OUTER,
+    borderRadius: Radius.pill,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Elevation.marker,
+  },
   stopDot: {
     width: STOP_DOT,
     height: STOP_DOT,
     borderRadius: Radius.pill,
     backgroundColor: '#ffffff',
     borderWidth: 3.5,
-    ...Elevation.marker,
   },
-  stopDotSelected: { transform: [{ scale: 1.25 }], borderWidth: 4 },
+  stopDotSelected: { transform: [{ scale: 1.25 }] },
   stopName: {
     maxWidth: STOP_LABEL_WIDTH,
     fontSize: 11,

@@ -28,6 +28,8 @@ import {
   type Lines,
   type Stop,
 } from '@/lib/api';
+import { boardDirections, boardLines } from '@/lib/departures';
+import { useFavouriteStops, type FavouriteStop } from '@/lib/favourite-stops';
 import { CATEGORY_ORDER, compareLines, LINE_COLOR } from '@/lib/lines';
 import { mapIntentStore } from '@/lib/map-intent';
 import { recentStopsStore, useRecentStops } from '@/lib/recent-stops';
@@ -59,6 +61,7 @@ export default function SearchScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const recent = useRecentStops();
+  const favourites = useFavouriteStops();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Results>(EMPTY_RESULTS);
   const [resultQuery, setResultQuery] = useState('');
@@ -208,6 +211,7 @@ export default function SearchScreen() {
         />
       ) : showStart ? (
         <StartState
+          favourites={favourites}
           recent={recent}
           bottomInset={insets.bottom}
           onSelectStop={openStop}
@@ -381,10 +385,21 @@ function StopAreaChooser({
 
 function PlatformRow({ board, onPress }: { board: StopAreaBoard; onPress: () => void }) {
   const theme = useTheme();
-  const lines = uniqueLines(board.departures);
+  const lines = boardLines(board.departures);
   const hasTram = lines.some(({ type }) => type.startsWith('tram'));
   const hasBus = lines.some(({ type }) => type.startsWith('bus'));
-  const label = hasTram && hasBus ? 'Tramwaje i autobusy' : hasTram ? 'Tramwaje' : hasBus ? 'Autobusy' : 'Brak bieżących odjazdów';
+  // Where it goes is what tells two platforms of one stop apart; "Tramwaje"
+  // is the same on both sides of the street.
+  const directions = boardDirections(board.departures, 3);
+  const label = directions.length
+    ? `→ ${directions.join(', ')}`
+    : hasTram && hasBus
+      ? 'Tramwaje i autobusy'
+      : hasTram
+        ? 'Tramwaje'
+        : hasBus
+          ? 'Autobusy'
+          : 'Brak bieżących odjazdów';
   const platform = board.stop.code ? `Stanowisko ${board.stop.code}` : 'Stanowisko bez numeru';
   const next = board.departures[0];
   const eta = etaParts(next?.inSeconds);
@@ -414,8 +429,8 @@ function PlatformRow({ board, onPress }: { board: StopAreaBoard; onPress: () => 
         <Ionicons name={hasTram ? 'train' : 'bus'} size={20} color="#ffffff" />
       </View>
       <View style={styles.rowText}>
-        <ThemedText type="headline">{platform}</ThemedText>
-        <ThemedText type="footnote" themeColor="textSecondary">{label}</ThemedText>
+        <ThemedText type="headline" numberOfLines={2}>{label}</ThemedText>
+        <ThemedText type="footnote" themeColor="textSecondary">{platform}</ThemedText>
         {nextDeparture && <ThemedText type="footnote" themeColor="textSecondary">{nextDeparture}</ThemedText>}
         {lines.length > 0 && (
           <View style={styles.platformBadges}>
@@ -429,12 +444,6 @@ function PlatformRow({ board, onPress }: { board: StopAreaBoard; onPress: () => 
   );
 }
 
-function uniqueLines(departures: Departure[]) {
-  const lines = new Map<string, Pick<Departure, 'line' | 'type'>>();
-  for (const departure of departures) lines.set(departure.line, departure);
-  return [...lines.values()].sort((a, b) => compareLines(a.line, b.line));
-}
-
 function serviceRank(departures: Departure[]) {
   const types = departures.map((departure) => departure.type);
   if (types.some((type) => type.startsWith('tram'))) return 0;
@@ -444,12 +453,14 @@ function serviceRank(departures: Departure[]) {
 }
 
 function StartState({
+  favourites,
   recent,
   bottomInset,
   onSelectStop,
   onClearRecents,
   onBrowseLines,
 }: {
+  favourites: FavouriteStop[];
   recent: Stop[];
   bottomInset: number;
   onSelectStop: (stop: Stop) => void;
@@ -457,26 +468,42 @@ function StartState({
   onBrowseLines: () => void;
 }) {
   const theme = useTheme();
+  // A starred stop is already one tap away here; listing it again under
+  // "Ostatnie" only pushes a different stop off the list.
+  const starred = new Set(favourites.map((stop) => stop.id));
+  const recentOnly = recent.filter((stop) => !starred.has(stop.id));
+  const sections: { key: 'favourites' | 'recent'; title: string; data: FavouriteStop[] }[] = [
+    ...(favourites.length ? [{ key: 'favourites' as const, title: 'Ulubione', data: favourites }] : []),
+    ...(recentOnly.length ? [{ key: 'recent' as const, title: 'Ostatnie przystanki', data: recentOnly }] : []),
+  ];
   return (
     <SectionList
-      sections={recent.length ? [{ title: 'Ostatnie przystanki', data: recent }] : []}
+      sections={sections}
       keyExtractor={(item) => item.id}
       renderSectionHeader={({ section }) => (
         <View style={styles.startSectionHeader}>
           <ThemedText type="footnote" weight="semibold" themeColor="textSecondary" style={styles.sectionLabel}>{section.title.toLocaleUpperCase('pl')}</ThemedText>
-          <Pressable
-            onPress={onClearRecents}
-            accessibilityRole="button"
-            accessibilityLabel="Wyczyść ostatnie przystanki"
-            hitSlop={8}>
-            <ThemedText type="footnote" weight="semibold" color={theme.accent}>Wyczyść</ThemedText>
-          </Pressable>
+          {section.key === 'recent' && (
+            <Pressable
+              onPress={onClearRecents}
+              accessibilityRole="button"
+              accessibilityLabel="Wyczyść ostatnie przystanki"
+              hitSlop={8}>
+              <ThemedText type="footnote" weight="semibold" color={theme.accent}>Wyczyść</ThemedText>
+            </Pressable>
+          )}
         </View>
       )}
-      renderItem={({ item }) => (
+      renderItem={({ item, section }) => (
         <StopAreaRow
-          area={asArea(item)}
-          trailing={<Ionicons name="chevron-forward" size={17} color={theme.textTertiary} />}
+          area={asArea(item.label ? { ...item, name: `${item.label} · ${item.name}` } : item)}
+          trailing={
+            <Ionicons
+              name={section.key === 'favourites' ? 'star' : 'chevron-forward'}
+              size={section.key === 'favourites' ? 15 : 17}
+              color={theme.textTertiary}
+            />
+          }
           onPress={() => onSelectStop(item)}
         />
       )}
@@ -484,19 +511,23 @@ function StartState({
       keyboardDismissMode="on-drag"
       ListHeaderComponent={
         <View style={styles.welcome}>
-          <View style={[styles.welcomeIcon, { backgroundColor: theme.backgroundElement }]}>
-            <Ionicons name="navigate-outline" size={25} color={theme.text} />
-          </View>
-          <ThemedText type="headline">Znajdź swój przejazd</ThemedText>
-          <ThemedText type="footnote" themeColor="textSecondary" style={styles.welcomeText}>
-            Wyniki otwierają się od razu na mapie z najbliższymi odjazdami.
-          </ThemedText>
+          {sections.length === 0 && (
+            <>
+              <View style={[styles.welcomeIcon, { backgroundColor: theme.backgroundElement }]}>
+                <Ionicons name="navigate-outline" size={25} color={theme.text} />
+              </View>
+              <ThemedText type="headline">Znajdź swój przejazd</ThemedText>
+              <ThemedText type="footnote" themeColor="textSecondary" style={styles.welcomeText}>
+                Wpisz przystanek, numer linii albo numer boczny pojazdu. Wyniki otwierają się od razu na mapie.
+              </ThemedText>
+            </>
+          )}
           <Pressable
             onPress={onBrowseLines}
             accessibilityRole="button"
             style={({ pressed }) => [styles.browseLines, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}>
             <Ionicons name="git-branch-outline" size={18} color={theme.text} />
-            <ThemedText type="footnote" weight="semibold">Przeglądaj linie</ThemedText>
+            <ThemedText type="footnote" weight="semibold" style={styles.browseLinesText}>Przeglądaj linie</ThemedText>
             <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
           </Pressable>
         </View>
@@ -665,6 +696,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Space.md,
   },
+  browseLinesText: { flex: 1 },
   startSectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',

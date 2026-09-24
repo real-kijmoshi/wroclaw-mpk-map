@@ -2,17 +2,22 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { getDeparturesForStops } from '@/lib/api';
 import type { FavouriteStop } from '@/lib/favourite-stops';
-import { syncDeparturesWidget, WIDGET_STOPS, type WidgetBoard } from '@/lib/widgets';
+import { syncDeparturesWidget, type WidgetBoard } from '@/lib/widgets';
 
 export type { WidgetBoard as FavouriteBoard } from '@/lib/widgets';
 
 /**
- * The departures of the first few starred stops, and where they go.
+ * The departures of every starred stop, and where they go.
  *
  * One fetch serves three readers: the "Ulubione" rows on the sheet, the
  * home-screen widget, and the background refresh that keeps the widget going
  * while the app is closed. Keeping it in one place is what keeps those three
  * from each polling the same boards.
+ *
+ * All of them, not the first three: which stop a widget shows is picked on the
+ * widget by name, so any starred stop can be on one, and a stop whose board was
+ * never fetched would be a widget that only ever says "open the app". The list
+ * is capped at `MAX_FAVOURITE_STOPS`, so this stays a dozen small requests.
  */
 
 const POSITION_KEY = 'wroclive.lastPosition';
@@ -51,12 +56,10 @@ export async function fetchFavouriteBoards(
   signal?: AbortSignal,
 ): Promise<WidgetBoard[]> {
   const results = await Promise.allSettled(
-    favourites
-      .slice(0, WIDGET_STOPS)
-      .map(async (stop) => ({
+    favourites.map(async (stop) => ({
         stop,
-        departures: (await getDeparturesForStops(stop, { signal, retryWhileLoading: false })).departures,
-      })),
+      departures: (await getDeparturesForStops(stop, { signal, retryWhileLoading: false })).departures,
+    })),
   );
   return results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
 }
@@ -64,6 +67,6 @@ export async function fetchFavouriteBoards(
 /** Fetch and hand the widget a new timeline — what the background task runs. */
 export async function refreshFavouriteBoards(favourites: FavouriteStop[], signal?: AbortSignal) {
   const boards = await fetchFavouriteBoards(favourites, signal);
-  syncDeparturesWidget(boards, await lastPosition());
+  syncDeparturesWidget(favourites, boards, await lastPosition());
   return boards;
 }

@@ -24,6 +24,7 @@ import { useFavouriteBoards } from '@/hooks/use-favourite-boards';
 import { useQuickActions } from '@/hooks/use-quick-actions';
 import { getAlerts, getDeparturesForStops, getIncidents, getLocations, getShape, getStopsNear, getVehicle, vehiclePollDelay, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
 import { REFRESH_MS } from '@/lib/config';
+import { directionsLabel } from '@/lib/departures';
 import { plural } from '@/lib/format';
 import { shareStop, shareVehicle } from '@/lib/share';
 import { colorFor } from '@/lib/lines';
@@ -607,6 +608,10 @@ export default function MapScreen() {
           ) : shownStop ? (
             <StopSummary
               stop={shownStop}
+              label={favouriteStops.find((item) => item.id === shownStop.id)?.label ?? null}
+              directions={
+                departures.data && stopId === shownStop.id ? directionsLabel(departures.data.departures) : null
+              }
               userPosition={userPosition}
               favourite={favouriteStops.some((item) => item.id === shownStop.id)}
               onToggleFavourite={() => {
@@ -633,16 +638,7 @@ export default function MapScreen() {
             loading={detail.loading}
             error={detail.error}
             onStopPress={arrivalAlertsAvailable ? arrival.toggle : undefined}
-            alertStopId={
-              arrival.alert && arrival.alert.vehicleId === detail.data?.vehicle.id
-                ? arrival.alert.stopId
-                : null
-            }
-            alertStopName={
-              arrival.alert && arrival.alert.vehicleId === detail.data?.vehicle.id
-                ? arrival.alert.stopName
-                : null
-            }
+            alert={arrival.alert && arrival.alert.vehicleId === detail.data?.vehicle.id ? arrival.alert : null}
             onDisarm={() => void arrival.disarm()}
             onOpenRoute={() => {
               const vehicle = detail.data?.vehicle;
@@ -651,6 +647,8 @@ export default function MapScreen() {
           />
         ) : shownStop ? (
           <StopDetails
+            key={shownStop.id}
+            onRetry={departures.refresh}
             data={departures.data}
             loading={departures.loading}
             error={departures.error}
@@ -679,6 +677,7 @@ export default function MapScreen() {
             onLines={() => router.push('/lines')}
             onAlerts={() => router.push('/alerts')}
             onLocate={locate}
+            onManageFavourites={() => router.push('/favourites')}
             onStop={(stop) => {
               mapRef.current?.centerOn(stop.lat, stop.lon, 17);
               handleStop(stop);

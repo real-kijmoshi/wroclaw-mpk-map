@@ -50,7 +50,7 @@
         {
           "locationAlwaysAndWhenInUsePermission": false,
           "locationAlwaysPermission": false,
-          "motionUsagePermission": false,
+          "motionUsagePermission": "Wroclive nie korzysta z danych o ruchu ani aktywności. Twoją pozycję na mapie pokazuje wyłącznie na podstawie lokalizacji.",
           "locationWhenInUsePermission": "Pozwól, aby pokazać Twoją pozycję i najbliższe przystanki na mapie.",
           "isAndroidBackgroundLocationEnabled": false,
           "isIosBackgroundLocationEnabled": false
@@ -64,11 +64,12 @@
             {
               "name": "Departures",
               "displayName": "Odjazdy",
-              "description": "Najbliższe odjazdy z ulubionego przystanku.",
+              "description": "Najbliższe odjazdy z wybranego ulubionego przystanku.",
               "ios": {
                 "supportedFamilies": [
                   "systemSmall",
                   "systemMedium",
+                  "systemLarge",
                   "accessoryRectangular",
                   "accessoryInline",
                   "accessoryCircular"
@@ -77,24 +78,10 @@
                   "title": "Przystanek",
                   "description": "Który z ulubionych przystanków pokazać.",
                   "parameters": {
-                    "slot": {
-                      "title": "Ulubiony przystanek",
-                      "type": "enum",
-                      "values": [
-                        {
-                          "name": "Pierwszy",
-                          "value": "first"
-                        },
-                        {
-                          "name": "Drugi",
-                          "value": "second"
-                        },
-                        {
-                          "name": "Trzeci",
-                          "value": "third"
-                        }
-                      ],
-                      "default": "first"
+                    "stop": {
+                      "title": "Przystanek",
+                      "type": "string",
+                      "default": ""
                     }
                   }
                 }
@@ -103,6 +90,7 @@
           ]
         }
       ],
+      "./plugins/with-widget-stop-picker",
       "expo-web-browser",
       "expo-background-task",
       "./plugins/without-background-fetch"

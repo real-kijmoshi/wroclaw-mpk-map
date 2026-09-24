@@ -5,6 +5,7 @@ import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Constants from 'expo-constants';
+import { useRouter } from 'expo-router';
 
 import { liquidGlass } from '@/components/glass';
 import { Choice, Divider, LinkRow, Row, RowIcon, Section } from '@/components/list';
@@ -15,6 +16,7 @@ import { Elevation, Motion, Radius, Space } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
 import { usePoll } from '@/hooks/use-poll';
 import { apiGet } from '@/lib/api';
+import { useFavouriteStops } from '@/lib/favourite-stops';
 import { API_URL } from '@/lib/config';
 import { formatAge, formatUptime } from '@/lib/format';
 import { tapped } from '@/lib/haptics';
@@ -281,6 +283,8 @@ export default function SettingsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const preferences = usePreferences();
+  const router = useRouter();
+  const favourites = useFavouriteStops();
 
   // Rechecked while the screen is open, so "is the server up?" is answerable
   // without leaving the app.
@@ -401,6 +405,16 @@ export default function SettingsScreen() {
               )}
             </Section>
           )}
+
+          <Section title="Przystanki" icon="star-outline">
+            <LinkRow
+              label="Ulubione przystanki"
+              hint={Platform.OS === 'ios' ? 'Nazwy, kolejność i widżety' : 'Nazwy i kolejność'}
+              leading={<RowIcon name="star-outline" color={theme.textTertiary} />}
+              value={favourites.length ? String(favourites.length) : null}
+              onPress={() => router.push('/favourites')}
+            />
+          </Section>
 
           <Section title="Na mapie" icon="eye-outline">
             <Row

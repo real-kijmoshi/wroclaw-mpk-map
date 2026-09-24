@@ -342,32 +342,54 @@ Activity push, and it is optional.
   it writes a push entitlement, and these alerts are local. Permission is
   asked when a rider arms an alert, never at launch.
 - **Favourite boards** (`src/lib/favourite-boards.ts`,
-  `src/hooks/use-favourite-boards.ts`). One fetch of the first three starred
-  stops' departures serves the sheet's "Ulubione" rows, the widget and the
+  `src/hooks/use-favourite-boards.ts`). One fetch of every starred stop's
+  departures (at most twelve) serves the sheet's "Ulubione" rows, the widget and the
   background refresh — so the three never poll the same boards separately.
 - **The home-screen widget** (`src/widgets/layouts.tsx`,
-  `src/lib/widgets.ios.ts`). Home screen (small, medium) and lock screen
-  (rectangular, inline, circular). Its configuration menu picks the first,
-  second or third starred stop, so a rider adds one widget per stop — a
-  "next stop" button would not work: a button press only rewrites the current
-  timeline entry, and the next minute's entry puts the old stop back. That
-  configuration makes it an iOS 17+ widget; the app itself targets 16.4.
-  WidgetKit cannot fetch, so the app hands it a half-hour *timeline* — the
-  same rows once a minute, each entry counting from its own date — with the
-  walk from the rider's last known position (`rememberPosition()`, device
-  only), so a departure the walk cannot reach is shown dimmed.
+  `src/lib/widgets.ios.ts`). Home screen (small, medium, large) and lock
+  screen (rectangular, inline, circular). Which stop a widget shows is picked
+  *on the widget, by name*: `app.json` declares a string parameter `stop`, and
+  `plugins/with-widget-stop-picker.js` rewrites the Swift `expo-widgets`
+  generates into an `AppEntity` whose query reads the starred stops back out
+  of the widget's own timeline (`props.favourites`). It is a finalized mod —
+  dangerous mods run in reverse registration order, so it would run before
+  `expo-widgets` wrote the file — and it fails the prebuild if the generated
+  text moves. The old "first / second / third" enum made riders remember the
+  order they had starred things in. Every starred stop is in the timeline for
+  that reason. A rider adds one widget per stop — a "next stop" button would
+  not work: a button press only rewrites the current timeline entry, and the
+  next minute's entry puts the old stop back. That configuration makes it an
+  iOS 17+ widget; the app itself targets 16.4. WidgetKit cannot fetch, so the
+  app hands it a half-hour *timeline* — the rows once a minute, each entry
+  counting from its own date — and the last entry shows clock times, since
+  nothing redraws it and a countdown there would freeze. The walk from the
+  rider's last known position (`rememberPosition()`, device only) dims a
+  departure the walk cannot reach. Layouts are strings run in the extension:
+  no Babel helpers either — `const [a, ...rest] =` compiles to `_toArray`,
+  which is not there, and the small widget crashed on exactly that.
+- **Favourites** (`src/lib/favourite-stops.ts`, `src/app/favourites.tsx`) can
+  carry the rider's own label ("Dom"), shown *above* the stop name and never
+  instead of it, and are ordered by the rider: the order is the sheet's, the
+  quick actions', and what an unconfigured widget falls back to.
 - **Background refresh** (`src/lib/background-refresh.ios.ts`,
   `expo-background-task`). iOS wakes the app now and then to rebuild the
   widget's timeline. *When* is the system's call — often overnight or while
   charging — so it makes the widget fresh more often and never makes it live.
   The task is defined at module scope (imported from `_layout.tsx`), because
   that is where a cold background launch looks for it.
-- **The Live Activity** — the arrival alert's countdown on the lock screen and
-  in the Dynamic Island, started and ended with the alert. The countdown is a
-  native timer, so it keeps ticking with the app suspended; the stale date
-  greys it out when nothing has refreshed it. When the server has an APNs key,
-  the app registers the activity's push token (`POST /live-activities`) and the
-  server pushes each new arrival time on every vehicle poll until the stop is
+- **The Live Activities.** `Arrival` is the arrival alert's countdown on the
+  lock screen and in the Dynamic Island. `Trip` is the other direction: a rider
+  on board taps their stop in the vehicle's list, chooses "Jadę tym pojazdem —
+  wysiadam tutaj", and the activity counts *stops* down with a progress bar;
+  the local alert fires as the stop before theirs is left, or 90 s before
+  arrival, whichever is later. Stops are counted by `tripProgress()`
+  (`src/lib/trip-progress.ts`), which the server carries a copy of for its
+  pushes — `server/test/trip-progress.test.js` runs both on the same payloads.
+  The countdown is a native timer, so it keeps ticking with the app suspended;
+  the stale date greys it out when nothing has refreshed it. When the server
+  has an APNs key, the app registers the activity's push token
+  (`POST /live-activities`, `kind: 'arrival' | 'trip'` — absent means arrival)
+  and the server pushes each update on every vehicle poll until the stop is
   passed; without one it answers 503 and the app updates the activity itself
   while it runs.
 - **Quick actions** (`src/hooks/use-quick-actions.ts`). Long-press the app

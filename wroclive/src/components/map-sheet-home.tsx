@@ -11,6 +11,7 @@ import type { ArrivalAlert } from '@/lib/arrival-alerts';
 import type { FavouriteBoard } from '@/lib/favourite-boards';
 import type { FavouriteStop } from '@/lib/favourite-stops';
 import { LineBadge } from './line-badge';
+import { departureSeconds } from '@/lib/departures';
 import { etaParts, formatDistance, plural } from '@/lib/format';
 import type { StopArea } from '@/lib/stops-api';
 
@@ -98,7 +99,7 @@ export type MapSheetHomeProps = {
   arrivalAlert: ArrivalAlert | null;
   onOpenAlert: () => void;
   onDisarmAlert: () => void;
-  /** Starred stops, in the order they were starred. */
+  /** Starred stops, in the rider's order. */
   favouriteStops: FavouriteStop[];
   /** Next departures for the first few of them, when fetched. */
   favouriteBoards: FavouriteBoard[];
@@ -116,6 +117,8 @@ export type MapSheetHomeProps = {
   onLocate: () => void;
   onRetry: () => void;
   onStop: (stop: Stop) => void;
+  /** Rename, reorder, remove — and how to put a stop on a widget. */
+  onManageFavourites: () => void;
 };
 
 /** How many places fit before the list stops being a glance and becomes a scroll. */
@@ -141,6 +144,7 @@ export function MapSheetHome({
   onLocate,
   onRetry,
   onStop,
+  onManageFavourites,
 }: MapSheetHomeProps) {
   const theme = useTheme();
 
@@ -189,26 +193,40 @@ export function MapSheetHome({
           <Pressable
             onPress={onOpenAlert}
             accessibilityRole="button"
-            accessibilityLabel={`Linia ${arrivalAlert.line}, powiadomienie przed przystankiem ${arrivalAlert.stopName}`}
+            accessibilityLabel={
+              arrivalAlert.kind === 'trip'
+                ? `Linia ${arrivalAlert.line}, wysiadasz na przystanku ${arrivalAlert.stopName}`
+                : `Linia ${arrivalAlert.line}, powiadomienie przed przystankiem ${arrivalAlert.stopName}`
+            }
             accessibilityHint="Pokazuje pojazd"
             style={({ pressed }) => [styles.bannerMain, pressed && styles.pressed]}>
-            <Ionicons name="notifications" size={18} color={theme.text} />
+            <Ionicons name={arrivalAlert.kind === 'trip' ? 'flag' : 'notifications'} size={18} color={theme.text} />
             <View style={styles.bannerText}>
               <ThemedText type="callout" weight="semibold" numberOfLines={1}>
-                {`Linia ${arrivalAlert.line}${arrivalAlert.towards ? ` → ${arrivalAlert.towards}` : ''}`}
+                {arrivalAlert.kind === 'trip'
+                  ? `Jedziesz do: ${arrivalAlert.stopName}`
+                  : `Linia ${arrivalAlert.line}${arrivalAlert.towards ? ` → ${arrivalAlert.towards}` : ''}`}
               </ThemedText>
               <ThemedText type="footnote" themeColor="textSecondary" numberOfLines={1}>
-                Powiadomienie przed: {arrivalAlert.stopName}
+                {arrivalAlert.kind === 'trip'
+                  ? `Linia ${arrivalAlert.line}${
+                      arrivalAlert.stopsAway === undefined
+                        ? ''
+                        : arrivalAlert.stopsAway === 0
+                          ? ' · to Twój przystanek'
+                          : ` · jeszcze ${arrivalAlert.stopsAway} ${plural(arrivalAlert.stopsAway, ['przystanek', 'przystanki', 'przystanków'])}`
+                    }`
+                  : `Powiadomienie przed: ${arrivalAlert.stopName}`}
               </ThemedText>
             </View>
           </Pressable>
           <Pressable
             onPress={onDisarmAlert}
             accessibilityRole="button"
-            accessibilityLabel="Wyłącz powiadomienie"
+            accessibilityLabel={arrivalAlert.kind === 'trip' ? 'Zakończ śledzenie przejazdu' : 'Wyłącz powiadomienie'}
             hitSlop={8}>
             <ThemedText type="footnote" weight="semibold" color={theme.accent}>
-              Wyłącz
+              {arrivalAlert.kind === 'trip' ? 'Zakończ' : 'Wyłącz'}
             </ThemedText>
           </Pressable>
         </View>
@@ -233,6 +251,17 @@ export function MapSheetHome({
               />
             </View>
           ))}
+          <Divider />
+          <Pressable
+            onPress={onManageFavourites}
+            accessibilityRole="button"
+            accessibilityLabel="Zarządzaj ulubionymi"
+            accessibilityHint="Zmiana nazw, kolejności i widżety"
+            style={({ pressed }) => [styles.manage, pressed && styles.pressed]}>
+            <ThemedText type="footnote" weight="semibold" color={theme.accent}>
+              Zarządzaj ulubionymi i widżetami
+            </ThemedText>
+          </Pressable>
         </Section>
       )}
 
@@ -342,7 +371,7 @@ function FavouriteRow({
   const next = (board?.departures ?? [])
     .map((departure) => ({
       departure,
-      seconds: (departure.predictedInSeconds ?? departure.inSeconds) - age,
+      seconds: departureSeconds(departure) - age,
     }))
     .filter((entry) => entry.seconds > -30)
     .slice(0, 2);
@@ -355,12 +384,19 @@ function FavouriteRow({
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={spoken ? `${stop.name}: ${spoken}` : stop.name}
+      accessibilityLabel={[stop.label, stop.name].filter(Boolean).join(', ') + (spoken ? `: ${spoken}` : '')}
       style={({ pressed }) => [styles.favourite, pressed && styles.pressed]}>
       <Ionicons name="star" size={16} color={theme.textSecondary} />
-      <ThemedText type="callout" numberOfLines={1} style={styles.favouriteName}>
-        {stop.name}
-      </ThemedText>
+      <View style={styles.favouriteName}>
+        <ThemedText type="callout" numberOfLines={1}>
+          {stop.label || stop.name}
+        </ThemedText>
+        {!!stop.label && (
+          <ThemedText type="caption" themeColor="textSecondary" numberOfLines={1}>
+            {stop.name}
+          </ThemedText>
+        )}
+      </View>
       {next.map(({ departure, seconds }) => {
         const eta = etaParts(seconds);
         return (
@@ -380,6 +416,7 @@ function FavouriteRow({
 const styles = StyleSheet.create({
   favourite: { flexDirection: 'row', alignItems: 'center', gap: Space.sm, minHeight: 52, paddingHorizontal: Space.lg },
   favouriteName: { flex: 1, minWidth: 0 },
+  manage: { minHeight: 44, justifyContent: 'center', paddingHorizontal: Space.lg },
   favouriteNext: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   favouriteEta: { fontVariant: ['tabular-nums'] },
   header: { gap: Space.sm, paddingBottom: Space.md },

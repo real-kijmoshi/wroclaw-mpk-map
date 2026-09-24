@@ -1,28 +1,34 @@
 import { requireOptionalNativeModule } from 'expo';
 
-import { apiSend, type Departure } from '@/lib/api';
+import { apiSend } from '@/lib/api';
 import { Colors } from '@/constants/theme';
+import { departureSeconds, directionsLabel } from '@/lib/departures';
 import { stopAppUrl, vehicleAppUrl } from '@/lib/links';
 import type { FavouriteStop } from '@/lib/favourite-stops';
 import { colorFor } from '@/lib/lines';
 import { walkSeconds } from '@/lib/walking';
-import type { ArrivalActivityInput } from '@/lib/widgets';
+import type { ArrivalActivityInput, TripActivityInput, WidgetBoard } from '@/lib/widgets';
+import type { DeparturesWidgetProps, DeparturesWidgetStop } from '@/widgets/layouts';
 
-export type { ArrivalActivityInput } from '@/lib/widgets';
+export type { ArrivalActivityInput, TripActivityInput, WidgetBoard } from '@/lib/widgets';
 
 /**
- * The iOS home-screen widget and the arrival Live Activity.
+ * The iOS home-screen widget and the Live Activities.
  *
  * Neither can fetch anything: WidgetKit renders what the app last handed it.
- * So the widget gets a *timeline* — the favourite stop's next departures,
+ * So the widget gets a *timeline* — every starred stop's next departures,
  * repeated once a minute for the next half hour, each entry counting from its
- * own date — which keeps it honest for a while after the app is closed and
- * then says to open the app rather than show departures that have left. The
- * Live Activity gets a native countdown that ticks on the lock screen with
- * the app suspended, refreshed on every poll while the app runs, and a stale
- * date so the system greys it out when that stops.
+ * own date — which keeps it honest for a while after the app is closed. Its
+ * last entry is never redrawn, so it shows clock times instead of countdowns
+ * that would freeze. The Live Activities get a native countdown that ticks on
+ * the lock screen with the app suspended, refreshed on every poll while the
+ * app runs, and a stale date so the system greys it out when that stops.
  *
- * While the app is suspended the server takes over the Live Activity through
+ * Every starred stop goes into the timeline, not just the first few: which one
+ * a widget shows is chosen on the widget itself, by name, from the same list
+ * (`plugins/with-widget-stop-picker.js` reads `favourites` back out of it).
+ *
+ * While the app is suspended the server takes over a Live Activity through
  * APNs, when it has a key for it (`registerPush` below).
  *
  * `expo-widgets` is not in Expo Go and resolves its native module at module
@@ -36,64 +42,119 @@ const layouts: typeof import('@/widgets/layouts') | null = widgetsAvailable ? re
 
 /** How far ahead the widget's timeline reaches, one entry a minute. */
 const TIMELINE_MINUTES = 30;
+/** Rows kept per stop per entry: the large widget draws eight. */
+const ROWS_PER_STOP = 8;
 /** Past its arrival by this much, an un-refreshed activity is marked stale. */
 const ACTIVITY_STALE_AFTER_MS = 60_000;
-/** The configuration menu offers three slots (`app.json`). */
-export const WIDGET_STOPS = 3;
 
 const amber = { amberLight: Colors.light.amber, amberDark: Colors.dark.amber };
 
-export type WidgetBoard = { stop: FavouriteStop; departures: Departure[] };
+const clock = (at: number) => {
+  const date = new Date(at);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+};
+
+function widgetStop(
+  stop: FavouriteStop,
+  board: WidgetBoard | undefined,
+  position: { lat: number; lon: number } | null,
+  now: number,
+): DeparturesWidgetStop {
+  const departures = board?.departures ?? [];
+  return {
+    id: stop.id,
+    name: stop.name,
+    label: stop.label ?? null,
+    detail: directionsLabel(departures),
+    url: stopAppUrl(stop),
+    walk: walkSeconds(position, stop),
+    rows: departures.map((departure) => {
+      const at = now + departureSeconds(departure) * 1_000;
+      return {
+        line: departure.line,
+        color: colorFor(departure.type),
+        tram: departure.type.startsWith('tram'),
+        headsign: departure.headsign ?? '',
+        at,
+        clock: clock(at),
+        live: Boolean(departure.realtime),
+      };
+    }),
+  };
+}
 
 /**
- * Hand the widget a fresh timeline for the first starred stops.
+ * Hand the widget a fresh timeline for the starred stops.
  *
  * `position` is where the rider last was, for the walking estimate; it never
- * leaves the phone. An empty list puts the widget back to "add a favourite".
+ * leaves the phone. No favourites puts the widget back to "star a stop".
  */
 export function syncDeparturesWidget(
+  favourites: FavouriteStop[],
   boards: WidgetBoard[],
   position: { lat: number; lon: number } | null,
   now = Date.now(),
 ) {
   if (!layouts) return;
   try {
-    const props = {
+    const stops = favourites.map((stop) =>
+      widgetStop(
+        stop,
+        boards.find((board) => board.stop.id === stop.id),
+        position,
+        now,
+      ),
+    );
+    const base: DeparturesWidgetProps = {
       ...amber,
-      stops: boards.slice(0, WIDGET_STOPS).map(({ stop, departures }) => ({
-        name: stop.name,
-        url: stopAppUrl(stop),
-        walk: walkSeconds(position, stop),
-        rows: departures.slice(0, 12).map((departure) => ({
-          line: departure.line,
-          color: colorFor(departure.type),
-          headsign: departure.headsign ?? '',
-          at: now + (departure.predictedInSeconds ?? departure.inSeconds) * 1_000,
-        })),
+      stops,
+      favourites: stops.map((stop) => ({
+        id: stop.id,
+        name: stop.label || stop.name,
+        // The picker's second line: the real name under a label, otherwise
+        // where it goes — which is what tells two platforms of one stop apart.
+        detail: stop.label ? [stop.name, stop.detail].filter(Boolean).join(' · ') : stop.detail,
       })),
+      updatedAt: now,
+      final: false,
     };
-    if (props.stops.length === 0) {
-      layouts.departuresWidget.updateSnapshot(props);
+    if (stops.length === 0) {
+      layouts.departuresWidget.updateSnapshot(base);
       return;
     }
     const start = Math.floor(now / 60_000) * 60_000;
     layouts.departuresWidget.updateTimeline(
-      Array.from({ length: TIMELINE_MINUTES + 1 }, (_, minute) => ({
-        date: new Date(start + minute * 60_000),
-        props,
-      })),
+      Array.from({ length: TIMELINE_MINUTES + 1 }, (_, minute) => {
+        const date = start + minute * 60_000;
+        return {
+          date: new Date(date),
+          props: {
+            ...base,
+            final: minute === TIMELINE_MINUTES,
+            // Each entry carries only what has not left by its own minute, so
+            // a small widget's three rows are three departures still to come.
+            stops: stops.map((stop) => ({
+              ...stop,
+              rows: stop.rows.filter((row) => row.at >= date - 30_000).slice(0, ROWS_PER_STOP),
+            })),
+          },
+        };
+      }),
     );
   } catch {
     // A widget that fails to refresh keeps its last timeline; never the app's problem.
   }
 }
 
-type ActivityHandle = ReturnType<NonNullable<typeof layouts>['arrivalActivity']['start']>;
+type Kind = 'arrival' | 'trip';
+type ArrivalHandle = ReturnType<NonNullable<typeof layouts>['arrivalActivity']['start']>;
+type TripHandle = ReturnType<NonNullable<typeof layouts>['tripActivity']['start']>;
 
 let activity: {
+  kind: Kind;
   vehicleId: string;
   stopId: string;
-  handle: ActivityHandle;
+  handle: ArrivalHandle | TripHandle;
   /** The push token registered with the server, so ending can unregister it. */
   token: string | null;
   subscription: { remove: () => void } | null;
@@ -105,12 +166,17 @@ let activity: {
  * APNs key the server answers 503 and the app goes on updating the activity
  * itself while it runs, which is how it works in any case.
  */
-function registerPush(current: NonNullable<typeof activity>, token: string, input: ArrivalActivityInput) {
+function registerPush(
+  current: NonNullable<typeof activity>,
+  token: string,
+  input: ArrivalActivityInput | TripActivityInput,
+) {
   if (current.token === token) return;
   if (current.token) void apiSend('DELETE', `/live-activities/${current.token}`);
   current.token = token;
   void apiSend('POST', '/live-activities', {
     token,
+    kind: current.kind,
     vehicleId: input.vehicleId,
     stopId: input.stopId,
     view: {
@@ -118,15 +184,16 @@ function registerPush(current: NonNullable<typeof activity>, token: string, inpu
       color: input.color,
       towards: input.towards,
       stopName: input.stopName,
+      ...('totalStops' in input ? { totalStops: input.totalStops } : null),
       ...amber,
     },
   });
 }
 
-export function showArrivalActivity(input: ArrivalActivityInput) {
+function show(kind: Kind, input: ArrivalActivityInput | TripActivityInput) {
   if (!layouts) return;
   const now = Date.now();
-  const props = {
+  const base = {
     ...amber,
     line: input.line,
     color: input.color,
@@ -136,15 +203,26 @@ export function showArrivalActivity(input: ArrivalActivityInput) {
     since: now,
     atStop: input.atStop,
   };
+  const props =
+    'totalStops' in input
+      ? { ...base, stopsAway: input.stopsAway, totalStops: input.totalStops, nextStop: input.nextStop }
+      : base;
   const staleDate = new Date(props.arrivesAt + ACTIVITY_STALE_AFTER_MS);
   try {
-    if (activity && activity.vehicleId === input.vehicleId && activity.stopId === input.stopId) {
-      void activity.handle.update(props, staleDate).catch(() => {});
+    if (activity && activity.kind === kind && activity.vehicleId === input.vehicleId && activity.stopId === input.stopId) {
+      void (activity.handle as { update: (next: typeof props, stale: Date) => Promise<void> })
+        .update(props, staleDate)
+        .catch(() => {});
       return;
     }
-    endArrivalActivity();
-    const handle = layouts.arrivalActivity.start(props, vehicleAppUrl(input.vehicleId), staleDate);
+    endLiveActivity();
+    const url = vehicleAppUrl(input.vehicleId);
+    const handle =
+      kind === 'trip' && 'totalStops' in props
+        ? layouts.tripActivity.start(props, url, staleDate)
+        : layouts.arrivalActivity.start(base, url, staleDate);
     const current: NonNullable<typeof activity> = {
+      kind,
       vehicleId: input.vehicleId,
       stopId: input.stopId,
       handle,
@@ -167,7 +245,15 @@ export function showArrivalActivity(input: ArrivalActivityInput) {
   }
 }
 
-export function endArrivalActivity() {
+export function showArrivalActivity(input: ArrivalActivityInput) {
+  show('arrival', input);
+}
+
+export function showTripActivity(input: TripActivityInput) {
+  show('trip', input);
+}
+
+export function endLiveActivity() {
   const current = activity;
   activity = null;
   if (!current) return;

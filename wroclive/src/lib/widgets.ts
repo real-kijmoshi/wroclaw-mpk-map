@@ -2,7 +2,7 @@ import type { Departure } from '@/lib/api';
 import type { FavouriteStop } from '@/lib/favourite-stops';
 
 /**
- * Home-screen widget and Live Activity — not on this platform.
+ * Home-screen widget and Live Activities — not on this platform.
  *
  * `widgets.ios.ts` is the real module. Android widgets exist in `expo-widgets`
  * only behind an experimental flag, and the web has neither, so everywhere
@@ -20,12 +20,19 @@ export type ArrivalActivityInput = {
   atStop: boolean;
 };
 
+/** A rider on board; `stopId` and `stopName` are where they get off. */
+export type TripActivityInput = ArrivalActivityInput & {
+  stopsAway: number;
+  totalStops: number;
+  nextStop: string;
+};
+
 export type WidgetBoard = { stop: FavouriteStop; departures: Departure[] };
 
 export const widgetsAvailable = false;
-export const WIDGET_STOPS = 3;
 
 export function syncDeparturesWidget(
+  _favourites: FavouriteStop[],
   _boards: WidgetBoard[],
   _position: { lat: number; lon: number } | null,
   _now?: number,
@@ -33,4 +40,6 @@ export function syncDeparturesWidget(
 
 export function showArrivalActivity(_input: ArrivalActivityInput) {}
 
-export function endArrivalActivity() {}
+export function showTripActivity(_input: TripActivityInput) {}
+
+export function endLiveActivity() {}

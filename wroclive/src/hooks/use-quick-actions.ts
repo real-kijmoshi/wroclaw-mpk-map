@@ -39,8 +39,8 @@ export function useQuickActions(favourites: FavouriteStop[]) {
     void QuickActions.setItems<StopAction>([
       ...favourites.slice(0, MAX_STOP_ACTIONS).map((stop) => ({
         id: `stop:${stop.id}`,
-        title: stop.name,
-        subtitle: 'Odjazdy na żywo',
+        title: stop.label || stop.name,
+        subtitle: stop.label ? stop.name : 'Odjazdy na żywo',
         icon: 'symbol:star.fill',
         params: { url: stopAppUrl(stop) },
       })),

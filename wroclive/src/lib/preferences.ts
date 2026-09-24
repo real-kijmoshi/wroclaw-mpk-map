@@ -56,6 +56,13 @@ export type LayoutMode = 'sheet' | 'classic';
  */
 export type MarkerStyle = 'modern' | 'classic';
 
+/**
+ * How a stop's board is read: in departure order, the way the display at the
+ * stop reads, or one row per line and direction with its next departures side
+ * by side — which is what a rider at an interchange who wants "the 10" needs.
+ */
+export type BoardView = 'time' | 'route';
+
 export type Preferences = {
   mapProvider: MapProvider;
   /** Base map style for the system (MapKit) surface on iOS. */
@@ -76,6 +83,8 @@ export type Preferences = {
   layout: LayoutMode;
   /** The fused badge-and-tail marker, or the classic badge and chevron. */
   markerStyle: MarkerStyle;
+  /** Departure order, or grouped by line — remembered, because it is a habit. */
+  boardView: BoardView;
 };
 
 const DEFAULTS: Preferences = {
@@ -86,6 +95,7 @@ const DEFAULTS: Preferences = {
   colorScheme: 'system',
   layout: 'sheet',
   markerStyle: 'modern',
+  boardView: 'time',
 };
 
 let preferences: Preferences = DEFAULTS;

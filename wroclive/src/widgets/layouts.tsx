@@ -1,27 +1,41 @@
-import { HStack, Spacer, Text, VStack } from '@expo/ui/swift-ui';
+import {
+  AccessoryWidgetBackground,
+  HStack,
+  Image,
+  ProgressView,
+  Spacer,
+  Text,
+  VStack,
+  ZStack,
+} from '@expo/ui/swift-ui';
 import {
   background,
-  cornerRadius,
   font,
   foregroundStyle,
   frame,
   lineLimit,
+  minimumScaleFactor,
   monospacedDigit,
   padding,
+  shapes,
+  tint,
   widgetURL,
 } from '@expo/ui/swift-ui/modifiers';
 import { createLiveActivity, createWidget, type LiveActivityEnvironment, type WidgetEnvironment } from 'expo-widgets';
 
 /**
- * The home-screen widget and the Live Activity, drawn by WidgetKit.
+ * The home-screen widget and the Live Activities, drawn by WidgetKit.
  *
  * Read this before editing: every function marked `'widget'` is compiled to a
  * *string* (babel-preset-expo's widgets plugin) and evaluated inside the widget
  * extension, where `@expo/ui`'s views and modifiers are globals. So a layout
  * may use those names exactly as imported here — no aliases — and nothing
  * else from this module or the app: no helper, no constant, no theme import.
- * Anything it needs, colours included, arrives in its props, which is why the
- * app computes them (`src/lib/widgets.ios.ts`) and the layout only draws.
+ * A helper a layout needs is declared *inside* it, where it becomes part of
+ * the string. Syntax that Babel lowers to a helper — rest destructuring, for
+ * one — breaks the same way, because the helper is not in the string either. Anything else, colours included, arrives in its props, which is
+ * why the app computes them (`src/lib/widgets.ios.ts`) and the layout only
+ * draws.
  *
  * Only `src/lib/widgets.ios.ts` requires this file, and only when the native
  * module is present: importing `expo-widgets` resolves its native module at
@@ -32,13 +46,23 @@ export type DeparturesWidgetRow = {
   line: string;
   /** Line colour, from `colorFor()`; clears 4.5:1 with white (invariant 11). */
   color: string;
+  tram: boolean;
   headsign: string;
   /** Epoch ms the departure leaves. */
   at: number;
+  /** `at` as the rider's wall clock, "22:41" — what the last entry shows. */
+  clock: string;
+  /** A live prediction rather than the timetable. */
+  live: boolean;
 };
 
 export type DeparturesWidgetStop = {
+  id: string;
   name: string;
+  /** The rider's own name for it ("Dom"), or null. */
+  label: string | null;
+  /** Where it goes from here — "→ Oporów, Leśnica" — which tells two platforms apart. */
+  detail: string;
   /** `wroclive://open?stop=…`, so a tap opens that stop's board. */
   url: string;
   /** Walking time from where the rider last was, or null when unknown or too far. */
@@ -47,15 +71,29 @@ export type DeparturesWidgetStop = {
 };
 
 export type DeparturesWidgetProps = {
-  /** The first three starred stops; the widget's configuration picks one. */
+  /** Every starred stop, in the rider's order. */
   stops: DeparturesWidgetStop[];
+  /**
+   * The same stops as the widget's "Przystanek" setting lists them — read by
+   * the Swift query `plugins/with-widget-stop-picker.js` adds, from the first
+   * timeline entry.
+   */
+  favourites: { id: string; name: string; detail: string }[];
+  /** When the boards were fetched. */
+  updatedAt: number;
+  /** The timeline's last entry: nothing will redraw it, so it shows clock times, not countdowns. */
+  final: boolean;
   /** `theme.amber` for each scheme — the countdown colour and nothing else (invariant 10). */
   amberLight: string;
   amberDark: string;
 };
 
-/** The widget's configuration menu (`app.json`): which favourite it shows. */
-export type DeparturesWidgetConfiguration = { slot?: 'first' | 'second' | 'third' };
+/**
+ * The widget's configuration: a starred stop's id, from the picker the config
+ * plugin adds. Without that plugin it is a text field, so a typed name matches
+ * too. Empty means "the first starred stop".
+ */
+export type DeparturesWidgetConfiguration = { stop?: string };
 
 export type ArrivalActivityProps = {
   line: string;
@@ -71,6 +109,16 @@ export type ArrivalActivityProps = {
   amberDark: string;
 };
 
+/** A rider on board, counting down to the stop they get off at. */
+export type TripActivityProps = ArrivalActivityProps & {
+  /** Stops still to come, the destination included; 0 once there. */
+  stopsAway: number;
+  /** How many there were when the ride was started — the progress bar's whole. */
+  totalStops: number;
+  /** The next stop the vehicle reaches, as the tram's own display would say it. */
+  nextStop: string;
+};
+
 const DeparturesWidget = (
   props: DeparturesWidgetProps,
   environment: WidgetEnvironment<DeparturesWidgetConfiguration>,
@@ -78,39 +126,95 @@ const DeparturesWidget = (
   'widget';
   const family = environment.widgetFamily;
   const lockScreen = family.startsWith('accessory');
+  // Tinted and clear home screens, and the lock screen, recolour everything:
+  // a filled badge there is a grey slab with the number knocked out of it.
+  const fullColor = !environment.widgetRenderingMode || environment.widgetRenderingMode === 'fullColor';
   const amber = environment.colorScheme === 'dark' ? props?.amberDark : props?.amberLight;
   const now = environment.date.getTime();
-  const slot = environment.configuration?.slot === 'third' ? 2 : environment.configuration?.slot === 'second' ? 1 : 0;
+  const secondary = { type: 'hierarchical', style: 'secondary' } as const;
+  const tertiary = { type: 'hierarchical', style: 'tertiary' } as const;
+
   const stops = props?.stops ?? [];
-  const stop = stops[slot] ?? stops[0];
+  const chosen = String(environment.configuration?.stop ?? '').trim();
+  const wanted = chosen.toLowerCase();
+  const stop = chosen
+    ? stops.find(
+        (entry) =>
+          entry.id === chosen ||
+          entry.name.toLowerCase() === wanted ||
+          (entry.label ?? '').toLowerCase() === wanted,
+      )
+    : stops[0];
 
   if (!stop) {
-    return lockScreen ? (
-      <Text modifiers={[font({ textStyle: 'caption' })]}>Dodaj ulubiony przystanek</Text>
-    ) : (
-      <VStack alignment="leading" spacing={4}>
-        <Text modifiers={[font({ textStyle: 'headline' })]}>Wroclive</Text>
-        <Text modifiers={[font({ textStyle: 'footnote' }), foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}>
-          Dodaj przystanek do ulubionych w aplikacji, a tu pojawią się jego odjazdy.
+    // Nothing starred, or the stop this widget was set to has been unstarred.
+    const message =
+      stops.length === 0
+        ? 'Oznacz przystanek gwiazdką w aplikacji, a tu pojawią się jego odjazdy.'
+        : 'Tego przystanku nie ma już w ulubionych. Przytrzymaj widżet i wybierz inny.';
+    if (lockScreen) {
+      return (
+        <Text modifiers={[font({ textStyle: 'caption' }), lineLimit(2)]}>
+          {stops.length === 0 ? 'Dodaj ulubiony przystanek' : 'Wybierz przystanek'}
         </Text>
+      );
+    }
+    return (
+      <VStack alignment="leading" spacing={6}>
+        <HStack spacing={5}>
+          <Image systemName="star.fill" size={13} color={amber} />
+          <Text modifiers={[font({ textStyle: 'headline' })]}>Wroclive</Text>
+        </HStack>
+        <Text modifiers={[font({ textStyle: 'footnote' }), foregroundStyle(secondary)]}>{message}</Text>
+        <Spacer />
       </VStack>
     );
   }
 
-  // The timeline repeats the same rows once a minute; each entry drops what
-  // has left and counts the rest from its own date, so the widget keeps going
-  // with the app closed. A departure the walk cannot reach stays listed —
-  // it is on the board at the stop too — but its minutes step back.
+  // The timeline repeats the rows once a minute and each entry counts from its
+  // own date, so the widget keeps going with the app closed. A departure the
+  // walk cannot reach stays listed — it is on the board at the stop too — but
+  // steps back. The last entry is never redrawn, so it trades countdowns
+  // (which would freeze) for clock times, which stay true.
+  const final = Boolean(props?.final);
   const upcoming = stop.rows.filter((row) => row.at >= now - 30_000);
   const minutesTo = (row: DeparturesWidgetRow) => Math.max(0, Math.round((row.at - now) / 60_000));
-  const label = (row: DeparturesWidgetRow) => (minutesTo(row) < 1 ? 'teraz' : `${minutesTo(row)} min`);
+  const when = (row: DeparturesWidgetRow) =>
+    final ? row.clock : minutesTo(row) < 1 ? 'teraz' : `${minutesTo(row)} min`;
   const reachable = (row: DeparturesWidgetRow) => stop.walk === null || row.at - now >= (stop.walk + 30) * 1_000;
+  const countdownStyle = (row: DeparturesWidgetRow) => (reachable(row) ? amber : tertiary);
+  const title = stop.label || stop.name;
+  const subtitle = stop.label ? stop.name : stop.detail;
+  const walkMinutes = stop.walk === null ? null : Math.max(1, Math.round(stop.walk / 60));
+  const updated = new Date(props?.updatedAt ?? now);
+  const updatedClock = `${String(updated.getHours()).padStart(2, '0')}:${String(updated.getMinutes()).padStart(2, '0')}`;
+
+  const badge = (row: DeparturesWidgetRow, size: number, width: number) => (
+    <Text
+      modifiers={[
+        font({ size, weight: 'bold', design: 'rounded' }),
+        monospacedDigit(),
+        minimumScaleFactor(0.7),
+        lineLimit(1),
+        ...(fullColor
+          ? [
+              foregroundStyle('#FFFFFF'),
+              frame({ width, height: size + 7 }),
+              background(row.color, shapes.roundedRectangle({ cornerRadius: 6, roundedCornerStyle: 'continuous' })),
+            ]
+          : [frame({ width, alignment: 'leading' })]),
+      ]}>
+      {row.line}
+    </Text>
+  );
+
+  /* --- lock screen ------------------------------------------------------- */
 
   if (family === 'accessoryInline') {
-    const next = upcoming[0];
+    const next = upcoming.find(reachable) ?? upcoming[0];
     return (
       <Text modifiers={[widgetURL(stop.url)]}>
-        {next ? `${next.line} · ${label(next)} · ${stop.name}` : stop.name}
+        {next ? `${next.line} ${next.headsign} · ${when(next)}` : title}
       </Text>
     );
   }
@@ -118,78 +222,165 @@ const DeparturesWidget = (
   if (family === 'accessoryCircular') {
     const next = upcoming.find(reachable) ?? upcoming[0];
     return (
-      <VStack spacing={0} modifiers={[widgetURL(stop.url)]}>
-        <Text modifiers={[font({ size: 13, weight: 'bold' })]}>{next ? next.line : '—'}</Text>
-        <Text modifiers={[font({ size: 11 }), monospacedDigit()]}>{next ? label(next) : ''}</Text>
-      </VStack>
+      <ZStack modifiers={[widgetURL(stop.url)]}>
+        <AccessoryWidgetBackground />
+        <VStack spacing={0}>
+          <Text modifiers={[font({ size: 15, weight: 'bold', design: 'rounded' }), minimumScaleFactor(0.6), lineLimit(1)]}>
+            {next ? next.line : '—'}
+          </Text>
+          <Text modifiers={[font({ size: 12, weight: 'semibold' }), monospacedDigit(), minimumScaleFactor(0.6), lineLimit(1)]}>
+            {next ? (final ? next.clock : minutesTo(next) < 1 ? 'teraz' : `${minutesTo(next)}'`) : ''}
+          </Text>
+        </VStack>
+      </ZStack>
     );
   }
 
   if (family === 'accessoryRectangular') {
     return (
       <VStack alignment="leading" spacing={1} modifiers={[widgetURL(stop.url)]}>
-        <Text modifiers={[font({ textStyle: 'caption', weight: 'semibold' }), lineLimit(1)]}>{stop.name}</Text>
-        {upcoming.slice(0, 2).map((row) => (
-          <HStack key={`${row.line}-${row.at}`} spacing={4}>
-            <Text modifiers={[font({ textStyle: 'caption', weight: 'bold' })]}>{row.line}</Text>
-            <Text modifiers={[font({ textStyle: 'caption' }), lineLimit(1)]}>{row.headsign}</Text>
-            <Spacer />
-            <Text modifiers={[font({ textStyle: 'caption' }), monospacedDigit()]}>{label(row)}</Text>
-          </HStack>
-        ))}
+        <HStack spacing={3}>
+          <Image systemName={upcoming[0]?.tram === false ? 'bus.fill' : 'tram.fill'} size={10} />
+          <Text modifiers={[font({ textStyle: 'caption', weight: 'bold' }), lineLimit(1)]}>{title}</Text>
+        </HStack>
+        {upcoming.length === 0 ? (
+          <Text modifiers={[font({ textStyle: 'caption' })]}>Brak odjazdów</Text>
+        ) : (
+          upcoming.slice(0, 2).map((row) => (
+            <HStack key={`${row.line}-${row.at}`} spacing={4}>
+              <Text modifiers={[font({ textStyle: 'caption', weight: 'bold' }), monospacedDigit()]}>{row.line}</Text>
+              <Text modifiers={[font({ textStyle: 'caption' }), lineLimit(1)]}>{row.headsign}</Text>
+              <Spacer />
+              <Text modifiers={[font({ textStyle: 'caption', weight: 'semibold' }), monospacedDigit()]}>{when(row)}</Text>
+            </HStack>
+          ))
+        )}
       </VStack>
     );
   }
 
-  const small = family === 'systemSmall';
-  const shown = upcoming.slice(0, small ? 3 : 4);
-  const walkMinutes = stop.walk === null ? null : Math.max(1, Math.round(stop.walk / 60));
+  /* --- home screen ------------------------------------------------------- */
 
-  return (
-    <VStack alignment="leading" spacing={6} modifiers={[widgetURL(stop.url)]}>
-      <HStack spacing={4}>
-        <Text modifiers={[font({ textStyle: 'caption', weight: 'semibold' }), foregroundStyle({ type: 'hierarchical', style: 'secondary' }), lineLimit(1)]}>
-          {stop.name}
+  const empty = (
+    <VStack alignment="leading" spacing={2}>
+      <Text modifiers={[font({ textStyle: 'footnote', weight: 'semibold' })]}>
+        {stop.rows.length === 0 ? 'Brak danych o odjazdach' : 'Brak kolejnych odjazdów'}
+      </Text>
+      <Text modifiers={[font({ textStyle: 'caption' }), foregroundStyle(secondary)]}>
+        Otwórz aplikację, aby odświeżyć.
+      </Text>
+    </VStack>
+  );
+
+  if (family === 'systemSmall') {
+    // Indexing, not `[first, ...rest]`: rest destructuring compiles to a Babel
+    // helper (`_toArray`) that the widget extension does not have.
+    const first = upcoming[0];
+    const rest = upcoming.slice(1);
+    return (
+      <VStack alignment="leading" spacing={0} modifiers={[widgetURL(stop.url)]}>
+        <Text modifiers={[font({ textStyle: 'caption', weight: 'semibold' }), foregroundStyle(secondary), lineLimit(1)]}>
+          {title}
         </Text>
         <Spacer />
-        {walkMinutes !== null && !small && (
-          <Text modifiers={[font({ textStyle: 'caption' }), foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}>
-            {`${walkMinutes} min pieszo`}
+        {!first ? (
+          empty
+        ) : (
+          <VStack alignment="leading" spacing={2}>
+            <HStack spacing={5}>
+              {badge(first, 13, 30)}
+              <Text modifiers={[font({ textStyle: 'caption', weight: 'medium' }), lineLimit(1)]}>{first.headsign}</Text>
+            </HStack>
+            {/* The one number a glance is for, given the room it deserves. */}
+            <Text
+              modifiers={[
+                font({ size: 32, weight: 'bold', design: 'rounded' }),
+                monospacedDigit(),
+                minimumScaleFactor(0.6),
+                lineLimit(1),
+                foregroundStyle(countdownStyle(first)),
+              ]}>
+              {when(first)}
+            </Text>
+          </VStack>
+        )}
+        <Spacer />
+        {rest.length > 0 && (
+          <HStack spacing={8}>
+            {rest.slice(0, 2).map((row) => (
+              <HStack key={`${row.line}-${row.at}`} spacing={3}>
+                {badge(row, 11, 24)}
+                <Text
+                  modifiers={[
+                    font({ textStyle: 'caption', weight: 'semibold' }),
+                    monospacedDigit(),
+                    lineLimit(1),
+                    foregroundStyle(countdownStyle(row)),
+                  ]}>
+                  {when(row)}
+                </Text>
+              </HStack>
+            ))}
+          </HStack>
+        )}
+      </VStack>
+    );
+  }
+
+  const large = family === 'systemLarge' || family === 'systemExtraLarge';
+  const shown = upcoming.slice(0, large ? 8 : 4);
+
+  return (
+    <VStack alignment="leading" spacing={large ? 8 : 5} modifiers={[widgetURL(stop.url)]}>
+      <HStack spacing={6}>
+        <VStack alignment="leading" spacing={0}>
+          <Text modifiers={[font({ textStyle: large ? 'headline' : 'subheadline', weight: 'bold' }), lineLimit(1)]}>
+            {title}
           </Text>
+          {(large || !!stop.label) && !!subtitle && (
+            <Text modifiers={[font({ textStyle: 'caption2' }), foregroundStyle(secondary), lineLimit(1)]}>{subtitle}</Text>
+          )}
+        </VStack>
+        <Spacer />
+        {walkMinutes !== null && (
+          <HStack spacing={2}>
+            <Image systemName="figure.walk" size={11} />
+            <Text modifiers={[font({ textStyle: 'caption', weight: 'medium' }), monospacedDigit()]}>{`${walkMinutes} min`}</Text>
+          </HStack>
         )}
       </HStack>
-      {shown.length === 0 ? (
-        <Text modifiers={[font({ textStyle: 'footnote' }), foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}>
-          Otwórz aplikację, aby odświeżyć odjazdy.
-        </Text>
-      ) : (
-        shown.map((row) => (
-          <HStack key={`${row.line}-${row.at}`} spacing={6}>
-            <Text
-              modifiers={[
-                font({ size: 12, weight: 'bold' }),
-                foregroundStyle('#FFFFFF'),
-                padding({ horizontal: 5, vertical: 1 }),
-                frame({ minWidth: 26 }),
-                background(row.color),
-                cornerRadius(5),
-              ]}>
-              {row.line}
-            </Text>
-            {!small && <Text modifiers={[font({ textStyle: 'footnote' }), lineLimit(1)]}>{row.headsign}</Text>}
-            <Spacer />
-            <Text
-              modifiers={[
-                font({ textStyle: 'footnote', weight: 'semibold' }),
-                monospacedDigit(),
-                foregroundStyle(reachable(row) ? amber : { type: 'hierarchical', style: 'tertiary' }),
-              ]}>
-              {label(row)}
-            </Text>
-          </HStack>
-        ))
-      )}
+      {shown.length === 0
+        ? empty
+        : shown.map((row) => (
+            <HStack key={`${row.line}-${row.at}`} spacing={8}>
+              {badge(row, large ? 14 : 13, large ? 36 : 32)}
+              {large ? (
+                <VStack alignment="leading" spacing={0}>
+                  <Text modifiers={[font({ textStyle: 'subheadline', weight: 'medium' }), lineLimit(1)]}>{row.headsign}</Text>
+                  <Text modifiers={[font({ textStyle: 'caption2' }), foregroundStyle(secondary), monospacedDigit()]}>
+                    {row.live ? `${row.clock} · na żywo` : `${row.clock} · rozkład`}
+                  </Text>
+                </VStack>
+              ) : (
+                <Text modifiers={[font({ textStyle: 'subheadline' }), lineLimit(1)]}>{row.headsign}</Text>
+              )}
+              <Spacer />
+              <Text
+                modifiers={[
+                  font({ textStyle: large ? 'headline' : 'subheadline', weight: 'semibold' }),
+                  monospacedDigit(),
+                  foregroundStyle(countdownStyle(row)),
+                ]}>
+                {when(row)}
+              </Text>
+            </HStack>
+          ))}
       <Spacer />
+      {(large || final) && (
+        <Text modifiers={[font({ textStyle: 'caption2' }), foregroundStyle(tertiary)]}>
+          {final ? `Stan z ${updatedClock} · otwórz, aby odświeżyć` : `Aktualizacja ${updatedClock}`}
+        </Text>
+      )}
     </VStack>
   );
 };
@@ -198,14 +389,14 @@ const ArrivalActivity = (props: ArrivalActivityProps, environment: LiveActivityE
   'widget';
   const amber = environment.colorScheme === 'dark' ? props.amberDark : props.amberLight;
   const stale = Boolean(environment.isStale);
+  const secondary = { type: 'hierarchical', style: 'secondary' } as const;
   const badge = (
     <Text
       modifiers={[
-        font({ size: 15, weight: 'bold' }),
+        font({ size: 15, weight: 'bold', design: 'rounded' }),
         foregroundStyle('#FFFFFF'),
-        padding({ horizontal: 6, vertical: 2 }),
-        background(props.color),
-        cornerRadius(6),
+        padding({ horizontal: 7, vertical: 2 }),
+        background(props.color, shapes.roundedRectangle({ cornerRadius: 7, roundedCornerStyle: 'continuous' })),
       ]}>
       {props.line}
     </Text>
@@ -220,9 +411,9 @@ const ArrivalActivity = (props: ArrivalActivityProps, environment: LiveActivityE
       timerInterval={{ lower: new Date(props.since), upper: new Date(props.arrivesAt) }}
       countsDown
       modifiers={[
-        font({ textStyle: 'headline' }),
+        font({ textStyle: 'headline', design: 'rounded' }),
         monospacedDigit(),
-        foregroundStyle(stale ? { type: 'hierarchical', style: 'secondary' } : amber),
+        foregroundStyle(stale ? secondary : amber),
         frame({ maxWidth: 64, alignment: 'trailing' }),
       ]}
     />
@@ -236,9 +427,7 @@ const ArrivalActivity = (props: ArrivalActivityProps, environment: LiveActivityE
         {badge}
         <VStack alignment="leading" spacing={2}>
           <Text modifiers={[font({ textStyle: 'headline' }), lineLimit(1)]}>{title}</Text>
-          <Text modifiers={[font({ textStyle: 'footnote' }), foregroundStyle({ type: 'hierarchical', style: 'secondary' }), lineLimit(1)]}>
-            {subtitle}
-          </Text>
+          <Text modifiers={[font({ textStyle: 'footnote' }), foregroundStyle(secondary), lineLimit(1)]}>{subtitle}</Text>
         </VStack>
         <Spacer />
         {countdown}
@@ -252,9 +441,125 @@ const ArrivalActivity = (props: ArrivalActivityProps, environment: LiveActivityE
     expandedLeading: badge,
     expandedTrailing: countdown,
     expandedBottom: (
-      <Text modifiers={[font({ textStyle: 'footnote' }), foregroundStyle({ type: 'hierarchical', style: 'secondary' }), lineLimit(1)]}>
-        {subtitle}
+      <Text modifiers={[font({ textStyle: 'footnote' }), foregroundStyle(secondary), lineLimit(1)]}>{subtitle}</Text>
+    ),
+  };
+};
+
+/**
+ * "Jadę do…": the rider is on board, and the number that matters is how many
+ * stops are left — a tram's own display counts in stops, and so does anyone
+ * riding it. The clock is still there, smaller: it is the estimate, the count
+ * is the fact.
+ */
+const TripActivity = (props: TripActivityProps, environment: LiveActivityEnvironment) => {
+  'widget';
+  const amber = environment.colorScheme === 'dark' ? props.amberDark : props.amberLight;
+  const stale = Boolean(environment.isStale);
+  const secondary = { type: 'hierarchical', style: 'secondary' } as const;
+  const away = Math.max(0, Math.round(props.stopsAway ?? 0));
+  const total = Math.max(1, Math.round(props.totalStops ?? 1), away);
+  const arrived = props.atStop || away === 0;
+  const done = arrived ? 1 : Math.min(1, Math.max(0, (total - away) / total));
+  const stopsWord = (count: number) => {
+    if (count === 1) return 'przystanek';
+    const units = count % 10;
+    const tens = count % 100;
+    return units >= 2 && units <= 4 && !(tens >= 12 && tens <= 14) ? 'przystanki' : 'przystanków';
+  };
+  const headline = arrived ? 'Wysiadasz tutaj' : away === 1 ? 'Wysiadasz na następnym' : `Jeszcze ${away} ${stopsWord(away)}`;
+
+  const badge = (size: number) => (
+    <Text
+      modifiers={[
+        font({ size, weight: 'bold', design: 'rounded' }),
+        foregroundStyle('#FFFFFF'),
+        padding({ horizontal: 7, vertical: 2 }),
+        background(props.color, shapes.roundedRectangle({ cornerRadius: 7, roundedCornerStyle: 'continuous' })),
+      ]}>
+      {props.line}
+    </Text>
+  );
+  const count = arrived ? (
+    <Image systemName="figure.walk.departure" size={26} color={amber} />
+  ) : (
+    <Text
+      modifiers={[
+        font({ size: 30, weight: 'bold', design: 'rounded' }),
+        monospacedDigit(),
+        foregroundStyle(stale ? secondary : amber),
+      ]}>
+      {String(away)}
+    </Text>
+  );
+  const timer = arrived ? (
+    <Text modifiers={[font({ textStyle: 'caption', weight: 'semibold' }), foregroundStyle(amber)]}>teraz</Text>
+  ) : (
+    <Text
+      timerInterval={{ lower: new Date(props.since), upper: new Date(props.arrivesAt) }}
+      countsDown
+      modifiers={[
+        font({ textStyle: 'caption', weight: 'semibold', design: 'rounded' }),
+        monospacedDigit(),
+        foregroundStyle(secondary),
+        frame({ maxWidth: 56, alignment: 'trailing' }),
+      ]}
+    />
+  );
+  const progress = <ProgressView value={done} modifiers={[tint(props.color)]} />;
+  const following = arrived ? `Przystanek ${props.stopName}` : `Następny: ${props.nextStop || props.stopName}`;
+
+  return {
+    banner: (
+      <VStack spacing={9} modifiers={[padding({ all: 14 })]}>
+        <HStack spacing={10}>
+          {badge(15)}
+          <VStack alignment="leading" spacing={1}>
+            <Text modifiers={[font({ textStyle: 'headline' }), lineLimit(1)]}>{headline}</Text>
+            <Text modifiers={[font({ textStyle: 'footnote' }), foregroundStyle(secondary), lineLimit(1)]}>
+              {`Wysiadka: ${props.stopName}`}
+            </Text>
+          </VStack>
+          <Spacer />
+          {count}
+        </HStack>
+        {progress}
+        <HStack spacing={6}>
+          <Text modifiers={[font({ textStyle: 'caption' }), foregroundStyle(secondary), lineLimit(1)]}>{following}</Text>
+          <Spacer />
+          {timer}
+        </HStack>
+      </VStack>
+    ),
+    compactLeading: badge(13),
+    compactTrailing: arrived ? (
+      <Image systemName="figure.walk.departure" size={15} color={amber} />
+    ) : (
+      <Text modifiers={[font({ size: 15, weight: 'bold', design: 'rounded' }), monospacedDigit(), foregroundStyle(amber)]}>
+        {`${away} przyst.`}
       </Text>
+    ),
+    minimal: (
+      <Text modifiers={[font({ size: 14, weight: 'bold', design: 'rounded' }), foregroundStyle(amber)]}>
+        {arrived ? '✓' : String(away)}
+      </Text>
+    ),
+    expandedLeading: badge(15),
+    expandedTrailing: count,
+    expandedCenter: (
+      <Text modifiers={[font({ textStyle: 'headline' }), lineLimit(1)]}>{headline}</Text>
+    ),
+    expandedBottom: (
+      <VStack spacing={6}>
+        {progress}
+        <HStack spacing={6}>
+          <Text modifiers={[font({ textStyle: 'caption' }), foregroundStyle(secondary), lineLimit(1)]}>
+            {arrived ? following : `${following} · wysiadka: ${props.stopName}`}
+          </Text>
+          <Spacer />
+          {timer}
+        </HStack>
+      </VStack>
     ),
   };
 };
@@ -264,3 +569,4 @@ export const departuresWidget = createWidget<DeparturesWidgetProps, DeparturesWi
   DeparturesWidget,
 );
 export const arrivalActivity = createLiveActivity<ArrivalActivityProps>('Arrival', ArrivalActivity);
+export const tripActivity = createLiveActivity<TripActivityProps>('Trip', TripActivity);

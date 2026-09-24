@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { usePoll } from '@/hooks/use-poll';
 import { fetchFavouriteBoards, lastPosition, rememberPosition, type FavouriteBoard } from '@/lib/favourite-boards';
 import type { FavouriteStop } from '@/lib/favourite-stops';
-import { syncDeparturesWidget, WIDGET_STOPS } from '@/lib/widgets';
+import { syncDeparturesWidget } from '@/lib/widgets';
 
 /** Often enough for the sheet's countdowns; the widget's timeline covers the gaps. */
 const REFRESH_MS = 60_000;
@@ -20,8 +20,10 @@ export function useFavouriteBoards(
   favourites: FavouriteStop[],
   userPosition: { lat: number; lon: number } | null,
 ) {
-  const shown = useMemo(() => favourites.slice(0, WIDGET_STOPS), [favourites]);
-  const key = shown.map((stop) => stop.id).join(',');
+  const shown = favourites;
+  // Ids only: renaming or reordering a favourite re-syncs the widget below
+  // without fetching every board again.
+  const key = [...shown.map((stop) => stop.id)].sort().join(',');
 
   const boards = usePoll((signal) => fetchFavouriteBoards(shown, signal), REFRESH_MS, {
     enabled: shown.length > 0,
@@ -48,8 +50,8 @@ export function useFavouriteBoards(
   );
 
   useEffect(() => {
-    syncDeparturesWidget(shown.length ? current : [], position, boards.receivedAt ?? Date.now());
-  }, [current, shown.length, position, boards.receivedAt]);
+    syncDeparturesWidget(shown, current, position, boards.receivedAt ?? Date.now());
+  }, [current, shown, position, boards.receivedAt]);
 
   return { boards: current, receivedAt: boards.receivedAt };
 }

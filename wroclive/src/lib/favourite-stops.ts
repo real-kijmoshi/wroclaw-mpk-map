@@ -18,8 +18,19 @@ import { isRecentStop, type RecentStop } from '@/lib/recent-stops';
 const STORAGE_KEY = 'wroclive.favouriteStops';
 /** Past this the list is a directory, not a shortcut. */
 export const MAX_FAVOURITE_STOPS = 12;
+/** "Dom", "Praca" — a word, not a sentence; it has to fit a lock-screen widget. */
+export const MAX_LABEL_LENGTH = 24;
 
-export type FavouriteStop = RecentStop;
+export type FavouriteStop = RecentStop & {
+  /**
+   * The rider's own name for it. Shown above the stop's real name, never
+   * instead of it: "Dom" does not tell anyone which platform to stand at.
+   */
+  label?: string;
+};
+
+/** What a list, the widget and a quick action call a starred stop. */
+export const favouriteTitle = (stop: FavouriteStop) => stop.label || stop.name;
 
 let list: FavouriteStop[] = [];
 const listeners = new Set<() => void>();
@@ -50,6 +61,8 @@ export const favouriteStopsStore = {
 
   has: (id: string) => list.some((item) => item.id === id),
 
+  get: (id: string) => list.find((item) => item.id === id) ?? null,
+
   /** Star or unstar. Returns whether the stop is a favourite afterwards. */
   toggle(stop: Stop): boolean {
     if (favouriteStopsStore.has(stop.id)) {
@@ -62,6 +75,45 @@ export const favouriteStopsStore = {
     emit();
     return favouriteStopsStore.has(stop.id);
   },
+
+  remove(id: string) {
+    list = list.filter((item) => item.id !== id);
+    persist();
+    emit();
+  },
+
+  /** Name it, or clear the name with an empty string. */
+  rename(id: string, label: string) {
+    const trimmed = label.trim().slice(0, MAX_LABEL_LENGTH);
+    list = list.map((item) => {
+      if (item.id !== id) return item;
+      const { label: _previous, ...rest } = item;
+      return trimmed ? { ...rest, label: trimmed } : rest;
+    });
+    persist();
+    emit();
+  },
+
+  /**
+   * Move one place up or down. The order is what the sheet lists, what the
+   * quick actions offer first, and what an unconfigured widget falls back to.
+   */
+  move(id: string, by: -1 | 1) {
+    const from = list.findIndex((item) => item.id === id);
+    const to = from + by;
+    if (from < 0 || to < 0 || to >= list.length) return;
+    const next = [...list];
+    [next[from], next[to]] = [next[to], next[from]];
+    list = next;
+    persist();
+    emit();
+  },
+};
+
+const isFavouriteStop = (value: unknown): value is FavouriteStop => {
+  if (!isRecentStop(value)) return false;
+  const label = (value as { label?: unknown }).label;
+  return label === undefined || typeof label === 'string';
 };
 
 /** Read the starred stops once at startup. */
@@ -69,7 +121,7 @@ export async function hydrateFavouriteStops() {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
     const parsed: unknown = raw ? JSON.parse(raw) : null;
-    list = Array.isArray(parsed) ? parsed.filter(isRecentStop).slice(0, MAX_FAVOURITE_STOPS) : [];
+    list = Array.isArray(parsed) ? parsed.filter(isFavouriteStop).slice(0, MAX_FAVOURITE_STOPS) : [];
   } catch {
     list = [];
   } finally {

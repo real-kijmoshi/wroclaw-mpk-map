@@ -3,7 +3,7 @@
 const { describeVehicle } = require('./progress');
 
 /**
- * Keeps arrival Live Activities right while the app is suspended.
+ * Keeps arrival and trip Live Activities right while the app is suspended.
  *
  * The app starts an activity when a rider arms an arrival alert and, once iOS
  * hands it a push token, registers it here: which vehicle, which stop, and the
@@ -12,6 +12,12 @@ const { describeVehicle } = require('./progress');
  * sheet reads — and pushes the new countdown to the lock screen. When the stop
  * is passed, the vehicle leaves the feed, or the activity is simply old, it
  * sends the end event and forgets the token.
+ *
+ * A *trip* registration (`kind: 'trip'`) is the other direction of the same
+ * question: the rider is on board and the stop is where they get off. It is
+ * drawn by the app's `Trip` layout, so its content state also carries how many
+ * stops are left and the name of the next one — the count, not the clock, is
+ * what a rider on a tram watches.
  *
  * The token is the only thing held, it is held in memory only, and it goes as
  * soon as the activity ends. Nothing is written to disk and nothing identifies
@@ -37,6 +43,37 @@ const TOKEN_PATTERN = /^[0-9a-f]{32,256}$/i;
 
 const clean = (value, max = 120) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
 
+/** What a registration follows: a vehicle *to* a stop, or a rider *on* a vehicle to where they get off. */
+const KINDS = new Set(['arrival', 'trip']);
+/** The content state name each kind is drawn with — `createLiveActivity()`'s name in the app. */
+const LAYOUT = { arrival: 'Arrival', trip: 'Trip' };
+
+/**
+ * Where a rider on board stands relative to the stop they get off at.
+ *
+ * `nextStops` starts with the stop the vehicle is standing at, when it is
+ * standing at one, and that stop is about to be left behind rather than still
+ * to come — so it is not counted. `null` means the destination is no longer
+ * ahead: passed, or the vehicle has turned onto another route. The app carries
+ * the same function (`wroclive/src/lib/trip-progress.ts`); both read one
+ * payload and must count the same stops.
+ */
+function tripProgress(trip, destinationId) {
+  const stops = trip?.nextStops ?? [];
+  const index = stops.findIndex((entry) => entry.id === destinationId);
+  if (index < 0) return null;
+  const standingAt = trip.atStop?.id ?? null;
+  const arrived = standingAt === destinationId;
+  const leavingFirst = !arrived && standingAt !== null && stops[0]?.id === standingAt;
+  const upcoming = leavingFirst ? stops[1] : stops[0];
+  return {
+    arrived,
+    stopsAway: arrived ? 0 : index + 1 - (leavingFirst ? 1 : 0),
+    etaSeconds: Number.isFinite(stops[index].etaSeconds) ? stops[index].etaSeconds : null,
+    nextStop: (upcoming ?? stops[index]).name ?? '',
+  };
+}
+
 /**
  * Validate a registration body. Returns the record or an error string —
  * everything in it is echoed onto a lock screen, so nothing is taken on trust.
@@ -48,10 +85,14 @@ function parseRegistration(body) {
   const vehicleId = clean(body.vehicleId);
   const stopId = clean(body.stopId);
   if (!vehicleId || !stopId) return 'vehicleId and stopId are required';
+  // Absent on every build that predates trips: those registrations are arrivals.
+  const kind = body.kind === undefined ? 'arrival' : clean(body.kind, 16);
+  if (!KINDS.has(kind)) return 'kind must be arrival or trip';
   const view = body.view && typeof body.view === 'object' ? body.view : {};
   const colour = (value) => (/^#[0-9a-f]{6}$/i.test(clean(value, 7)) ? clean(value, 7) : null);
   const record = {
     token,
+    kind,
     vehicleId,
     stopId,
     view: {
@@ -64,6 +105,12 @@ function parseRegistration(body) {
     },
   };
   if (!record.view.line || !record.view.stopName) return 'view.line and view.stopName are required';
+  if (kind === 'trip') {
+    // How many stops the ride had when it was started — the progress bar's
+    // whole. Clamped: it is drawn, never trusted.
+    const total = Number(view.totalStops);
+    record.view.totalStops = Number.isFinite(total) ? Math.min(Math.max(Math.round(total), 1), 200) : 1;
+  }
   return record;
 }
 
@@ -115,6 +162,7 @@ class LiveActivityService {
       registeredAt: now,
       lastPushAt: 0,
       lastArrivesAt: null,
+      lastStopsAway: null,
     });
     return { ok: true };
   }
@@ -124,10 +172,10 @@ class LiveActivityService {
   }
 
   /** The content state `expo-widgets`' Live Activity decodes: `{ name, props }`, props a JSON string. */
-  #contentState(record, arrivesAt, since, atStop) {
+  #contentState(record, props) {
     return {
-      name: 'Arrival',
-      props: JSON.stringify({ ...record.view, arrivesAt, since, atStop }),
+      name: LAYOUT[record.kind] ?? 'Arrival',
+      props: JSON.stringify({ ...record.view, ...props }),
     };
   }
 
@@ -186,13 +234,24 @@ class LiveActivityService {
         continue;
       }
       const arrivesAt = now + stop.etaSeconds * 1000;
+      const progress = record.kind === 'trip' ? tripProgress(trip, record.stopId) : null;
       const shifted =
         record.lastArrivesAt === null || Math.abs(arrivesAt - record.lastArrivesAt) > MIN_SHIFT_SECONDS * 1000;
-      if (!shifted && now - record.lastPushAt < HEARTBEAT_MS) continue;
+      // A trip's count of stops is the headline: a stop passed is news even
+      // when the clock has not moved.
+      const moved = progress !== null && progress.stopsAway !== record.lastStopsAway;
+      if (!shifted && !moved && now - record.lastPushAt < HEARTBEAT_MS) continue;
 
       record.lastArrivesAt = arrivesAt;
       record.lastPushAt = now;
       const atStop = trip.atStop?.id === record.stopId;
+      const props = { arrivesAt, since: now, atStop };
+      if (progress) {
+        record.lastStopsAway = progress.stopsAway;
+        props.stopsAway = progress.stopsAway;
+        props.nextStop = progress.nextStop;
+      }
+      const urgent = progress ? progress.stopsAway <= 1 : stop.etaSeconds <= URGENT_SECONDS;
       work.push(
         this.#push(
           record,
@@ -200,11 +259,11 @@ class LiveActivityService {
             aps: {
               timestamp: Math.floor(now / 1000),
               event: 'update',
-              'content-state': this.#contentState(record, arrivesAt, now, atStop),
+              'content-state': this.#contentState(record, props),
               'stale-date': Math.floor((arrivesAt + STALE_AFTER_MS) / 1000),
             },
           },
-          stop.etaSeconds <= URGENT_SECONDS ? 10 : 5,
+          urgent ? 10 : 5,
         ),
       );
     }
@@ -261,4 +320,4 @@ const bothFleets = (vehicles, klosok) => ({
   },
 });
 
-module.exports = { LiveActivityService, bothFleets, parseRegistration };
+module.exports = { LiveActivityService, bothFleets, parseRegistration, tripProgress };
