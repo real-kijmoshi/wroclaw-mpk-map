@@ -16,9 +16,8 @@ const { HEADING_PENALTY_METERS } = require('./gtfs/store');
  *      ordered list of stops (`GtfsStore.matchVariant`);
  *   2. projecting the position onto that shape gives how far into the route
  *      the vehicle is, in metres;
- *   3. the timetable turns metres into seconds — every stop carries its
- *      distance along the shape and its offset from the start of the run, so
- *      the vehicle's own progress interpolates between them;
+ *   3. the timetable turns metres into seconds using each candidate trip's
+ *      own stop times, interpolated along the shape;
  *   4. the run itself is identified by asking which of today's departures on
  *      this shape would be exactly here right now. The gap is the delay.
  *
@@ -47,6 +46,18 @@ const AT_STOP_METERS = 45;
  * "18 minut spóźnienia" that is really the next tram, on time.
  */
 const MAX_DELAY_SECONDS = 45 * 60;
+// A brigade is supporting evidence only. The live city feed encodes it as a
+// five-digit duty code (for example 02007), while GTFS says "7"; substitutions
+// and cross-line duties mean the suffix is not an exact trip identifier.
+const BRIGADE_TIE_SECONDS = 90;
+const BRIGADE_MAX_DELAY_SECONDS = 5 * 60;
+
+const brigadeNumber = (value) => {
+  const raw = String(value ?? '').trim();
+  if (/^\d{5}$/.test(raw)) return String(Number(raw.slice(-2)));
+  if (/^\d{1,2}$/.test(raw)) return String(Number(raw));
+  return null;
+};
 
 /**
  * How far around a vehicle's last known position, in route metres, the fast
@@ -144,13 +155,15 @@ const isMonotonic = (stops) => {
  * binary-searchable position, and the pre-optimization scan is the only answer
  * that matches the old behavior byte for byte.
  */
-const offsetAtScan = (stops, alongMeters) => {
+const offsetAtScan = (stops, alongMeters, profile = null) => {
   const last = stops[stops.length - 1];
+  const arrival = (index) => profile ? profile.arrivalOffsets[index] : stops[index].arrivalOffset;
+  const departure = (index) => profile ? profile.departureOffsets[index] : stops[index].departureOffset;
   if (alongMeters <= stops[0].alongMeters) {
-    return { offset: stops[0].arrivalOffset, segmentIndex: 0, sorted: false };
+    return { offset: arrival(0), segmentIndex: 0, sorted: false };
   }
   if (alongMeters >= last.alongMeters) {
-    return { offset: last.arrivalOffset, segmentIndex: -1, sorted: false };
+    return { offset: arrival(stops.length - 1), segmentIndex: -1, sorted: false };
   }
 
   for (let i = 0; i < stops.length - 1; i += 1) {
@@ -161,13 +174,13 @@ const offsetAtScan = (stops, alongMeters) => {
     const span = to.alongMeters - from.alongMeters;
     const fraction = span > 0 ? (alongMeters - from.alongMeters) / span : 0;
     return {
-      offset: from.departureOffset + fraction * (to.arrivalOffset - from.departureOffset),
+      offset: departure(i) + fraction * (arrival(i + 1) - departure(i)),
       segmentIndex: i,
       sorted: false,
     };
   }
 
-  return { offset: last.arrivalOffset, segmentIndex: -1, sorted: false };
+  return { offset: arrival(stops.length - 1), segmentIndex: -1, sorted: false };
 };
 
 /**
@@ -190,22 +203,24 @@ const offsetAtScan = (stops, alongMeters) => {
  * the caller whether the segment index is trustworthy, so it can use the old
  * findIndex walk where the list is not sorted.
  */
-const offsetAt = (stops, alongMeters) => {
+const offsetAt = (stops, alongMeters, profile = null) => {
   const sorted = isMonotonic(stops);
   const last = stops[stops.length - 1];
+  const arrival = (index) => profile ? profile.arrivalOffsets[index] : stops[index].arrivalOffset;
+  const departure = (index) => profile ? profile.departureOffsets[index] : stops[index].departureOffset;
 
   if (alongMeters <= stops[0].alongMeters) {
-    return { offset: stops[0].arrivalOffset, segmentIndex: 0, sorted };
+    return { offset: arrival(0), segmentIndex: 0, sorted };
   }
   if (alongMeters >= last.alongMeters) {
-    return { offset: last.arrivalOffset, segmentIndex: -1, sorted };
+    return { offset: arrival(stops.length - 1), segmentIndex: -1, sorted };
   }
 
   // `from` is the first stop whose segment contains `alongMeters` — exactly
   // the segment the linear loop returned on a monotonic array (a position
   // exactly on a stop boundary resolves with fraction 1 to the boundary stop's
   // *arrival* offset, not its departure). Non-monotonic stops keep the scan.
-  if (!sorted) return offsetAtScan(stops, alongMeters);
+  if (!sorted) return offsetAtScan(stops, alongMeters, profile);
 
   let low = 0;
   let high = stops.length;
@@ -219,7 +234,7 @@ const offsetAt = (stops, alongMeters) => {
   const span = to.alongMeters - from.alongMeters;
   const fraction = span > 0 ? (alongMeters - from.alongMeters) / span : 0;
   return {
-    offset: from.departureOffset + fraction * (to.arrivalOffset - from.departureOffset),
+    offset: departure(low - 1) + fraction * (arrival(low) - departure(low - 1)),
     segmentIndex: low - 1,
     sorted,
   };
@@ -248,8 +263,9 @@ const nextStopIndex = (stops, segmentIndex, alongMeters) => {
  * Which departure of this shape the vehicle is running, and by how much it is
  * off its timetable. Positive seconds mean late.
  *
- * Every run of the shape shares one relative profile, so the question reduces
- * to: which start time, plus the vehicle's progress, lands closest to now?
+ * Runs on one shape can have different relative stop times. Group identical
+ * profiles, interpolate the vehicle once per group, then search that group's
+ * departures for the closest run.
  * Trips that began yesterday are considered too — a night service at 00:20 is
  * a 24:20 departure on the previous service day, and skipping that frame
  * leaves every night vehicle unmatched.
@@ -258,13 +274,11 @@ const nextStopIndex = (stops, segmentIndex, alongMeters) => {
  * so the old scan over every trip in both frames — O(trips) per vehicle per
  * frame — is replaced with a binary search. The delay window caps the answer
  * to `±MAX_DELAY_SECONDS` around the target start, so only the small band of
- * departures inside it is examined at all. The band is walked in the same
- * ascending order the scan used, and the same strict `|delay| < |best|`
- * comparison keeps the winner identical: a nearer departure with a service
- * that is not running today is skipped, and a slightly farther one with an
- * active service wins, exactly as before.
+ * departures inside it is examined at all. Each group's band is walked in
+ * ascending order: an inactive departure is skipped, while a slightly farther
+ * active one remains eligible.
  */
-const matchTrip = (gtfs, variant, progressOffset, now) => {
+const matchTrip = (gtfs, variant, progressOffset, now, alongMeters = null, brigade = null) => {
   const local = inWarsaw(now);
   const yesterday = new Date(local);
   yesterday.setDate(yesterday.getDate() - 1);
@@ -274,26 +288,52 @@ const matchTrip = (gtfs, variant, progressOffset, now) => {
     { seconds: secondsOfDay(local) + DAY_SECONDS, date: yesterday, label: 'yesterday' },
   ];
 
-  const trips = variant.trips;
   const tripStart = gtfs.tripStart;
+  const duty = brigadeNumber(brigade);
+  // Small synthetic stores used by callers without timing groups retain the
+  // original single-profile behavior. A built GTFS variant always has groups;
+  // an empty set means none of its trips has compatible stop times.
+  const groups = Array.isArray(variant.timingGroups)
+    ? variant.timingGroups.map((group) => ({
+        ...group,
+        progressOffset: alongMeters === null
+          ? progressOffset
+          : offsetAt(variant.stops, alongMeters, group.profile).offset,
+      }))
+    : [{ trips: variant.trips, profile: null, progressOffset }];
 
   let best = null;
   for (const frame of frames) {
-    const targetStart = frame.seconds - progressOffset;
+    for (const group of groups) {
+      const { trips } = group;
+      const targetStart = frame.seconds - group.progressOffset;
+      const from = firstTripIndexAtLeast(trips, tripStart, targetStart - MAX_DELAY_SECONDS);
+      for (let i = from; i < trips.length; i += 1) {
+        const start = tripStart[trips[i]];
+        if (start < 0) continue;
+        if (start - targetStart > MAX_DELAY_SECONDS) break;
 
-    const from = firstTripIndexAtLeast(trips, tripStart, targetStart - MAX_DELAY_SECONDS);
-    for (let i = from; i < trips.length; i += 1) {
-      const start = tripStart[trips[i]];
-      if (start < 0) continue;
-      if (start - targetStart > MAX_DELAY_SECONDS) break;
+        const delaySeconds = targetStart - start;
+        const trip = gtfs.trips[trips[i]];
+        if (!gtfs.isServiceActive(trip.serviceId, frame.date)) continue;
+        const brigadeMatch = duty !== null &&
+          Math.abs(delaySeconds) <= BRIGADE_MAX_DELAY_SECONDS &&
+          brigadeNumber(trip.blockId) === duty;
+        if (best) {
+          const gap = Math.abs(delaySeconds) - Math.abs(best.delaySeconds);
+          if (gap >= 0 && !(brigadeMatch && !best.brigadeMatch && gap <= BRIGADE_TIE_SECONDS)) {
+            continue;
+          }
+          if (gap < 0 && best.brigadeMatch && !brigadeMatch && gap >= -BRIGADE_TIE_SECONDS) {
+            continue;
+          }
+        }
 
-      const delaySeconds = targetStart - start;
-      if (best && Math.abs(delaySeconds) >= Math.abs(best.delaySeconds)) continue;
-
-      const trip = gtfs.trips[trips[i]];
-      if (!gtfs.isServiceActive(trip.serviceId, frame.date)) continue;
-
-      best = { trip, start, delaySeconds: Math.round(delaySeconds), serviceDay: frame.label };
+        best = {
+          trip, start, delaySeconds: Math.round(delaySeconds), serviceDay: frame.label,
+          profile: group.profile, progressOffset: group.progressOffset, brigadeMatch,
+        };
+      }
     }
   }
 
@@ -468,8 +508,8 @@ const describeVehicle = (
   if (!projection || !described.onRoute || !timed) return described;
 
   const progress = offsetAt(stops, projection.along);
-  const progressOffset = progress.offset;
-  const run = matchTrip(gtfs, variant, progressOffset, now);
+  const run = matchTrip(gtfs, variant, progress.offset, now, projection.along, vehicle.brigade);
+  const progressOffset = run?.progressOffset ?? progress.offset;
 
   if (run) {
     described.tripId = run.trip.id;
@@ -491,8 +531,9 @@ const describeVehicle = (
   const upcoming = nextIndex === -1 ? [] : stops.slice(nextIndex, nextIndex + Math.max(limit, 0));
   const passedFrom = nextIndex === -1 ? stops.length : nextIndex;
 
-  const toEntry = (stop, passed) => {
-    const relative = stop.arrivalOffset - progressOffset;
+  const toEntry = (stop, stopIndex, passed) => {
+    const arrivalOffset = run?.profile ? run.profile.arrivalOffsets[stopIndex] : stop.arrivalOffset;
+    const relative = arrivalOffset - progressOffset;
     return {
       id: stop.id,
       name: stop.name,
@@ -502,7 +543,7 @@ const describeVehicle = (
       // The timetable for the run this vehicle is on, not for the sample trip
       // the variant was described from — that one is some other departure and
       // showing its times would be a plain lie.
-      scheduled: run ? secondsToTime(run.start + stop.arrivalOffset) : null,
+      scheduled: run ? secondsToTime(run.start + arrivalOffset) : null,
       // Remaining scheduled running time from where the vehicle actually is.
       etaSeconds: passed ? null : Math.max(0, Math.round(relative)),
       agoSeconds: passed ? Math.max(0, Math.round(-relative)) : null,
@@ -511,11 +552,12 @@ const describeVehicle = (
     };
   };
 
+  const historyFrom = Math.max(0, passedFrom - Math.max(history, 0));
   described.previousStops = stops
-    .slice(Math.max(0, passedFrom - Math.max(history, 0)), passedFrom)
-    .map((stop) => toEntry(stop, true));
+    .slice(historyFrom, passedFrom)
+    .map((stop, index) => toEntry(stop, historyFrom + index, true));
   described.previousStop = described.previousStops.at(-1) ?? null;
-  described.nextStops = upcoming.map((stop) => toEntry(stop, false));
+  described.nextStops = upcoming.map((stop, index) => toEntry(stop, nextIndex + index, false));
   described.nextStop = described.nextStops[0] ?? null;
   described.stopsAhead = stops.length - passedFrom;
 

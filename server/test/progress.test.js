@@ -83,6 +83,17 @@ describe('describeVehicle', () => {
     assert.equal(late.nextStop.etaSeconds, onTime.nextStop.etaSeconds);
   });
 
+  it('uses the matched trip’s own stop times when trips share a shape', () => {
+    // t4a2 reaches Świdnicka one minute and Oporów three minutes later
+    // relative to its start than t4a. Reusing t4a's profile reported a false
+    // delay and the wrong scheduled clock times for the 09:00 run.
+    const trip = describeVehicle(gtfs, onLine4(), { now: at('09:08:06') });
+    assert.equal(trip.tripId, 't4a2');
+    assert.ok(Math.abs(trip.delaySeconds) < 30, `expected on time, got ${trip.delaySeconds}s`);
+    assert.equal(trip.nextStop.scheduled, '09:18:00');
+    assert.ok(trip.nextStop.etaSeconds > 9 * 60 && trip.nextStop.etaSeconds < 10 * 60);
+  });
+
   it('refuses to guess a run that is nowhere near the timetable', () => {
     // Small hours, when nothing on this shape is scheduled: better no delay at
     // all than a confident number belonging to another departure.
@@ -614,6 +625,25 @@ describe('matchTrip binary search vs linear scan (differential)', () => {
     assertSameTrip([28_800 - MAX_DELAY_SECONDS - 100], { now: morning, label: 'way late' });
     assertSameTrip([0, 86_400], { now: morning, label: 'dead timetable' });
     assertSameTrip([], { now: morning, label: 'no trips at all' });
+  });
+});
+
+describe('brigade as a run-matching clue', () => {
+  const now = new Date('2026-06-15T08:01:00+02:00');
+
+  it('breaks a close timing tie in favour of the matching duty', () => {
+    const { gtfs, variant } = makeVariant([8 * 3600, 8 * 3600 - 40]);
+    gtfs.trips[0].blockId = '1';
+    gtfs.trips[1].blockId = '2';
+    assert.equal(matchTrip(gtfs, variant, 0, now)?.trip.id, 't0');
+    assert.equal(matchTrip(gtfs, variant, 0, now, null, '02002')?.trip.id, 't1');
+  });
+
+  it('does not force a brigade whose trip is far from the vehicle', () => {
+    const { gtfs, variant } = makeVariant([8 * 3600, 8 * 3600 + 8 * 60]);
+    gtfs.trips[0].blockId = '1';
+    gtfs.trips[1].blockId = '2';
+    assert.equal(matchTrip(gtfs, variant, 0, now, null, '02002')?.trip.id, 't0');
   });
 });
 

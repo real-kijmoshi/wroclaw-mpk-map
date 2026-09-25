@@ -253,8 +253,21 @@ nearer explanation is a different departure, and guessing produces a confident
 matches, `scheduled` is null everywhere and only `etaSeconds` — remaining
 scheduled running time from the vehicle's real position — is served. Never
 substitute the variant's own sample times there; they belong to some other
-departure. This all rests on every trip of a shape sharing one relative profile,
-which is true of this feed and is what makes the offsets reusable.
+departure. Trips on the same shape do **not** share one relative timing profile:
+the September 2026 feed has 10–12 profiles on each main direction of line 4.
+`GtfsStore` groups trips by their own stop-time offsets, and `matchTrip()`
+interpolates against each group before choosing a run. Keep the matched group's
+profile for both the scheduled stop clocks and the remaining ETA; borrowing the
+representative trip's offsets made a 10:03 tram display 09:58 and six minutes
+of delay. A trip whose stop sequence differs from the shape's representative
+is left unmatched rather than assigned somebody else's times.
+
+The supplementary Open Data positions may carry `Brygada` (for example
+`02007`) while GTFS's `trips.brigade_id` carries `7`. The suffix is a useful
+tie-breaker only when two runs are already close by position and time. Live
+duties can be reassigned and the prefix can name another line in a linked duty,
+so it must never force a run with a large apparent delay. A change in a
+vehicle's brigade also invalidates its stationary description cache.
 
 **19. `/map` is a second client, and the app's rules apply to it too.**
 `server/views/map.html` is a full client — line filters, alerts, routes,
