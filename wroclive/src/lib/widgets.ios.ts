@@ -6,6 +6,7 @@ import { arrivalSeconds, departureSeconds, directionsLabel } from '@/lib/departu
 import { stopAppUrl, vehicleAppUrl } from '@/lib/links';
 import type { FavouriteStop } from '@/lib/favourite-stops';
 import { colorFor } from '@/lib/lines';
+import { toPropertyList } from '@/lib/property-list';
 import { walkSeconds } from '@/lib/walking';
 import type { FavouriteTrip } from '@/lib/favourite-trips';
 import type { ArrivalActivityInput, TripActivityInput, TripBoard, WidgetBoard, WidgetInput } from '@/lib/widgets';
@@ -166,7 +167,7 @@ export function syncDeparturesWidget(
       final: false,
     };
     if (stops.length === 0) {
-      layouts.departuresWidget.updateSnapshot(base);
+      layouts.departuresWidget.updateSnapshot(toPropertyList(base) as DeparturesWidgetProps);
       return;
     }
     const start = Math.floor(now / 60_000) * 60_000;
@@ -175,7 +176,8 @@ export function syncDeparturesWidget(
         const date = start + minute * 60_000;
         return {
           date: new Date(date),
-          props: {
+          // UserDefaults refuses the whole timeline over a single null.
+          props: toPropertyList({
             ...base,
             final: minute === TIMELINE_MINUTES,
             // Each entry carries only what has not left by its own minute, so
@@ -184,7 +186,7 @@ export function syncDeparturesWidget(
               ...stop,
               rows: stop.rows.filter((row) => row.at >= date - 30_000).slice(0, ROWS_PER_STOP),
             })),
-          },
+          }) as DeparturesWidgetProps,
         };
       }),
     );

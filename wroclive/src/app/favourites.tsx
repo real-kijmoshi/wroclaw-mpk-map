@@ -10,6 +10,8 @@ import { ModalScreen } from '@/components/modal-screen';
 import { ThemedText } from '@/components/themed-text';
 import { Motion, Radius, Space, Type } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
+import { boardLines, directionsLabel } from '@/lib/departures';
+import { useLatestFavouriteBoards, type TripBoard } from '@/lib/favourite-boards';
 import {
   favouriteStopsStore,
   MAX_FAVOURITE_STOPS,
@@ -17,7 +19,13 @@ import {
   useFavouriteStops,
   type FavouriteStop,
 } from '@/lib/favourite-stops';
-import { favouriteTripsStore, MAX_FAVOURITE_TRIPS, tripTitle, useFavouriteTrips } from '@/lib/favourite-trips';
+import {
+  favouriteTripsStore,
+  MAX_FAVOURITE_TRIPS,
+  tripTitle,
+  useFavouriteTrips,
+  type FavouriteTrip,
+} from '@/lib/favourite-trips';
 import { tapped } from '@/lib/haptics';
 import { mapIntentStore } from '@/lib/map-intent';
 
@@ -37,6 +45,7 @@ export default function FavouritesScreen() {
   const router = useRouter();
   const favourites = useFavouriteStops();
   const trips = useFavouriteTrips();
+  const latest = useLatestFavouriteBoards();
   const [editing, setEditing] = useState<string | null>(null);
 
   return (
@@ -75,6 +84,7 @@ export default function FavouritesScreen() {
                   {index > 0 && <Divider />}
                   <FavouriteEditorRow
                     stop={stop}
+                    directions={directionsLabel(latest.stops.find((board) => board.stop.id === stop.id)?.departures ?? [])}
                     first={index === 0}
                     last={index === favourites.length - 1}
                     editing={editing === stop.id}
@@ -104,7 +114,7 @@ export default function FavouritesScreen() {
                         {tripTitle(trip)}
                       </ThemedText>
                       <ThemedText type="footnote" themeColor="textSecondary" numberOfLines={1}>
-                        {trip.from.name} → {trip.to.name}
+                        {tripSubtitle(trip, latest.trips.find((board) => board.trip.id === trip.id))}
                       </ThemedText>
                     </View>
                   </View>
@@ -143,8 +153,21 @@ export default function FavouritesScreen() {
   );
 }
 
+/**
+ * Under a named trip, where it goes; under an unnamed one — whose title
+ * already says that — the lines that make it.
+ */
+function tripSubtitle(trip: FavouriteTrip, board: TripBoard | undefined) {
+  if (trip.label) return `${trip.from.name} → ${trip.to.name}`;
+  if (!board?.supported) return 'Bez przesiadki';
+  const lines = boardLines(board.departures).map((entry) => entry.line);
+  if (!lines.length) return 'Teraz nic nie jedzie bez przesiadki';
+  return `${lines.length === 1 ? 'Linia' : 'Linie'} ${lines.slice(0, 6).join(', ')}`;
+}
+
 function FavouriteEditorRow({
   stop,
+  directions,
   first,
   last,
   editing,
@@ -152,6 +175,8 @@ function FavouriteEditorRow({
   onOpen,
 }: {
   stop: FavouriteStop;
+  /** "→ Oporów, Leśnica": what tells three platforms called "Spółdzielcza" apart. */
+  directions: string;
   first: boolean;
   last: boolean;
   editing: boolean;
@@ -181,7 +206,9 @@ function FavouriteEditorRow({
               {stop.label || stop.name}
             </ThemedText>
             <ThemedText type="footnote" themeColor="textSecondary" numberOfLines={1}>
-              {stop.label ? stop.name : 'Bez własnej nazwy'}
+              {stop.label
+                ? [stop.name, directions].filter(Boolean).join(' ')
+                : directions || (stop.code ? `Słupek ${stop.code}` : 'Dotknij, by pokazać na mapie')}
             </ThemedText>
           </View>
         </Pressable>
