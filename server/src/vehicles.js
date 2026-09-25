@@ -500,6 +500,7 @@ class VehicleTracker {
         previous != null &&
         nowMs - previous.at < DESCRIBE_MAX_AGE_MS &&
         vehicle.heading === previous.heading &&
+        vehicle.brigade === previous.brigade &&
         distanceMeters(previous.lat, previous.lon, vehicle.lat, vehicle.lon) <=
           DESCRIBE_STATIONARY_METERS;
 
@@ -531,6 +532,7 @@ class VehicleTracker {
           lat: vehicle.lat,
           lon: vehicle.lon,
           heading: vehicle.heading ?? null,
+          brigade: vehicle.brigade,
           at: nowMs,
           trip: vehicle.trip,
           // Seeded by the projection the next poll's fast path needs; undefined

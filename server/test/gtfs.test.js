@@ -179,10 +179,11 @@ describe('GtfsStore', () => {
 
   it('narrows a board to the trips that reach a destination, with their arrival there', () => {
     const monday = new Date('2026-06-15T05:00:00Z'); // 07:00 in Warsaw
-    // Stop 1 → 3: only t4a goes on to 3; t4a2 stops at 2, t128 turns off to 5.
+    // Both line 4 runs reach 3, at their own scheduled times; t128 turns off to 5.
     const toThree = store.getDepartures('1', { now: monday, limit: 10, to: ['3'] });
-    assert.deepEqual(toThree.map((departure) => departure.tripId), ['t4a']);
+    assert.deepEqual(toThree.map((departure) => departure.tripId), ['t4a', 't4a2']);
     assert.equal(toThree[0].arrival, '08:15:00');
+    assert.equal(toThree[1].arrival, '09:18:00');
     assert.equal(toThree[0].arrivalInSeconds - toThree[0].inSeconds, 15 * 60);
     assert.equal(toThree[0].arrivalStopId, '3');
 

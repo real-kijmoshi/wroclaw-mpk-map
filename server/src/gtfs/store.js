@@ -693,6 +693,14 @@ class GtfsStore {
     const tripColumn = new GrowableInt32Array(1 << 16);
     const arrivalColumn = new GrowableInt32Array(1 << 16);
     const departureColumn = new GrowableInt32Array(1 << 16);
+    // Link each trip's rows while streaming. GTFS does not require rows to be
+    // grouped by trip or sorted by stop_sequence.
+    const sequenceColumn = new GrowableInt32Array(1 << 16);
+    const stopOrdinalColumn = new GrowableInt32Array(1 << 16);
+    const nextRowColumn = new GrowableInt32Array(1 << 16);
+    const firstRowByTrip = new Int32Array(state.trips.length).fill(-1);
+    const lastRowByTrip = new Int32Array(state.trips.length).fill(-1);
+    const stopOrdinalById = new Map([...state.stopsById.keys()].map((id, index) => [id, index]));
     /** @type {Map<string, GrowableInt32Array>} stop_id -> row indices */
     const rowsByStop = new Map();
 
@@ -740,19 +748,28 @@ class GtfsStore {
           });
         }
 
-        if (!config.gtfs.buildStopIndex) return;
-        if (!state.stopsById.has(fields[colStopId])) return;
+        const stopOrdinal = stopOrdinalById.get(fields[colStopId]);
+        if (stopOrdinal === undefined) return;
 
+        const rowIndex = tripColumn.length;
         tripColumn.push(tripIndex);
         arrivalColumn.push(arrival);
         departureColumn.push(departure);
+        sequenceColumn.push(Number.parseInt(fields[colSequence], 10) || 0);
+        stopOrdinalColumn.push(stopOrdinal);
+        nextRowColumn.push(-1);
+        if (lastRowByTrip[tripIndex] >= 0) nextRowColumn.buffer[lastRowByTrip[tripIndex]] = rowIndex;
+        else firstRowByTrip[tripIndex] = rowIndex;
+        lastRowByTrip[tripIndex] = rowIndex;
+
+        if (!config.gtfs.buildStopIndex) return;
 
         let bucket = rowsByStop.get(fields[colStopId]);
         if (!bucket) {
           bucket = new GrowableInt32Array(64);
           rowsByStop.set(fields[colStopId], bucket);
         }
-        bucket.push(tripColumn.length - 1);
+        bucket.push(rowIndex);
       });
     }
 
@@ -781,7 +798,19 @@ class GtfsStore {
     departureColumn.buffer = new Int32Array(0);
 
     const variantsStart = performance.now();
-    this.#buildVariants(state, representativeTripByShape, representativeStops, shapePoints);
+    this.#buildVariants(state, representativeTripByShape, representativeStops, shapePoints, {
+      first: firstRowByTrip,
+      next: nextRowColumn.buffer,
+      sequence: sequenceColumn.buffer,
+      stopOrdinal: stopOrdinalColumn.buffer,
+      stopOrdinalById,
+    });
+    if (!config.gtfs.buildStopIndex) {
+      state.stopTimes = { trip: new Int32Array(0), arrival: new Int32Array(0), departure: new Int32Array(0) };
+    }
+    sequenceColumn.buffer = new Int32Array(0);
+    stopOrdinalColumn.buffer = new Int32Array(0);
+    nextRowColumn.buffer = new Int32Array(0);
     stages.variants = performance.now() - variantsStart;
     // The parse, per-stop index and cleanup above, without the variants pass.
     stages.stopTimes = variantsStart - startedAt;
@@ -802,16 +831,16 @@ class GtfsStore {
     return state.counts;
   }
 
-  #buildVariants(state, representativeTripByShape, representativeStops, shapePoints) {
+  #buildVariants(state, representativeTripByShape, representativeStops, shapePoints, timingRows) {
     for (const [shapeId, tripIndex] of representativeTripByShape) {
       const trip = state.trips[tripIndex];
       const points = shapePoints.get(shapeId);
       if (!points || points.length < 4) continue;
 
       const cumulative = cumulativeDistances(points);
-      // Offsets are measured from the moment the trip leaves its first stop, so
-      // they hold for every run of the shape rather than only the one sampled
-      // here — that is what lets a live vehicle be timed against any departure.
+      // This trip supplies the shape's stop geometry. Its times are only a
+      // fallback for an unidentified run; trips on the same shape can have
+      // different stop-to-stop running times.
       const base = state.tripStart[tripIndex] >= 0 ? state.tripStart[tripIndex] : null;
 
       // Stops are projected onto the shape in order, each search starting where
@@ -853,6 +882,49 @@ class GtfsStore {
       const last = stops[stops.length - 1]?.name ?? '';
 
       const tripIndices = state.tripsByShape.get(shapeId) ?? [tripIndex];
+      const timingGroups = new Map();
+      for (const index of tripIndices) {
+        const start = state.tripStart[index];
+        if (start < 0) continue;
+
+        const rows = [];
+        for (let row = timingRows.first[index]; row >= 0; row = timingRows.next[row]) rows.push(row);
+        if (rows.length !== stops.length) continue;
+        rows.sort((a, b) => timingRows.sequence[a] - timingRows.sequence[b]);
+        // A reused shape with a different stop pattern cannot borrow this
+        // variant's geometry or timing. Leave that trip unidentified.
+        if (rows.some((row, position) =>
+          timingRows.sequence[row] !== stops[position].sequence ||
+          timingRows.stopOrdinal[row] !== timingRows.stopOrdinalById.get(stops[position].id)
+        )) continue;
+
+        const arrivals = [];
+        const departures = [];
+        for (const row of rows) {
+          const arrival = state.stopTimes.arrival[row] >= 0
+            ? state.stopTimes.arrival[row] : state.stopTimes.departure[row];
+          const departure = state.stopTimes.departure[row] >= 0
+            ? state.stopTimes.departure[row] : state.stopTimes.arrival[row];
+          if (arrival < 0 || departure < 0) break;
+          arrivals.push(arrival - start);
+          departures.push(departure - start);
+        }
+        if (arrivals.length !== stops.length) continue;
+
+        const key = `${arrivals.join(',')}|${departures.join(',')}`;
+        let group = timingGroups.get(key);
+        if (!group) {
+          group = {
+            profile: { arrivalOffsets: Int32Array.from(arrivals), departureOffsets: Int32Array.from(departures) },
+            trips: [],
+          };
+          timingGroups.set(key, group);
+        }
+        group.trips.push(index);
+      }
+      for (const group of timingGroups.values()) {
+        group.trips = Int32Array.from(group.trips.sort((a, b) => state.tripStart[a] - state.tripStart[b]));
+      }
 
       const variant = {
         shapeId,
@@ -870,6 +942,7 @@ class GtfsStore {
             .filter((index) => state.tripStart[index] >= 0)
             .sort((a, b) => state.tripStart[a] - state.tripStart[b]),
         ),
+        timingGroups: [...timingGroups.values()],
         stops,
         bounds: boundsOf(points),
       };
