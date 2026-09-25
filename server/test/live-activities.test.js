@@ -236,8 +236,10 @@ describe('Live Activity service', () => {
     assert.equal(props.nextStop, 'S0');
     assert.equal(props.totalStops, 6);
     assert.equal(JSON.parse(fake.received[1].body.aps['content-state'].props).stopsAway, 2);
-    // One stop out is the push the rider notices late.
+    // The first draw can wait; a stop passed cannot — Apple may hold a
+    // priority-5 push back until after the rider has got off.
     assert.equal(fake.received[0].headers['apns-priority'], '5');
+    assert.equal(fake.received[1].headers['apns-priority'], '10');
   });
 
   it('forgets a token APNs says is dead', async () => {

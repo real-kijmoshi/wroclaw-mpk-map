@@ -108,6 +108,6 @@ export async function refreshFavouriteBoards(
   signal?: AbortSignal,
 ) {
   const boards = await fetchFavouriteBoards(favourites, trips, signal);
-  syncDeparturesWidget({ favourites, boards: boards.stops, trips, tripBoards: boards.trips }, await lastPosition());
+  await syncDeparturesWidget({ favourites, boards: boards.stops, trips, tripBoards: boards.trips }, await lastPosition());
   return boards;
 }

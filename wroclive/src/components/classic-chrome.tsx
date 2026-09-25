@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -43,6 +44,8 @@ export type ClassicTopBarProps = {
   locateProblem: 'denied' | 'failed' | null;
   /** Pressing that note: the system settings, or another attempt. */
   onLocateProblem: () => void;
+  /** Extra map chrome that must sit below every top-bar state. */
+  children?: ReactNode;
 };
 
 export function ClassicTopBar({
@@ -53,6 +56,7 @@ export function ClassicTopBar({
   onRetry,
   locateProblem,
   onLocateProblem,
+  children,
 }: ClassicTopBarProps) {
   const insets = useSafeAreaInsets();
   const { scheme, tokens } = useMapChrome();
@@ -169,6 +173,8 @@ export function ClassicTopBar({
           </Glass>
         </Pressable>
       )}
+
+      {children && <View style={styles.extra}>{children}</View>}
     </View>
   );
 }
@@ -288,6 +294,7 @@ const styles = StyleSheet.create({
     ...Elevation.floating,
   },
   noteText: { flex: 1, minWidth: 0 },
+  extra: { marginTop: Space.sm },
   tower: { alignItems: 'flex-end', gap: Space.sm },
   roundPress: { borderRadius: Radius.pill },
   roundWrap: { width: HitTarget, height: HitTarget },

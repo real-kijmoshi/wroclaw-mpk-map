@@ -13,6 +13,7 @@ import { MapSheetHeader, MapSheetHome, type LiveStatus } from '@/components/map-
 import { MapView, platformMapAvailable } from '@/components/map-view';
 import type { MapRoute, MapSurfaceHandle, MapViewport } from '@/components/map-surface.types';
 import { StopDetails, StopSummary } from '@/components/stop-details';
+import { TripBanner } from '@/components/trip-banner';
 import { VehicleDetails, VehicleSummary } from '@/components/vehicle-details';
 import { Space } from '@/constants/design';
 import { useAreaStops } from '@/hooks/use-area-stops';
@@ -36,6 +37,7 @@ import { usePreferences } from '@/lib/preferences';
 import { failed, tapped } from '@/lib/haptics';
 import { selectionStore, useSelectedLines } from '@/lib/selection';
 import { groupStopAreas } from '@/lib/stops-api';
+import { clipRouteAtPosition } from '@/lib/route-progress';
 
 type Selection =
   | { kind: 'vehicle'; id: string }
@@ -299,11 +301,41 @@ export default function MapScreen() {
   /** Nothing opened over it: the map shows the tracked vehicle as if selected. */
   const showTracked = Boolean(trackedId) && !selection && !focusedLine;
   const openedTracked = Boolean(trackedId) && vehicleId === trackedId;
-  const route =
+  const baseRoute =
     vehicleRoute ??
     lineRoute ??
     (showTracked && trackedRoute?.vehicleId === trackedId ? trackedRoute.route : null);
   const mapVehicleId = showTracked ? trackedId : vehicleId;
+  const trackedAlertKind = arrival.alert?.kind;
+  const trackedAlertStopId = arrival.alert?.stopId;
+  const trackedAlertVehicleId = arrival.alert?.vehicleId;
+
+  /**
+   * An onboard trip is only the journey the rider is making. Cap the shape at
+   * their stop and remove every later stop marker. The geometry stays stable
+   * while the map surfaces split it at the moving vehicle, so the strong line reads as
+   * "where I am → where I get off" instead of continuing to the terminus.
+   */
+  const route = useMemo<MapRoute>(() => {
+    if (
+      !baseRoute ||
+      trackedAlertKind !== 'trip' ||
+      mapVehicleId !== trackedAlertVehicleId
+    ) {
+      return baseRoute;
+    }
+
+    const destination = baseRoute.stops.find((stop) => stop.id === trackedAlertStopId);
+    if (!destination) return baseRoute;
+
+    const destinationIndex = baseRoute.stops.findIndex((stop) => stop.id === trackedAlertStopId);
+
+    return {
+      ...baseRoute,
+      points: clipRouteAtPosition(baseRoute.points, { lat: destination.lat, lon: destination.lon }),
+      stops: baseRoute.stops.slice(0, destinationIndex + 1),
+    };
+  }, [baseRoute, mapVehicleId, trackedAlertKind, trackedAlertStopId, trackedAlertVehicleId]);
   // The stop the alert is for, picked out on the route — while the tracked
   // vehicle is what the map is about, and a stop the rider opened wins.
   const mapStopId = stopId ?? (showTracked || openedTracked ? (arrival.alert?.stopId ?? null) : null);
@@ -632,8 +664,29 @@ export default function MapScreen() {
             // app, so it stops pretending and points at the place that can.
             if (locateProblem === 'denied') Linking.openSettings();
             else locate();
-          }}
-        />
+          }}>
+          {arrival.alert?.kind === 'trip' && (
+            <TripBanner
+              alert={arrival.alert}
+              vehicleType={trackedPosition?.type}
+              onOpen={() => handleVehicle(arrival.alert!.vehicleId)}
+              onEnd={() => void arrival.disarm()}
+            />
+          )}
+        </ClassicTopBar>
+      )}
+
+      {!classic && arrival.alert?.kind === 'trip' && (
+        <View
+          pointerEvents="box-none"
+          style={[styles.tripBanner, { top: insets.top + Space.sm }]}>
+          <TripBanner
+            alert={arrival.alert}
+            vehicleType={trackedPosition?.type}
+            onOpen={() => handleVehicle(arrival.alert!.vehicleId)}
+            onEnd={() => void arrival.disarm()}
+          />
+        </View>
       )}
 
       {/* Dismisses the layer picker without also clearing the selection, which
@@ -832,6 +885,12 @@ function freshnessLabel(lastUpdated: string | null, stale: boolean, now: number)
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  tripBanner: {
+    position: 'absolute',
+    left: Space.md,
+    right: Space.md,
+    zIndex: 2,
+  },
   controls: { position: 'absolute', bottom: 0, alignItems: 'flex-end', gap: Space.sm },
   layers: { alignItems: 'flex-end' },
 });

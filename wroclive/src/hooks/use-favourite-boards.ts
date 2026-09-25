@@ -56,7 +56,7 @@ export function useFavouriteBoards(
   );
 
   useEffect(() => {
-    syncDeparturesWidget(
+    void syncDeparturesWidget(
       { favourites: shown, boards: current, trips, tripBoards },
       position,
       boards.receivedAt ?? Date.now(),

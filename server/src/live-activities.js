@@ -243,6 +243,7 @@ class LiveActivityService {
       // A trip's count of stops is the headline: a stop passed is news even
       // when the clock has not moved.
       const moved = progress !== null && progress.stopsAway !== record.lastStopsAway;
+      const passedStop = moved && record.lastStopsAway !== null;
       if (!shifted && !moved && now - record.lastPushAt < HEARTBEAT_MS) continue;
 
       record.lastArrivesAt = arrivesAt;
@@ -254,7 +255,10 @@ class LiveActivityService {
         props.stopsAway = progress.stopsAway;
         props.nextStop = progress.nextStop;
       }
-      const urgent = progress ? progress.stopsAway <= 1 : stop.etaSeconds <= URGENT_SECONDS;
+      // A stop passed is the one update a rider on board is watching for, and
+      // Apple may hold a priority-5 push back for minutes: sent that way, the
+      // lock screen was still counting a stop the rider had already got off at.
+      const urgent = progress ? passedStop || progress.stopsAway <= 1 : stop.etaSeconds <= URGENT_SECONDS;
       work.push(
         this.#push(
           record,
