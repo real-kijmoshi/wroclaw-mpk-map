@@ -44,7 +44,7 @@ export type WidgetInput = {
 
 export const widgetsAvailable = false;
 
-export function syncDeparturesWidget(
+export async function syncDeparturesWidget(
   _input: WidgetInput,
   _position: { lat: number; lon: number } | null,
   _now?: number,

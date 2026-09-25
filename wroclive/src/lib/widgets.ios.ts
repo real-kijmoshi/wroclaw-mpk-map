@@ -7,11 +7,12 @@ import { stopAppUrl, vehicleAppUrl } from '@/lib/links';
 import type { FavouriteStop } from '@/lib/favourite-stops';
 import { colorFor } from '@/lib/lines';
 import { toPropertyList } from '@/lib/property-list';
+import { carryOverRows } from '@/lib/widget-carry-over';
 import { activityStaleAt } from '@/lib/trip-progress';
 import { walkSeconds } from '@/lib/walking';
 import type { FavouriteTrip } from '@/lib/favourite-trips';
 import type { ArrivalActivityInput, TripActivityInput, TripBoard, WidgetBoard, WidgetInput } from '@/lib/widgets';
-import type { DeparturesWidgetProps, DeparturesWidgetStop } from '@/widgets/layouts';
+import type { DeparturesWidgetProps, DeparturesWidgetRow, DeparturesWidgetStop } from '@/widgets/layouts';
 
 export type { ArrivalActivityInput, TripActivityInput, TripBoard, WidgetBoard, WidgetInput } from '@/lib/widgets';
 
@@ -47,6 +48,9 @@ const layouts: typeof import('@/widgets/layouts') | null = widgetsAvailable ? re
 const TIMELINE_MINUTES = 30;
 /** Rows kept per stop per entry: the large widget draws eight. */
 const ROWS_PER_STOP = 8;
+
+/** How often a running app re-sends its activity's token (see `registerPush`). */
+const REREGISTER_MS = 60_000;
 
 const amber = { amberLight: Colors.light.amber, amberDark: Colors.dark.amber };
 
@@ -119,14 +123,33 @@ function widgetTrip(
  *
  * `position` is where the rider last was, for the walking estimate; it never
  * leaves the phone. Nothing saved puts the widget back to "star a stop".
+ * A stop or trip whose board did not arrive keeps the rows the widget already
+ * has (`carryOverRows()`), so a failed fetch never blanks it.
  */
-export function syncDeparturesWidget(
+/** Bumped per sync: one that waited on the old timeline must not overwrite a newer one. */
+let syncGeneration = 0;
+
+export async function syncDeparturesWidget(
   { favourites, boards, trips, tripBoards }: WidgetInput,
   position: { lat: number; lon: number } | null,
   now = Date.now(),
 ) {
   if (!layouts) return;
+  const generation = ++syncGeneration;
   try {
+    const missing = [
+      ...favourites.filter((stop) => !boards.some((board) => board.stop.id === stop.id)).map((stop) => stop.id),
+      ...trips.filter((trip) => !tripBoards.some((board) => board.trip.id === trip.id)).map((trip) => `trip:${trip.id}`),
+    ];
+    const carried =
+      missing.length > 0
+        ? carryOverRows<DeparturesWidgetRow>(
+            missing,
+            await layouts.departuresWidget.getTimeline().catch(() => []),
+            now,
+          )
+        : new Map<string, DeparturesWidgetRow[]>();
+    if (generation !== syncGeneration) return;
     const stops = [
       ...favourites.map((stop) =>
         widgetStop(
@@ -144,7 +167,7 @@ export function syncDeparturesWidget(
           now,
         ),
       ),
-    ];
+    ].map((stop) => (carried.has(stop.id) ? { ...stop, rows: carried.get(stop.id) ?? [] } : stop));
     const base: DeparturesWidgetProps = {
       ...amber,
       stops,
@@ -207,6 +230,8 @@ let activity: {
   token: string | null;
   /** The server accepted the token and will keep the activity current while the app is suspended. */
   pushed: boolean;
+  /** When the token was last sent to the server, epoch ms. */
+  registeredAt: number;
   subscription: { remove: () => void } | null;
 } | null = null;
 
@@ -221,9 +246,10 @@ function registerPush(
   token: string,
   input: ArrivalActivityInput | TripActivityInput,
 ) {
-  if (current.token === token) return;
-  if (current.token) void apiSend('DELETE', `/live-activities/${current.token}`);
+  if (current.token === token && Date.now() - current.registeredAt < REREGISTER_MS) return;
+  if (current.token && current.token !== token) void apiSend('DELETE', `/live-activities/${current.token}`);
   current.token = token;
+  current.registeredAt = Date.now();
   current.pushed = false;
   void apiSend('POST', '/live-activities', {
     token,
@@ -275,6 +301,9 @@ function show(kind: Kind, input: ArrivalActivityInput | TripActivityInput) {
   );
   try {
     if (same) {
+      // The server holds registrations in memory, so a deploy forgets them;
+      // sending the token again now and then puts the activity back.
+      if (same.token) registerPush(same, same.token, input);
       void (same.handle as { update: (next: typeof props, stale: Date) => Promise<void> })
         .update(props, staleDate)
         .catch(() => {});
@@ -293,6 +322,7 @@ function show(kind: Kind, input: ArrivalActivityInput | TripActivityInput) {
       handle,
       token: null,
       pushed: false,
+      registeredAt: 0,
       subscription: null,
     };
     activity = current;

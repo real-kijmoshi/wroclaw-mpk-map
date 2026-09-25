@@ -37,6 +37,11 @@ export interface RouteSplit {
   remaining: Point[];
 }
 
+export interface RoutePosition {
+  lat: number;
+  lon: number;
+}
+
 /** Earth radius used for the local metre conversion. */
 const EARTH_R = 6371000;
 const DEG2RAD = Math.PI / 180;
@@ -172,4 +177,29 @@ export function splitRoute(points: Point[], progress: RouteProgress): RouteSplit
     travelled: points.slice(0, segmentIndex + 1).concat([projectedPoint]),
     remaining: [projectedPoint].concat(points.slice(segmentIndex + 1)),
   };
+}
+
+/**
+ * Cap a route at a real-world position between its generalised vertices.
+ *
+ * The beginning deliberately stays stable. Each map surface already splits
+ * the line at the moving vehicle and dims what is behind it; moving this array's
+ * first point on every poll would instead make the Leaflet bridge rebuild the
+ * route every ten seconds. If the destination cannot be projected reliably,
+ * the full route wins — it is more useful than a confidently wrong fragment.
+ */
+export function clipRouteAtPosition(points: Point[], to: RoutePosition): Point[] {
+  const end = projectProgress(points, to.lat, to.lon);
+  if (!end) return points;
+
+  const clipped = points.slice(0, end.segmentIndex + 1).concat([end.projectedPoint]);
+
+  // A destination at the route's first point leaves no drawable line. The map
+  // surfaces expect a polyline, so retain the full geometry then.
+  if (clipped.length < 2 || pointsEqual(clipped[0], clipped[clipped.length - 1])) return points;
+  return clipped;
+}
+
+function pointsEqual(a: Point, b: Point): boolean {
+  return Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
 }
