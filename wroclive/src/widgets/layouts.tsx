@@ -498,6 +498,12 @@ const TripActivity = (props: TripActivityProps, environment: LiveActivityEnviron
   const away = Math.max(0, Math.round(props.stopsAway ?? 0));
   const total = Math.max(1, Math.round(props.totalStops ?? 1), away);
   const arrived = props.atStop || away === 0;
+  // Stale means nothing has refreshed the count since the next stop was due:
+  // it is one too many at best, so it is not drawn. What is left is true on
+  // its own — where to get off, and the native countdown to it.
+  const unsure = stale && !arrived;
+  const arrival = new Date(props.arrivesAt);
+  const arrivalClock = `${String(arrival.getHours()).padStart(2, '0')}:${String(arrival.getMinutes()).padStart(2, '0')}`;
   const done = arrived ? 1 : Math.min(1, Math.max(0, (total - away) / total));
   const stopsWord = (count: number) => {
     if (count === 1) return 'przystanek';
@@ -505,7 +511,13 @@ const TripActivity = (props: TripActivityProps, environment: LiveActivityEnviron
     const tens = count % 100;
     return units >= 2 && units <= 4 && !(tens >= 12 && tens <= 14) ? 'przystanki' : 'przystanków';
   };
-  const headline = arrived ? 'Wysiadasz tutaj' : away === 1 ? 'Wysiadasz na następnym' : `Jeszcze ${away} ${stopsWord(away)}`;
+  const headline = arrived
+    ? 'Wysiadasz tutaj'
+    : unsure
+      ? `Na miejscu ok. ${arrivalClock}`
+      : away === 1
+        ? 'Wysiadasz na następnym'
+        : `Jeszcze ${away} ${stopsWord(away)}`;
 
   const badge = (size: number) => (
     <Text
@@ -520,6 +532,17 @@ const TripActivity = (props: TripActivityProps, environment: LiveActivityEnviron
   );
   const count = arrived ? (
     <Image systemName="figure.walk.departure" size={26} color={amber} />
+  ) : unsure ? (
+    <Text
+      timerInterval={{ lower: new Date(props.since), upper: new Date(props.arrivesAt) }}
+      countsDown
+      modifiers={[
+        font({ size: 24, weight: 'bold', design: 'rounded' }),
+        monospacedDigit(),
+        foregroundStyle(amber),
+        frame({ maxWidth: 84, alignment: 'trailing' }),
+      ]}
+    />
   ) : (
     <Text
       modifiers={[
@@ -545,7 +568,11 @@ const TripActivity = (props: TripActivityProps, environment: LiveActivityEnviron
     />
   );
   const progress = <ProgressView value={done} modifiers={[tint(props.color)]} />;
-  const following = arrived ? `Przystanek ${props.stopName}` : `Następny: ${props.nextStop || props.stopName}`;
+  const following = arrived
+    ? `Przystanek ${props.stopName}`
+    : unsure
+      ? 'Otwórz aplikację, by policzyć przystanki'
+      : `Następny: ${props.nextStop || props.stopName}`;
 
   return {
     banner: (
@@ -565,13 +592,24 @@ const TripActivity = (props: TripActivityProps, environment: LiveActivityEnviron
         <HStack spacing={6}>
           <Text modifiers={[font({ textStyle: 'caption' }), foregroundStyle(secondary), lineLimit(1)]}>{following}</Text>
           <Spacer />
-          {timer}
+          {unsure ? null : timer}
         </HStack>
       </VStack>
     ),
     compactLeading: badge(13),
     compactTrailing: arrived ? (
       <Image systemName="figure.walk.departure" size={15} color={amber} />
+    ) : unsure ? (
+      <Text
+        timerInterval={{ lower: new Date(props.since), upper: new Date(props.arrivesAt) }}
+        countsDown
+        modifiers={[
+          font({ size: 15, weight: 'bold', design: 'rounded' }),
+          monospacedDigit(),
+          foregroundStyle(amber),
+          frame({ maxWidth: 52, alignment: 'trailing' }),
+        ]}
+      />
     ) : (
       <Text modifiers={[font({ size: 15, weight: 'bold', design: 'rounded' }), monospacedDigit(), foregroundStyle(amber)]}>
         {`${away} przyst.`}
@@ -579,7 +617,7 @@ const TripActivity = (props: TripActivityProps, environment: LiveActivityEnviron
     ),
     minimal: (
       <Text modifiers={[font({ size: 14, weight: 'bold', design: 'rounded' }), foregroundStyle(amber)]}>
-        {arrived ? '✓' : String(away)}
+        {arrived ? '✓' : unsure ? props.line : String(away)}
       </Text>
     ),
     expandedLeading: badge(15),
@@ -592,10 +630,10 @@ const TripActivity = (props: TripActivityProps, environment: LiveActivityEnviron
         {progress}
         <HStack spacing={6}>
           <Text modifiers={[font({ textStyle: 'caption' }), foregroundStyle(secondary), lineLimit(1)]}>
-            {arrived ? following : `${following} · wysiadka: ${props.stopName}`}
+            {arrived || unsure ? following : `${following} · wysiadka: ${props.stopName}`}
           </Text>
           <Spacer />
-          {timer}
+          {unsure ? null : timer}
         </HStack>
       </VStack>
     ),

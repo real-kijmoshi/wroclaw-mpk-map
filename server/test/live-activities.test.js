@@ -94,7 +94,7 @@ describe('trip progress', () => {
 
   it('counts the destination itself as one of the stops to go', () => {
     const trip = { atStop: null, nextStops: [stop('A'), stop('B'), stop('C', 240)] };
-    assert.deepEqual(tripProgress(trip, 'C'), { arrived: false, stopsAway: 3, etaSeconds: 240, nextStop: 'Stop A' });
+    assert.deepEqual(tripProgress(trip, 'C'), { arrived: false, stopsAway: 3, etaSeconds: 240, nextStop: 'Stop A', nextStopEtaSeconds: 60 });
   });
 
   it('does not count the stop the vehicle is standing at — it is being left, not reached', () => {

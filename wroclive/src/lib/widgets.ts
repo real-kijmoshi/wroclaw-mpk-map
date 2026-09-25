@@ -26,6 +26,8 @@ export type TripActivityInput = ArrivalActivityInput & {
   stopsAway: number;
   totalStops: number;
   nextStop: string;
+  /** Epoch ms the vehicle reaches `nextStop`: past it, `stopsAway` is one too many. */
+  nextStopAt: number | null;
 };
 
 export type WidgetBoard = { stop: FavouriteStop; departures: Departure[] };

@@ -9,6 +9,8 @@ export type TripProgress = {
   etaSeconds: number | null;
   /** The next stop the vehicle will reach — what a rider on board reads off the display. */
   nextStop: string;
+  /** Seconds until that next stop — when the count above stops being true. */
+  nextStopEtaSeconds: number | null;
 };
 
 /**
@@ -36,10 +38,45 @@ export function tripProgress(
   const leavingFirst = !arrived && standingAt !== null && stops[0]?.id === standingAt;
   const upcoming = leavingFirst ? stops[1] : stops[0];
   const eta = stops[index].etaSeconds;
+  const nextEta = (upcoming ?? stops[index]).etaSeconds;
   return {
     arrived,
     stopsAway: arrived ? 0 : index + 1 - (leavingFirst ? 1 : 0),
     etaSeconds: eta !== null && Number.isFinite(eta) ? eta : null,
     nextStop: (upcoming ?? stops[index]).name ?? '',
+    nextStopEtaSeconds: nextEta !== null && nextEta !== undefined && Number.isFinite(nextEta) ? nextEta : null,
   };
+}
+
+/** Past its arrival by this much, an un-refreshed activity is marked stale. */
+const ACTIVITY_STALE_AFTER_MS = 60_000;
+/** A stop is passed a little after it is reached: the doors are open for a while. */
+const STOP_DWELL_MS = 20_000;
+
+/**
+ * When a Live Activity stops being true, as epoch ms — its stale date.
+ *
+ * An arrival countdown is a native timer and stays right until the vehicle is
+ * due. A trip's headline is a *count of stops*, and a count is only true until
+ * the next stop is passed; nothing on the phone can change it after that while
+ * the app is suspended. The server's pushes can, so with them (`pushed`) a trip
+ * lasts as long as an arrival. Without them it goes stale as the next stop is
+ * left and the layout trades the count for the clock. Before this the lock
+ * screen said "4 stops" for the whole ride, and still said it after the rider
+ * had got off.
+ */
+export function activityStaleAt({
+  arrivesAt,
+  nextStopAt,
+  pushed,
+  now,
+}: {
+  arrivesAt: number;
+  nextStopAt: number | null;
+  pushed: boolean;
+  now: number;
+}): number {
+  const arrival = arrivesAt + ACTIVITY_STALE_AFTER_MS;
+  if (pushed || nextStopAt === null) return arrival;
+  return Math.min(arrival, Math.max(nextStopAt, now) + STOP_DWELL_MS);
 }
