@@ -192,7 +192,7 @@ const DeparturesWidget = (
   const minutesTo = (row: DeparturesWidgetRow) => Math.max(0, Math.round((row.at - now) / 60_000));
   const when = (row: DeparturesWidgetRow) =>
     final ? row.clock : minutesTo(row) < 1 ? 'teraz' : `${minutesTo(row)} min`;
-  const reachable = (row: DeparturesWidgetRow) => stop.walk === null || row.at - now >= (stop.walk + 30) * 1_000;
+  const reachable = (row: DeparturesWidgetRow) => stop.walk == null || row.at - now >= (stop.walk + 30) * 1_000;
   const countdownStyle = (row: DeparturesWidgetRow) => (reachable(row) ? amber : tertiary);
   const trip = stop.kind === 'trip';
   const title = stop.label || stop.name;
@@ -201,7 +201,7 @@ const DeparturesWidget = (
   // takes the place a board gives the headsign.
   const arriving = (row: DeparturesWidgetRow) => (row.arriveClock ? `na miejscu ${row.arriveClock}` : row.headsign);
   const rowText = (row: DeparturesWidgetRow) => (trip ? arriving(row) : row.headsign);
-  const walkMinutes = stop.walk === null ? null : Math.max(1, Math.round(stop.walk / 60));
+  const walkMinutes = stop.walk == null ? null : Math.max(1, Math.round(stop.walk / 60));
   const updated = new Date(props?.updatedAt ?? now);
   const updatedClock = `${String(updated.getHours()).padStart(2, '0')}:${String(updated.getMinutes()).padStart(2, '0')}`;
 

@@ -411,7 +411,17 @@ Activity push, and it is optional.
   leave. An estimate — straight line × 1.25 at 1.25 m/s — and only within a
   quarter of an hour's walk.
 
-Two rules that are not optional:
+Three rules that are not optional:
+
+- **Widget props carry no `null`.** The timeline is stored in the app
+  group's `UserDefaults`, which takes property lists only, and Expo turns a JS
+  `null` into `NSNull`. One `label: null` made iOS refuse the whole timeline
+  without an error anywhere: the widget sat on "star a stop" with five stops
+  starred, and the picker, which reads the same timeline, spun on "Loading…".
+  `syncDeparturesWidget()` sends everything through `toPropertyList()`
+  (`src/lib/property-list.ts`), which drops null fields, so a layout reads a
+  missing field with `== null`, never `=== null`.
+  `server/test/widget-property-list.test.js` runs it.
 
 - **A `'widget'` function is a string, not a closure.** babel-preset-expo
   compiles it to source text that runs inside the widget extension, where

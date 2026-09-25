@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useSyncExternalStore } from 'react';
 
 import { getDeparturesForStops, getJourneyDepartures } from '@/lib/api';
 import type { FavouriteStop } from '@/lib/favourite-stops';
@@ -24,6 +25,24 @@ export type SavedBoards = { stops: WidgetBoard[]; trips: TripBoard[] };
  */
 
 const POSITION_KEY = 'wroclive.lastPosition';
+
+/**
+ * The last boards fetched, for screens that only need to *describe* a starred
+ * stop — the favourites manager names each platform by where it goes, since
+ * three rows all reading "Spółdzielcza" say nothing. Read, never polled: the
+ * map's own poll keeps it current.
+ */
+let latest: SavedBoards = { stops: [], trips: [] };
+const latestListeners = new Set<() => void>();
+const subscribeLatest = (listener: () => void) => {
+  latestListeners.add(listener);
+  return () => latestListeners.delete(listener);
+};
+const getLatest = () => latest;
+
+export function useLatestFavouriteBoards(): SavedBoards {
+  return useSyncExternalStore(subscribeLatest, getLatest, getLatest);
+}
 
 /**
  * Where the rider last was, for the widget's walking estimate — kept on the
@@ -76,7 +95,10 @@ export async function fetchFavouriteBoards(
   ]);
   const settled = <T,>(results: PromiseSettledResult<T>[]) =>
     results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
-  return { stops: settled(stops), trips: settled(journeys) };
+  const result = { stops: settled(stops), trips: settled(journeys) };
+  latest = result;
+  for (const listener of latestListeners) listener();
+  return result;
 }
 
 /** Fetch and hand the widget a new timeline — what the background task runs. */
