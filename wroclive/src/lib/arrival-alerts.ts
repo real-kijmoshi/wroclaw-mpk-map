@@ -137,6 +137,7 @@ function showActivity(alert: ArrivalAlert, detail: VehicleDetail) {
       stopsAway: progress.stopsAway,
       totalStops: Math.max(alert.totalStops ?? progress.stopsAway, progress.stopsAway, 1),
       nextStop: progress.nextStop,
+      nextStopAt: progress.nextStopEtaSeconds === null ? null : Date.now() + progress.nextStopEtaSeconds * 1_000,
     });
     return;
   }

@@ -7,6 +7,7 @@ import { stopAppUrl, vehicleAppUrl } from '@/lib/links';
 import type { FavouriteStop } from '@/lib/favourite-stops';
 import { colorFor } from '@/lib/lines';
 import { toPropertyList } from '@/lib/property-list';
+import { activityStaleAt } from '@/lib/trip-progress';
 import { walkSeconds } from '@/lib/walking';
 import type { FavouriteTrip } from '@/lib/favourite-trips';
 import type { ArrivalActivityInput, TripActivityInput, TripBoard, WidgetBoard, WidgetInput } from '@/lib/widgets';
@@ -46,8 +47,6 @@ const layouts: typeof import('@/widgets/layouts') | null = widgetsAvailable ? re
 const TIMELINE_MINUTES = 30;
 /** Rows kept per stop per entry: the large widget draws eight. */
 const ROWS_PER_STOP = 8;
-/** Past its arrival by this much, an un-refreshed activity is marked stale. */
-const ACTIVITY_STALE_AFTER_MS = 60_000;
 
 const amber = { amberLight: Colors.light.amber, amberDark: Colors.dark.amber };
 
@@ -206,6 +205,8 @@ let activity: {
   handle: ArrivalHandle | TripHandle;
   /** The push token registered with the server, so ending can unregister it. */
   token: string | null;
+  /** The server accepted the token and will keep the activity current while the app is suspended. */
+  pushed: boolean;
   subscription: { remove: () => void } | null;
 } | null = null;
 
@@ -223,6 +224,7 @@ function registerPush(
   if (current.token === token) return;
   if (current.token) void apiSend('DELETE', `/live-activities/${current.token}`);
   current.token = token;
+  current.pushed = false;
   void apiSend('POST', '/live-activities', {
     token,
     kind: current.kind,
@@ -236,6 +238,8 @@ function registerPush(
       ...('totalStops' in input ? { totalStops: input.totalStops } : null),
       ...amber,
     },
+  }).then((accepted) => {
+    if (current.token === token) current.pushed = accepted;
   });
 }
 
@@ -256,10 +260,22 @@ function show(kind: Kind, input: ArrivalActivityInput | TripActivityInput) {
     'totalStops' in input
       ? { ...base, stopsAway: input.stopsAway, totalStops: input.totalStops, nextStop: input.nextStop }
       : base;
-  const staleDate = new Date(props.arrivesAt + ACTIVITY_STALE_AFTER_MS);
+  const same =
+    activity && activity.kind === kind && activity.vehicleId === input.vehicleId && activity.stopId === input.stopId
+      ? activity
+      : null;
+  const staleDate = new Date(
+    activityStaleAt({
+      arrivesAt: props.arrivesAt,
+      // Only a trip draws a count that the next stop makes wrong.
+      nextStopAt: 'nextStopAt' in input ? input.nextStopAt : null,
+      pushed: Boolean(same?.pushed),
+      now,
+    }),
+  );
   try {
-    if (activity && activity.kind === kind && activity.vehicleId === input.vehicleId && activity.stopId === input.stopId) {
-      void (activity.handle as { update: (next: typeof props, stale: Date) => Promise<void> })
+    if (same) {
+      void (same.handle as { update: (next: typeof props, stale: Date) => Promise<void> })
         .update(props, staleDate)
         .catch(() => {});
       return;
@@ -276,6 +292,7 @@ function show(kind: Kind, input: ArrivalActivityInput | TripActivityInput) {
       stopId: input.stopId,
       handle,
       token: null,
+      pushed: false,
       subscription: null,
     };
     activity = current;

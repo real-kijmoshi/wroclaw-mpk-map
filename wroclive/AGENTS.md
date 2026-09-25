@@ -402,7 +402,13 @@ Activity push, and it is optional.
   (`POST /live-activities`, `kind: 'arrival' | 'trip'` — absent means arrival)
   and the server pushes each update on every vehicle poll until the stop is
   passed; without one it answers 503 and the app updates the activity itself
-  while it runs.
+  while it runs. Nothing else can: once the app is suspended a stop count is
+  frozen, and it said "4 przystanki" for a whole ride and after the rider got
+  off. So a trip that no server is pushing goes stale as its next stop is due
+  (`activityStaleAt()` in `trip-progress.ts`), and the layout trades the count
+  for the native countdown and the clock time of arrival — the parts that stay
+  true on their own. **Check `/health` → `liveActivities.enabled`** before
+  debugging a frozen activity: `false` means no APNs key, not a bug.
 - **Quick actions** (`src/hooks/use-quick-actions.ts`). Long-press the app
   icon: the first starred stops, then search. Set at runtime from the
   favourites.

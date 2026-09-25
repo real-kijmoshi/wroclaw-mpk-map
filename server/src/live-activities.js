@@ -71,6 +71,9 @@ function tripProgress(trip, destinationId) {
     stopsAway: arrived ? 0 : index + 1 - (leavingFirst ? 1 : 0),
     etaSeconds: Number.isFinite(stops[index].etaSeconds) ? stops[index].etaSeconds : null,
     nextStop: (upcoming ?? stops[index]).name ?? '',
+    nextStopEtaSeconds: Number.isFinite((upcoming ?? stops[index]).etaSeconds)
+      ? (upcoming ?? stops[index]).etaSeconds
+      : null,
   };
 }
 
