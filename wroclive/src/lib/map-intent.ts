@@ -21,7 +21,18 @@ export type MapIntent =
   | { kind: 'open-line'; line: string; type: LineType }
   | { kind: 'open-vehicle'; vehicle: FleetVehicle }
   /** From a link: only the id is known until the server answers for it. */
-  | { kind: 'open-vehicle-id'; id: string };
+  | { kind: 'open-vehicle-id'; id: string }
+  /** Start onboard tracking from a live departure chosen on a saved journey. */
+  | {
+      kind: 'start-journey';
+      vehicleId: string;
+      line: string;
+      destinationIds: string[];
+      destinationName: string;
+      arrivalStopId: string | null;
+    }
+  /** Focus every resolved stop named by one disruption. */
+  | { kind: 'show-incident'; id: string; title: string; stops: Stop[] };
 
 let pending: MapIntent | null = null;
 const listeners = new Set<() => void>();
@@ -54,6 +65,16 @@ export const mapIntentStore = {
 
   openVehicleId(id: string) {
     pending = { kind: 'open-vehicle-id', id };
+    emit();
+  },
+
+  startJourney(input: Omit<Extract<MapIntent, { kind: 'start-journey' }>, 'kind'>) {
+    pending = { kind: 'start-journey', ...input };
+    emit();
+  },
+
+  showIncident(input: Omit<Extract<MapIntent, { kind: 'show-incident' }>, 'kind'>) {
+    pending = { kind: 'show-incident', ...input };
     emit();
   },
 

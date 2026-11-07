@@ -1,11 +1,12 @@
 import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Linking, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Alert, Linking, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ClassicControls, ClassicTopBar } from '@/components/classic-chrome';
+import { IncidentMapBanner } from '@/components/incident-map-banner';
 import { MapControls } from '@/components/map-controls';
 import { MapLayers } from '@/components/map-layers';
 import { MapSheet, MEDIUM_FRACTION, type Detent } from '@/components/map-sheet';
@@ -23,14 +24,15 @@ import { useTheme } from '@/hooks/use-theme';
 import { useArrivalAlertTracking } from '@/hooks/use-arrival-alert';
 import { useFavouriteBoards } from '@/hooks/use-favourite-boards';
 import { useQuickActions } from '@/hooks/use-quick-actions';
-import { getAlerts, getDeparturesForStops, getIncidents, getLocations, getShape, getStopsNear, getVehicle, vehiclePollDelay, type Departure, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
+import { ApiError, getAlerts, getDeparturesForStops, getIncidents, getLocations, getShape, getStopsNear, getVehicle, vehiclePollDelay, type Departure, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
 import { REFRESH_MS } from '@/lib/config';
 import { directionsLabel, runningVehicle } from '@/lib/departures';
 import { plural } from '@/lib/format';
 import { shareStop, shareVehicle } from '@/lib/share';
 import { colorFor } from '@/lib/lines';
-import { arrivalAlertsAvailable } from '@/lib/arrival-alerts';
+import { arrivalAlertStore, arrivalAlertsAvailable } from '@/lib/arrival-alerts';
 import { favouriteStopsStore, useFavouriteStops } from '@/lib/favourite-stops';
+import { incidentFocusView } from '@/lib/incident-focus';
 import { useFavouriteTrips } from '@/lib/favourite-trips';
 import { mapIntentStore, useMapIntent } from '@/lib/map-intent';
 import { usePreferences } from '@/lib/preferences';
@@ -49,6 +51,43 @@ const CONTROLS_GAP = Space.md;
 
 /** How far around the rider the sheet's "near you" list reaches — a short walk. */
 const NEARBY_RADIUS_METERS = 700;
+
+type DisruptionSummary = {
+  id: string;
+  title: string;
+  affected: string[];
+  severity: 'minor' | 'moderate' | 'major' | 'unknown';
+};
+
+type MapDisruptions = { count: number; items: DisruptionSummary[] };
+
+/** Active incidents for both the home count and an onboard line warning. */
+async function getMapDisruptions(signal: AbortSignal): Promise<MapDisruptions> {
+  try {
+    const response = await getIncidents({ signal, retryWhileLoading: false });
+    const items = response.incidents
+      .filter((incident) => incident.status === 'active')
+      .map((incident) => ({
+        id: incident.id,
+        title: incident.title,
+        affected: incident.affected,
+        severity: incident.severity,
+      }));
+    return { count: items.length, items };
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error;
+    // Older compatible servers expose raw alerts but not /incidents yet.
+    if (error instanceof ApiError && error.status !== 404 && error.status !== 0) throw error;
+    const response = await getAlerts({ signal, retryWhileLoading: false });
+    const items = response.alerts.map((alert) => ({
+      id: alert.id,
+      title: alert.title ?? alert.content,
+      affected: alert.affected,
+      severity: 'unknown' as const,
+    }));
+    return { count: items.length, items };
+  }
+}
 
 export default function MapScreen() {
   const scheme = useColorScheme();
@@ -78,6 +117,7 @@ export default function MapScreen() {
   const [pinnedVehicle, setPinnedVehicle] = useState<FleetVehicle | null>(null);
   /** A vehicle opened from a link, waiting for its first detail to centre on. */
   const [centreOnDetail, setCentreOnDetail] = useState<string | null>(null);
+  const [incidentFocus, setIncidentFocus] = useState<{ id: string; title: string; stops: Stop[] } | null>(null);
   const [userPosition, setUserPosition] = useState<{ lat: number; lon: number } | null>(null);
   /** Stops around the rider, for the sheet's list. Distinct from what the map draws. */
   const [myStops, setMyStops] = useState<Stop[]>([]);
@@ -146,21 +186,6 @@ export default function MapScreen() {
       }),
     REFRESH_MS.vehicles,
     { key: linesKey, delayMs: followServer },
-  );
-
-  // Only for the count on the sheet's "Utrudnienia" row — the incidents screen
-  // does its own polling and owns the list. Old servers still expose /alerts.
-  const incidentCount = usePoll(
-    async (signal) => {
-      try {
-        const response = await getIncidents({ signal, retryWhileLoading: false });
-        return response.incidents.filter((incident) => incident.status === 'active').length;
-      } catch {
-        const response = await getAlerts({ signal, retryWhileLoading: false });
-        return response.alerts.length;
-      }
-    },
-    REFRESH_MS.alerts,
   );
 
   const filteredVehicles = fleet.data?.locations ?? EMPTY_VEHICLES;
@@ -234,6 +259,25 @@ export default function MapScreen() {
   }, [detail.data, centreOnDetail]);
 
   const arrival = useArrivalAlertTracking(detail, vehicleId);
+  const disruptions = usePoll(getMapDisruptions, REFRESH_MS.alerts);
+  const tripKey = arrival.alert?.kind === 'trip' ? arrival.alert.vehicleId : null;
+  const [tripView, setTripView] = useState<{
+    key: string | null;
+    focus: boolean;
+    follow: boolean;
+  }>({ key: null, focus: false, follow: false });
+  const tripFocus = tripView.key === tripKey && tripView.focus;
+  const tripFollow = tripView.key === tripKey && tripView.follow;
+  const tripDisruption = useMemo(() => {
+    const line = arrival.alert?.kind === 'trip' ? arrival.alert.line : null;
+    if (!line) return null;
+    const severity = { major: 3, moderate: 2, minor: 1, unknown: 0 } as const;
+    return (
+      disruptions.data?.items
+        .filter((incident) => incident.affected.includes(line))
+        .sort((a, b) => severity[b.severity] - severity[a.severity])[0] ?? null
+    );
+  }, [arrival.alert, disruptions.data]);
 
   const departures = usePoll(
     (signal) => {
@@ -354,7 +398,18 @@ export default function MapScreen() {
     };
     return [pinned, ...vehicles];
   }, [arrival.tracked, vehicles]);
+  const displayVehicles = useMemo(() => {
+    if (!tripFocus || !trackedId || !mapVehicles.some((vehicle) => vehicle.id === trackedId)) {
+      return mapVehicles;
+    }
+    return mapVehicles.filter((vehicle) => vehicle.id === trackedId);
+  }, [mapVehicles, trackedId, tripFocus]);
 
+  // A vehicle opened from a link on a cold start is selected before the
+  // fleet's first answer, so the lookup below finds nothing. Keyed on whether
+  // it is known yet, the fetch runs again once it is — keyed on the id alone,
+  // the route never appeared for a widget or Live Activity tap.
+  const selectedVehicleKnown = Boolean(vehicleId) && vehicles.some((entry) => entry.id === vehicleId);
   useEffect(() => {
     if (!vehicleId) return;
 
@@ -384,7 +439,7 @@ export default function MapScreen() {
       });
 
     return () => controller.abort();
-  }, [vehicleId]);
+  }, [vehicleId, selectedVehicleKnown]);
 
   /** An explicit line search draws the route even before a rider picks a vehicle. */
   useEffect(() => {
@@ -408,6 +463,7 @@ export default function MapScreen() {
 
   const handleVehicle = useCallback((id: string) => {
     tapped();
+    setIncidentFocus(null);
     setFocusedLine(null);
     setPinnedVehicle(null);
     setSelection({ kind: 'vehicle', id });
@@ -416,11 +472,13 @@ export default function MapScreen() {
   }, []);
   const handleStop = useCallback((stop: Stop) => {
     tapped();
+    setIncidentFocus(null);
     setSelection({ kind: 'stop', stop });
     setDetent('medium');
     setLayersOpen(false);
   }, []);
   const handleBackground = useCallback(() => {
+    setIncidentFocus(null);
     setSelection(null);
     setFocusedLine(null);
     setPinnedVehicle(null);
@@ -515,6 +573,64 @@ export default function MapScreen() {
       setPinnedVehicle(consumed.vehicle);
       setSelection({ kind: 'vehicle', id: consumed.vehicle.id });
       setDetent('medium');
+    } else if (consumed?.kind === 'show-incident') {
+      const { stops } = consumed;
+      const view = incidentFocusView(stops);
+      setSelection(null);
+      setFocusedLine(null);
+      setPinnedVehicle(null);
+      setIncidentFocus({ id: consumed.id, title: consumed.title, stops });
+      setDetent('collapsed');
+      if (view) mapRef.current?.centerOn(view.lat, view.lon, view.zoom);
+    } else if (consumed?.kind === 'start-journey') {
+      const journey = consumed;
+      setCentreOnDetail(journey.vehicleId);
+      setFocusedLine(null);
+      setPinnedVehicle(null);
+      setSelection({ kind: 'vehicle', id: journey.vehicleId });
+      setDetent('medium');
+      void getVehicle(journey.vehicleId)
+        .then(async (vehicleDetail) => {
+          const destination = vehicleDetail.trip?.nextStops.find(
+            (stop) =>
+              stop.id === journey.arrivalStopId ||
+              journey.destinationIds.includes(stop.id) ||
+              stop.name.localeCompare(journey.destinationName, 'pl', { sensitivity: 'base' }) === 0,
+          );
+          if (!destination) {
+            Alert.alert(
+              'Nie można rozpocząć przejazdu',
+              'Ten pojazd nie ma już zapisanego przystanku na swojej trasie.',
+            );
+            return;
+          }
+          const result = await arrivalAlertStore.arm(
+            {
+              kind: 'trip',
+              vehicleId: journey.vehicleId,
+              line: journey.line,
+              towards: vehicleDetail.trip?.towards ?? vehicleDetail.trip?.headsign ?? null,
+              stopId: destination.id,
+              stopName: journey.destinationName,
+            },
+            vehicleDetail,
+          );
+          if (result === 'denied') {
+            Alert.alert(
+              'Powiadomienia są wyłączone',
+              'Włącz je w ustawieniach telefonu, aby śledzić przejazd na ekranie blokady.',
+              [
+                { text: 'Anuluj', style: 'cancel' },
+                { text: 'Ustawienia', onPress: () => void Linking.openSettings() },
+              ],
+            );
+          } else if (result === 'passed') {
+            Alert.alert('Przejazd już minął', 'Wybierz następny odjazd z zapisanego przejazdu.');
+          }
+        })
+        .catch(() => {
+          Alert.alert('Nie udało się rozpocząć', 'Sprawdź połączenie i spróbuj ponownie.');
+        });
     }
   }, [intent, handleStop, handleVehicle]);
 
@@ -581,11 +697,22 @@ export default function MapScreen() {
   // coordinates received from search instead of replacing them with the map
   // tap's id and name.
   const mapStops = useMemo(() => {
-    if (!selectedStop || !Number.isFinite(selectedStop.lat) || !Number.isFinite(selectedStop.lon)) {
-      return areaStops;
-    }
-    return [selectedStop, ...areaStops.filter((stop) => stop.id !== selectedStop.id)];
-  }, [selectedStop, areaStops]);
+    const first = incidentFocus?.stops ?? [];
+    const selected =
+      selectedStop && Number.isFinite(selectedStop.lat) && Number.isFinite(selectedStop.lon)
+        ? [selectedStop]
+        : [];
+    const ids = new Set([...first, ...selected].map((stop) => stop.id));
+    return [...first, ...selected.filter((stop) => !first.some((item) => item.id === stop.id)), ...areaStops.filter((stop) => !ids.has(stop.id))];
+  }, [selectedStop, areaStops, incidentFocus]);
+  // What the sheet hides at rest. The full detent covers the map anyway, so
+  // the medium one is the share worth centring above.
+  const sheetPresented = classic ? selection !== null : true;
+  const sheetInset = sheetPresented && detent !== 'collapsed' ? screen.height * MEDIUM_FRACTION : 0;
+  const highlightedStopIds = useMemo(
+    () => incidentFocus?.stops.map((stop) => stop.id) ?? [],
+    [incidentFocus],
+  );
 
   /**
    * The sheet's list: the places around the rider, not the raw platforms.
@@ -626,23 +753,68 @@ export default function MapScreen() {
     onPress: locate,
     disabled: locating,
   };
+  const activeTrip = arrival.alert?.kind === 'trip' && arrival.alert.phase !== 'completed';
+  const tripControls = activeTrip && tripKey
+    ? [
+        {
+          icon: tripFocus ? ('scan' as const) : ('scan-outline' as const),
+          label: tripFocus ? 'Pokaż wszystkie pojazdy' : 'Pokaż tylko mój przejazd',
+          selected: tripFocus,
+          onPress: () => {
+            tapped();
+            const next = !tripFocus;
+            setTripView({
+              key: tripKey,
+              focus: next,
+              follow: tripView.key === tripKey && tripView.follow,
+            });
+            if (next) {
+              setSelection(null);
+              setFocusedLine(null);
+              setPinnedVehicle(null);
+              setDetent('collapsed');
+              setLayersOpen(false);
+            }
+          },
+        },
+        {
+          icon: tripFollow ? ('navigate' as const) : ('navigate-outline' as const),
+          label: tripFollow ? 'Przestań śledzić kamerą' : 'Śledź przejazd kamerą',
+          selected: tripFollow,
+          disabled: !trackedPosition,
+          onPress: () => {
+            if (!trackedPosition) return;
+            tapped();
+            const next = !tripFollow;
+            setTripView({
+              key: tripKey,
+              focus: tripView.key === tripKey && tripView.focus,
+              follow: next,
+            });
+            if (next) mapRef.current?.centerOn(trackedPosition.lat, trackedPosition.lon, 16);
+          },
+        },
+      ]
+    : [];
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <MapView
         ref={mapRef}
         dark={dark}
-        vehicles={mapVehicles}
-        route={route}
+        vehicles={displayVehicles}
+        route={incidentFocus ? null : route}
         selectedVehicleId={mapVehicleId}
         // Following is for a vehicle the rider opened; a tracked one sits on
         // the map without taking the camera away from whatever they are doing.
-        follow={followSelectedVehicle && !showTracked}
+        follow={(tripFollow && showTracked) || (followSelectedVehicle && !showTracked)}
         fitRoute={Boolean(focusedLine)}
         userPosition={userPosition}
         stale={fleetStale}
         nearbyStops={mapStops}
         selectedStopId={mapStopId}
+        highlightedStopIds={highlightedStopIds}
+        bottomInset={sheetInset}
         onSelectVehicle={handleVehicle}
         onSelectStop={handleStop}
         onBackground={handleBackground}
@@ -665,27 +837,55 @@ export default function MapScreen() {
             if (locateProblem === 'denied') Linking.openSettings();
             else locate();
           }}>
-          {arrival.alert?.kind === 'trip' && (
-            <TripBanner
-              alert={arrival.alert}
-              vehicleType={trackedPosition?.type}
-              onOpen={() => handleVehicle(arrival.alert!.vehicleId)}
-              onEnd={() => void arrival.disarm()}
-            />
+          {(arrival.alert?.kind === 'trip' || incidentFocus) && (
+            <View style={styles.bannerStack}>
+              {arrival.alert?.kind === 'trip' && (
+                <TripBanner
+                  alert={arrival.alert}
+                  vehicleType={trackedPosition?.type}
+                  now={now}
+                  disruption={tripDisruption}
+                  onOpen={() => handleVehicle(arrival.alert!.vehicleId)}
+                  onOpenDisruption={() => router.push('/alerts')}
+                  onEnd={() => void arrival.disarm()}
+                />
+              )}
+              {incidentFocus && (
+                <IncidentMapBanner
+                  title={incidentFocus.title}
+                  stopCount={incidentFocus.stops.length}
+                  onOpen={() => router.push('/alerts')}
+                  onClose={() => setIncidentFocus(null)}
+                />
+              )}
+            </View>
           )}
         </ClassicTopBar>
       )}
 
-      {!classic && arrival.alert?.kind === 'trip' && (
+      {!classic && (arrival.alert?.kind === 'trip' || incidentFocus) && (
         <View
           pointerEvents="box-none"
           style={[styles.tripBanner, { top: insets.top + Space.sm }]}>
-          <TripBanner
-            alert={arrival.alert}
-            vehicleType={trackedPosition?.type}
-            onOpen={() => handleVehicle(arrival.alert!.vehicleId)}
-            onEnd={() => void arrival.disarm()}
-          />
+          {arrival.alert?.kind === 'trip' && (
+            <TripBanner
+              alert={arrival.alert}
+              vehicleType={trackedPosition?.type}
+              now={now}
+              disruption={tripDisruption}
+              onOpen={() => handleVehicle(arrival.alert!.vehicleId)}
+              onOpenDisruption={() => router.push('/alerts')}
+              onEnd={() => void arrival.disarm()}
+            />
+          )}
+          {incidentFocus && (
+            <IncidentMapBanner
+              title={incidentFocus.title}
+              stopCount={incidentFocus.stops.length}
+              onOpen={() => router.push('/alerts')}
+              onClose={() => setIncidentFocus(null)}
+            />
+          )}
         </View>
       )}
 
@@ -718,6 +918,7 @@ export default function MapScreen() {
           <ClassicControls
             controls={[
               ...(platformMapAvailable ? [layersControl] : []),
+              ...tripControls,
               {
                 icon: 'git-branch' as const,
                 label: 'Linie',
@@ -728,7 +929,7 @@ export default function MapScreen() {
                 icon: 'warning-outline' as const,
                 label: 'Utrudnienia',
                 onPress: () => router.push('/alerts'),
-                badge: incidentCount.data ?? undefined,
+                badge: disruptions.data?.count,
               },
               {
                 icon: 'settings-outline' as const,
@@ -739,7 +940,13 @@ export default function MapScreen() {
             ]}
           />
         ) : (
-          <MapControls controls={[...(platformMapAvailable ? [layersControl] : []), locateControl]} />
+          <MapControls
+            controls={[
+              ...(platformMapAvailable ? [layersControl] : []),
+              ...tripControls,
+              locateControl,
+            ]}
+          />
         )}
       </Animated.View>
 
@@ -816,7 +1023,7 @@ export default function MapScreen() {
         ) : classic ? null : (
           <MapSheetHome
             selectedLineCount={selectedLines.length}
-            alertCount={incidentCount.data}
+            alertCount={disruptions.data?.count ?? null}
             nearbyAreas={nearbyAreas}
             arrivalAlert={arrival.alert}
             onOpenAlert={() => arrival.alert && handleVehicle(arrival.alert.vehicleId)}
@@ -839,20 +1046,7 @@ export default function MapScreen() {
             tripBoards={favouriteBoards.tripBoards}
             boardsReceivedAt={favouriteBoards.receivedAt}
             onNewTrip={() => router.push('/new-trip')}
-            onTrip={(trip) => {
-              // The origin's board, every platform of it: the trip's own
-              // departures are among them, and the stop sheet is where a
-              // rider already knows how to read a board.
-              const origin: Stop = {
-                id: trip.from.ids[0],
-                ids: trip.from.ids.length > 1 ? trip.from.ids : undefined,
-                name: trip.from.name,
-                lat: trip.from.lat,
-                lon: trip.from.lon,
-              };
-              mapRef.current?.centerOn(origin.lat, origin.lon, 17);
-              handleStop(origin);
-            }}
+            onTrip={(trip) => router.push({ pathname: '/saved-trip', params: { id: trip.id } })}
             onStop={(stop) => {
               mapRef.current?.centerOn(stop.lat, stop.lon, 17);
               handleStop(stop);
@@ -890,7 +1084,9 @@ const styles = StyleSheet.create({
     left: Space.md,
     right: Space.md,
     zIndex: 2,
+    gap: Space.sm,
   },
+  bannerStack: { gap: Space.sm },
   controls: { position: 'absolute', bottom: 0, alignItems: 'flex-end', gap: Space.sm },
   layers: { alignItems: 'flex-end' },
 });

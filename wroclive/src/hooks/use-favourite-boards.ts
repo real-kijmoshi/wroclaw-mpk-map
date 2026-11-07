@@ -4,6 +4,7 @@ import { usePoll } from '@/hooks/use-poll';
 import { fetchFavouriteBoards, lastPosition, rememberPosition, type FavouriteBoard, type TripBoard } from '@/lib/favourite-boards';
 import type { FavouriteStop } from '@/lib/favourite-stops';
 import type { FavouriteTrip } from '@/lib/favourite-trips';
+import { leaveAlertStore, useLeaveAlert } from '@/lib/leave-alerts';
 import { syncDeparturesWidget } from '@/lib/widgets';
 
 /** Often enough for the sheet's countdowns; the widget's timeline covers the gaps. */
@@ -43,6 +44,7 @@ export function useFavouriteBoards(
     if (userPosition) void rememberPosition(userPosition);
   }, [userPosition]);
   const position = userPosition ?? remembered;
+  const leaveAlert = useLeaveAlert();
 
   // Only boards for the stops currently starred: a poll still in flight from
   // before an unstar must not put the old stop back on the widget.
@@ -62,6 +64,12 @@ export function useFavouriteBoards(
       boards.receivedAt ?? Date.now(),
     );
   }, [current, shown, trips, tripBoards, position, boards.receivedAt]);
+
+  useEffect(() => {
+    if (!leaveAlert || boards.receivedAt === null) return;
+    const board = tripBoards.find((item) => item.trip.id === leaveAlert.favouriteTripId);
+    if (board) void leaveAlertStore.follow(board, boards.receivedAt);
+  }, [boards.receivedAt, leaveAlert, tripBoards]);
 
   return { boards: current, tripBoards, receivedAt: boards.receivedAt };
 }

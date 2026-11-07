@@ -12,6 +12,7 @@ import Maps, {
 
 import type { MapSurfaceHandle, MapSurfaceProps, MapViewport } from './map-surface.types';
 import { Elevation, HitTarget, Radius, Weight } from '@/constants/design';
+import { Colors } from '@/constants/theme';
 import { useMapChrome } from '@/hooks/use-map-chrome';
 import { useReducedMotion } from '@/hooks/use-reduced-motion';
 import type { FleetVehicle, Stop } from '@/lib/api';
@@ -47,6 +48,7 @@ import {
   headingBucket,
   vehicleMarkerGeometry,
 } from '@/lib/vehicle-marker';
+import { spaceMarkers } from '@/lib/marker-spacing';
 
 /**
  * react-native-maps `Polyline` has no opacity prop, so the dimmed travelled
@@ -116,6 +118,9 @@ const MARKER_OVERSCAN_RATIO = 0.5;
  */
 const FAR_DELTA = 0.12;
 const NEAR_DELTA = 0.03;
+
+/** How long after a `centerOn` a change of sheet inset re-aims that move. */
+const RECENTRE_WINDOW_MS = 1_500;
 
 type Tier = 'far' | 'mid' | 'near';
 
@@ -508,6 +513,7 @@ type StopMarkerProps = {
   /** Draw the name beside the dot. */
   labelled: boolean;
   selected: boolean;
+  highlighted: boolean;
   /** Light text with a dark halo, or the reverse — set by the base map. */
   onDark: boolean;
   onPress: (stop: Stop) => void;
@@ -543,11 +549,12 @@ const StopMarker = memo(function StopMarker({
   tint,
   labelled,
   selected,
+  highlighted,
   onDark,
   onPress,
 }: StopMarkerProps) {
-  const dotTracking = useMarkerRedraw(`${tint}|${selected}`);
-  const nameTracking = useMarkerRedraw(`${selected}|${onDark}`);
+  const dotTracking = useMarkerRedraw(`${tint}|${selected}|${highlighted}|${onDark}`);
+  const nameTracking = useMarkerRedraw(`${selected}|${highlighted}|${onDark}`);
   const at = coordinate(lat, lon);
   const press = (event: { stopPropagation: () => void }) => {
     event.stopPropagation();
@@ -570,14 +577,19 @@ const StopMarker = memo(function StopMarker({
         anchor={Platform.OS === 'ios' ? undefined : ANCHOR_CENTRE}
         centerOffset={Platform.OS === 'ios' ? APPLE_CENTRE_OFFSET : undefined}
         tracksViewChanges={dotTracking}
-        zIndex={selected ? 900 : 6}
+        zIndex={selected ? 900 : highlighted ? 850 : 6}
         onPress={press}
         accessibilityLabel={`Przystanek ${stop.name}`}>
         <View style={styles.stopDotBox}>
           {/* A white keyline around the plate: without it a dark mark sinks
               into satellite trees and roofs. Square rather than round, so a
               stop is never read as a zoomed-out vehicle's dot. */}
-          <View style={[styles.stopKeyline, selected && styles.stopDotSelected]}>
+          <View
+            style={[
+              styles.stopKeyline,
+              highlighted && { backgroundColor: Colors[onDark ? 'dark' : 'light'].danger },
+              (selected || highlighted) && styles.stopDotSelected,
+            ]}>
             <View style={[styles.stopDot, { backgroundColor: tint }]}>
               <View style={styles.stopPip} />
             </View>
@@ -594,7 +606,7 @@ const StopMarker = memo(function StopMarker({
           // Under the dots, always: the name is the same stop, so a tap on it
           // is no loss, but it must never take one meant for a neighbouring
           // platform's dot.
-          zIndex={selected ? 899 : 4}
+          zIndex={selected ? 899 : highlighted ? 849 : 4}
           onPress={press}
           accessibilityLabel={`Przystanek ${stop.name}`}>
           <View style={styles.stopNameBox}>
@@ -610,7 +622,7 @@ const StopMarker = memo(function StopMarker({
                 // A halo rather than a chip: dozens of filled pills turn a map
                 // into a list, and this is how the base map draws its own labels.
                 onDark ? styles.stopNameOnDark : styles.stopNameOnLight,
-                selected && styles.stopNameSelected,
+                (selected || highlighted) && styles.stopNameSelected,
               ]}>
               {stop.name}
             </Text>
@@ -632,6 +644,8 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
     stale = false,
     nearbyStops,
     selectedStopId,
+    highlightedStopIds = [],
+    bottomInset = 0,
     onSelectVehicle,
     onSelectStop,
     onBackground,
@@ -663,19 +677,55 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
     cameraMs.current = reducedMotion ? 0 : CAMERA_MS;
   }, [reducedMotion]);
 
+  /**
+   * The sheet covers the bottom of the map, so "centre" means the middle of
+   * what is left above it: the region's centre moves south by half the
+   * hidden share of the screen. Read through refs because `centerOn` is built
+   * once and the follow effect must not restart when the sheet moves.
+   */
+  const insetRef = useRef(bottomInset);
+  const heightRef = useRef(0);
+  const deltaRef = useRef(INITIAL_REGION.latitudeDelta);
+  const visibleCentre = (lat: number, latitudeDelta: number) => {
+    const height = heightRef.current;
+    if (!height) return lat;
+    const hidden = Math.min(Math.max(insetRef.current, 0), height * 0.8);
+    return lat - (latitudeDelta * hidden) / height / 2;
+  };
+  useEffect(() => {
+    heightRef.current = viewport.height;
+  }, [viewport.height]);
+  const lastCentre = useRef<{ lat: number; lon: number; delta: number; at: number } | null>(null);
+  const moveTo = (lat: number, lon: number, delta: number) => {
+    mapRef.current?.animateToRegion(
+      { latitude: visibleCentre(lat, delta), longitude: lon, latitudeDelta: delta, longitudeDelta: delta },
+      cameraMs.current,
+    );
+  };
+
   useImperativeHandle(
     ref,
     () => ({
       centerOn(lat, lon, zoom) {
         const delta = deltaForZoom(zoom ?? 15);
-        mapRef.current?.animateToRegion(
-          { latitude: lat, longitude: lon, latitudeDelta: delta, longitudeDelta: delta },
-          cameraMs.current,
-        );
+        lastCentre.current = { lat, lon, delta, at: Date.now() };
+        moveTo(lat, lon, delta);
       },
     }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- built once; everything it reads is a ref
     [],
   );
+
+  // Callers often centre first and open the sheet in the same breath, so the
+  // inset can arrive a render after the move it should have shaped. A change
+  // landing while that move is still fresh re-aims it rather than leaving the
+  // target under the sheet.
+  useEffect(() => {
+    insetRef.current = bottomInset;
+    const last = lastCentre.current;
+    if (last && Date.now() - last.at < RECENTRE_WINDOW_MS) moveTo(last.lat, last.lon, last.delta);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reacts to the inset alone
+  }, [bottomInset]);
 
   const validVehicles = useMemo(
     () => vehicles.filter((vehicle) => Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lon)),
@@ -786,6 +836,18 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
         a.id === selectedVehicleId ? -1 : b.id === selectedVehicleId ? 1 : a.id < b.id ? -1 : 1,
       );
 
+    if (alwaysLabelled && tier !== 'far') {
+      // Every survivor is a 40pt badge, so the thinning is what keeps them
+      // readable: drawing them all at district zoom piled numbers on numbers
+      // and the ones underneath could not be tapped.
+      return spaceMarkers(
+        ordered,
+        { ...visibleRegion, width: viewport.width, height: viewport.height },
+        CLASSIC_BADGE,
+        (vehicle) => vehicle.id === selectedVehicleId,
+      ).map((vehicle) => ({ vehicle, labelled: true, dotSize: DOT_SIZE, dotTail: true }));
+    }
+
     if (tier === 'mid') {
       // Every vehicle is its own dot here, and the dot carries the heading:
       // district zoom is where the flow of the network reads.
@@ -860,7 +922,7 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
     // Chasing a 1s glide with a 450ms camera makes the vehicle bounce out of
     // the middle of the screen and back on every poll.
     mapRef.current?.animateCamera(
-      { center: { latitude: selected.lat, longitude: selected.lon } },
+      { center: { latitude: visibleCentre(selected.lat, deltaRef.current), longitude: selected.lon } },
       { duration: reducedMotion ? 0 : GLIDE_MS },
     );
   }, [follow, reducedMotion, selected]);
@@ -884,6 +946,7 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
   const handleStop = useCallback((stop: Stop) => onSelectStop(stop), [onSelectStop]);
   const handleRegionChange = useCallback(
     (region: Region) => {
+      deltaRef.current = region.latitudeDelta;
       setVisibleRegion(region);
       onViewportChange?.(viewportOf(region));
     },
@@ -949,7 +1012,10 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
     });
 
     if (tier !== 'near') {
-      return drawn.map((entry) => ({ ...entry, labelled: entry.stop.id === selectedStopId }));
+      return drawn.map((entry) => ({
+        ...entry,
+        labelled: entry.stop.id === selectedStopId || highlightedStopIds.includes(entry.stop.id),
+      }));
     }
 
     const cellLat = (visibleRegion.latitudeDelta * STOP_LABEL_CELL) / height;
@@ -959,9 +1025,14 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
     const named = new Set<string>();
 
     // The selected stop is considered first, so it always wins its cell.
+    const highlighted = new Set(highlightedStopIds);
     const byPriority = drawn
       .slice()
-      .sort((a, b) => (a.stop.id === selectedStopId ? -1 : b.stop.id === selectedStopId ? 1 : 0));
+      .sort((a, b) => {
+        const aPriority = a.stop.id === selectedStopId ? 2 : highlighted.has(a.stop.id) ? 1 : 0;
+        const bPriority = b.stop.id === selectedStopId ? 2 : highlighted.has(b.stop.id) ? 1 : 0;
+        return bPriority - aPriority;
+      });
 
     for (const entry of byPriority) {
       const cell = `${Math.round(entry.lat / cellLat)}:${Math.round(entry.lon / cellLon)}`;
@@ -970,11 +1041,11 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
         takenNames.add(entry.stop.name);
         takenCells.add(cell);
       }
-      if (free || entry.stop.id === selectedStopId) named.add(entry.stop.id);
+      if (free || entry.stop.id === selectedStopId || highlighted.has(entry.stop.id)) named.add(entry.stop.id);
     }
 
     return drawn.map((entry) => ({ ...entry, labelled: named.has(entry.stop.id) }));
-  }, [nearbyStops, route, selectedStopId, tier, viewport.height, viewport.width, visibleRegion]);
+  }, [highlightedStopIds, nearbyStops, route, selectedStopId, tier, viewport.height, viewport.width, visibleRegion]);
 
   const osm = mapProvider === 'osm';
   /**
@@ -1086,6 +1157,7 @@ export const NativeMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function 
           tint={route?.color ?? STOP_TINT}
           labelled={labelled}
           selected={stop.id === selectedStopId}
+          highlighted={highlightedStopIds.includes(stop.id)}
           onDark={namesOnDark}
           onPress={handleStop}
         />

@@ -24,10 +24,12 @@ import {
   preferencesStore,
   usePreferences,
   type AppleMapType,
+  type ArrivalLeadSeconds,
   type ColorScheme,
   type LayoutMode,
   type MapProvider,
   type MarkerStyle,
+  type TripLeadStops,
 } from '@/lib/preferences';
 import { withAlpha } from '@/constants/theme';
 import {
@@ -76,6 +78,18 @@ const MAP_TYPES: { id: AppleMapType; label: string; icon: IconName }[] = [
   { id: 'standard', label: 'Mapa', icon: 'map-outline' },
   { id: 'hybrid', label: 'Hybrydowa', icon: 'layers-outline' },
   { id: 'satellite', label: 'Satelita', icon: 'planet-outline' },
+];
+
+const ARRIVAL_LEADS: { id: ArrivalLeadSeconds; label: string }[] = [
+  { id: 60, label: '1 min' },
+  { id: 120, label: '2 min' },
+  { id: 300, label: '5 min' },
+];
+
+const TRIP_LEADS: { id: TripLeadStops; label: string }[] = [
+  { id: 1, label: '1 przyst.' },
+  { id: 2, label: '2 przyst.' },
+  { id: 3, label: '3 przyst.' },
 ];
 
 const LEGAL_BASE_URL = 'https://wroclive.kijmoshi.xyz';
@@ -195,7 +209,7 @@ function PickerCard({
  * options. Used wherever three-or-fewer choices do not need a preview of
  * their own — the theme and the Apple Maps base style.
  */
-function Segmented<T extends string>({
+function Segmented<T extends string | number>({
   value,
   onChange,
   options,
@@ -414,6 +428,41 @@ export default function SettingsScreen() {
               value={favourites.length ? String(favourites.length) : null}
               onPress={() => router.push('/favourites')}
             />
+          </Section>
+
+          <Section
+            title="Powiadomienia"
+            icon="notifications-outline"
+            footer="Dotyczy lokalnych alertów na tym telefonie. Live Activity nadal aktualizuje przejazd na bieżąco.">
+            <View style={styles.segmentWrap}>
+              <ThemedText
+                type="footnote"
+                weight="semibold"
+                themeColor="textSecondary"
+                style={styles.segmentLabel}>
+                PRZED PRZYJAZDEM
+              </ThemedText>
+              <Segmented
+                value={preferences.arrivalLeadSeconds}
+                onChange={(value) => preferencesStore.set('arrivalLeadSeconds', value)}
+                options={ARRIVAL_LEADS}
+              />
+            </View>
+            <Divider />
+            <View style={styles.segmentWrap}>
+              <ThemedText
+                type="footnote"
+                weight="semibold"
+                themeColor="textSecondary"
+                style={styles.segmentLabel}>
+                PRZED WYSIADANIEM
+              </ThemedText>
+              <Segmented
+                value={preferences.tripLeadStops}
+                onChange={(value) => preferencesStore.set('tripLeadStops', value)}
+                options={TRIP_LEADS}
+              />
+            </View>
           </Section>
 
           <Section title="Na mapie" icon="eye-outline">

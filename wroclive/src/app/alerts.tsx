@@ -4,6 +4,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert as NativeAlert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -35,7 +36,9 @@ import { REFRESH_MS } from '@/lib/config';
 import { formatAge, plural } from '@/lib/format';
 import { tapped } from '@/lib/haptics';
 import { orderIncidentsForSelectedLines } from '@/lib/incident-order';
+import { mapIntentStore } from '@/lib/map-intent';
 import { selectionStore, useSelectedLines } from '@/lib/selection';
+import { foldSearchText, searchStops } from '@/lib/stops-api';
 
 const SOURCE_TAGS = /(^|\s)#(alertmpk|tram|trams|bus|buses|autobus|mpk|wroclaw|wrocław)\b/gi;
 const clean = (text: string) => text.replace(SOURCE_TAGS, ' ').replace(/\s{2,}/g, ' ').trim();
@@ -61,7 +64,14 @@ export default function AlertsScreen() {
   const disruptions = usePoll(getDisruptions, REFRESH_MS.alerts);
   const selectedLines = useSelectedLines();
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
+  const [mappingIncidentId, setMappingIncidentId] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+  // The stop lookup outlives a quick back swipe; navigating after it would pop
+  // whatever screen the rider is on by then.
+  const mounted = useRef(true);
+  useEffect(() => () => {
+    mounted.current = false;
+  }, []);
   const displayedIncident = selectedIncident && disruptions.data?.kind === 'incidents'
     ? disruptions.data.data.incidents.find((incident) => incident.id === selectedIncident.id) ?? selectedIncident
     : selectedIncident;
@@ -74,12 +84,46 @@ export default function AlertsScreen() {
   }, [selectedIncident?.id]);
 
   const lastRefreshAt = disruptions.data?.data.lastRefreshAt;
-  const showMap = (incident: Incident) => {
-    if (!hasMapHint(incident)) return;
+  const showMap = async (incident: Incident) => {
+    if (!hasMapHint(incident) || mappingIncidentId) return;
     tapped();
-    // Hints contain names only. Until they can be resolved reliably, returning
-    // to the existing map is the only honest handoff.
-    router.back();
+    setMappingIncidentId(incident.id);
+    try {
+      const queries = [
+        ...incident.mapHints.stopNames,
+        ...incident.mapHints.streetNames,
+        ...incident.mapHints.areaNames,
+        incident.locationName,
+      ].filter((value): value is string => Boolean(value?.trim()));
+      // One name the search cannot answer must not cost the stops the others found.
+      const settled = await Promise.allSettled(
+        [...new Set(queries)].slice(0, 8).map(async (query) => {
+          const stops = await searchStops(query);
+          const folded = foldSearchText(query);
+          const exact = stops.filter((stop) => foldSearchText(stop.name) === folded);
+          return (exact.length ? exact : stops).slice(0, 6);
+        }),
+      );
+      if (!mounted.current) return;
+      if (settled.every((result) => result.status === 'rejected')) throw new Error('stop lookup failed');
+      const results = settled.flatMap((result) => (result.status === 'fulfilled' ? result.value : []));
+      const unique = new Map(results.map((stop) => [stop.id, stop]));
+      const stops = [...unique.values()].slice(0, 24);
+      if (!stops.length) {
+        NativeAlert.alert(
+          'Nie znaleziono miejsca',
+          'Komunikat podaje nazwę lokalizacji, ale nie udało się dopasować jej do przystanku.',
+        );
+        return;
+      }
+      mapIntentStore.showIncident({ id: incident.id, title: incidentName(incident), stops });
+      router.back();
+    } catch {
+      if (!mounted.current) return;
+      NativeAlert.alert('Nie udało się pokazać miejsca', 'Sprawdź połączenie i spróbuj ponownie.');
+    } finally {
+      if (mounted.current) setMappingIncidentId(null);
+    }
   };
 
   return (
@@ -114,7 +158,11 @@ export default function AlertsScreen() {
             {disruptions.error && !disruptions.data ? (
               <ErrorState />
             ) : displayedIncident ? (
-              <IncidentDetail incident={displayedIncident} onShowMap={() => showMap(displayedIncident)} />
+              <IncidentDetail
+                incident={displayedIncident}
+                mapping={mappingIncidentId === displayedIncident.id}
+                onShowMap={() => void showMap(displayedIncident)}
+              />
             ) : disruptions.data?.kind === 'alerts' ? (
               <RawAlerts
                 alerts={disruptions.data.data.alerts}
@@ -221,7 +269,15 @@ function IncidentCard({ incident, onPress }: { incident: Incident; onPress: () =
 const sameWords = (text: string) =>
   text.toLocaleLowerCase('pl-PL').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
-function IncidentDetail({ incident, onShowMap }: { incident: Incident; onShowMap: () => void }) {
+function IncidentDetail({
+  incident,
+  mapping,
+  onShowMap,
+}: {
+  incident: Incident;
+  mapping: boolean;
+  onShowMap: () => void;
+}) {
   const theme = useTheme();
   const timeline = [...incident.timeline].sort((left, right) => left.timestamp - right.timestamp);
   const summary = clean(incident.summary);
@@ -326,8 +382,8 @@ function IncidentDetail({ incident, onShowMap }: { incident: Incident; onShowMap
       {hasMapHint(incident) && (
         <Section>
           <LinkRow
-            label="Wróć do mapy"
-            hint={incident.locationName ? `Lokalizacja: ${incidentName(incident)}` : 'Zamknij szczegóły'}
+            label={mapping ? 'Szukamy na mapie…' : 'Pokaż na mapie'}
+            hint={incident.locationName ? `Lokalizacja: ${incidentName(incident)}` : 'Wyróżnij powiązane przystanki'}
             leading={<RowIcon name="map-outline" color={theme.accent} />}
             onPress={onShowMap}
           />

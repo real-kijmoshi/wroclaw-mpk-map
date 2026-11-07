@@ -463,6 +463,12 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
   }
   .stop--selected .stop__dot { transform: scale(1.3); }
   .stop--selected .stop__name { font-weight: 800; }
+  .stop--highlighted .stop__dot {
+    transform: scale(1.3);
+    border-color: #FF453A;
+    box-shadow: 0 0 0 3px rgba(255,69,58,0.28), 0 1px 3px rgba(0,0,0,0.45);
+  }
+  .stop--highlighted .stop__name { font-weight: 800; }
   /*
    * The icon box is 104x56 — room for a two-line name — and Leaflet makes the
    * whole of it interactive, so each stop was swallowing every tap within half
@@ -568,9 +574,26 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
   var selectedId = null;
   var followId = null;
 
+  /**
+   * Pixels of the map hidden at the bottom by the app's sheet. "Centre" means
+   * the middle of what is left above it, so a target is moved up by half the
+   * hidden height — the same rule as \`bottomInset\` in native-map.tsx.
+   */
+  var bottomInset = 0;
+  var lastCentre = null;
+  var RECENTRE_WINDOW_MS = 1500;
+
+  function aboveSheet(lat, lon, zoom) {
+    var z = zoom == null ? map.getZoom() : zoom;
+    var hidden = Math.min(Math.max(bottomInset, 0), map.getSize().y * 0.8);
+    if (!hidden) return L.latLng(lat, lon);
+    return map.unproject(map.project([lat, lon], z).add([0, hidden / 2]), z);
+  }
+
   /** Every stop marker on the layer, in the order it was added. */
   var stopMarkers = [];
   var selectedStopId = null;
+  var highlightedStopIds = Object.create(null);
 
   /* --- route progress: travelled vs remaining ----------------------------- */
 
@@ -801,6 +824,33 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
   var LABEL_CELL = 46;
 
   /**
+   * Which classic badges are drawn, as one flag per point.
+   *
+   * A hand copy of \`spaceMarkers()\` in src/lib/marker-spacing.ts, which is
+   * the authority and carries the reasoning: this page has no build step and
+   * cannot import it. It takes screen points where that one takes positions
+   * and a view, which is the same arithmetic one step earlier. Change it there
+   * and change it here — test/app-pure-modules.test.js runs both.
+   */
+  function spacePoints(points, minSpacing, keepIndex) {
+    var minSquared = minSpacing * minSpacing;
+    var kept = [];
+    var flags = [];
+    for (var i = 0; i < points.length; i++) {
+      var point = points[i];
+      var clear = true;
+      for (var k = 0; k < kept.length; k++) {
+        var dx = kept[k].x - point.x;
+        var dy = kept[k].y - point.y;
+        if (dx * dx + dy * dy < minSquared) { clear = false; break; }
+      }
+      if (clear || i === keepIndex) kept.push(point);
+      flags.push(clear || i === keepIndex);
+    }
+    return flags;
+  }
+
+  /**
    * Decide, per marker, whether it is a badge, a dot, or not drawn at all.
    *
    * Pure class toggling on elements that already exist — no icon is rebuilt, so
@@ -836,6 +886,19 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
       if (counts) counts[cellKey] = (counts[cellKey] || 0) + 1;
     }
 
+    // Every classic survivor is a badge, so outside \`far\` the thinning is
+    // what keeps them readable: drawn all at once they piled numbers on
+    // numbers and the ones underneath could not be tapped.
+    var spaced = null;
+    if (markerStyle === 'classic' && tier !== 'far') {
+      var points = [];
+      for (var p = 0; p < ids.length; p++) {
+        var placed = markers.get(ids[p]);
+        points.push(placed ? map.latLngToLayerPoint(placed.marker.getLatLng()) : { x: Infinity, y: Infinity });
+      }
+      spaced = spacePoints(points, ${CLASSIC_BADGE}, ids[0] === selectedId ? 0 : -1);
+    }
+
     for (var i = 0; i < ids.length; i++) {
       var entry = markers.get(ids[i]);
       var element = entry && entry.marker.getElement();
@@ -851,7 +914,10 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
       }
 
       var selected = ids[i] === selectedId;
-      root.classList.toggle('vehicle--thinned', tier === 'far' && !free && !selected);
+      root.classList.toggle(
+        'vehicle--thinned',
+        (tier === 'far' && !free && !selected) || (spaced !== null && !spaced[i]),
+      );
       root.classList.toggle('vehicle--small', tier === 'far');
       root.classList.toggle('vehicle--dot', tier !== 'near' || !(free || selected));
 
@@ -946,7 +1012,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
       }
 
       if (followId && vehicle.id === followId) {
-        map.panTo([vehicle.lat, vehicle.lon], { animate: true, duration: 0.6 });
+        map.panTo(aboveSheet(vehicle.lat, vehicle.lon), { animate: true, duration: 0.6 });
       }
     }
 
@@ -1234,9 +1300,11 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
    * never a rebuilt icon. Names are what the layer is for — a field of
    * anonymous dots tells a rider nothing they cannot already see.
    */
-  function setStops(stops) {
+  function setStops(stops, highlightedIds) {
     stopLayer.clearLayers();
     stopMarkers.length = 0;
+    highlightedStopIds = Object.create(null);
+    (highlightedIds || []).forEach(function (id) { highlightedStopIds[String(id)] = true; });
 
     (stops || []).forEach(function (stop) {
       if (!isFinite(stop.lat) || !isFinite(stop.lon)) return;
@@ -1464,8 +1532,10 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
       }
 
       var selected = entry.id === selectedStopId;
-      root.classList.toggle('stop--named', labelled && (free || selected));
+      var highlighted = Boolean(highlightedStopIds[entry.id]);
+      root.classList.toggle('stop--named', highlighted || (labelled && (free || selected)));
       root.classList.toggle('stop--selected', selected);
+      root.classList.toggle('stop--highlighted', highlighted);
     }
   }
 
@@ -1523,6 +1593,8 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
     markerStyle = next === 'classic' ? 'classic' : 'modern';
     var pane = map.getPane('vehicles');
     if (pane) pane.classList.toggle('is-classic', markerStyle === 'classic');
+    // Which badges survive depends on the style, so a switch re-thins.
+    applyTier();
   }
 
   /**
@@ -1547,7 +1619,7 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
       case 'vehicles': setVehicles(message.vehicles || []); break;
       case 'route': setRoute(message.shape); break;
       case 'stops':
-        setStops(message.stops || []);
+        setStops(message.stops || [], message.highlightedIds || []);
         setSelectedStop(message.selectedId || null);
         break;
       case 'selectStop': setSelectedStop(message.id || null); break;
@@ -1560,11 +1632,22 @@ export const mapHtml = (dark: boolean) => `<!DOCTYPE html>
         followId = message.follow ? message.id : null;
         if (message.id && markers.has(message.id)) {
           var entry = markers.get(message.id);
-          if (message.center !== false) map.panTo([entry.lat, entry.lon], { animate: true });
+          if (message.center !== false) map.panTo(aboveSheet(entry.lat, entry.lon), { animate: true });
         }
         break;
-      case 'center':
-        map.setView([message.lat, message.lon], message.zoom || map.getZoom(), { animate: message.animate !== false });
+      case 'center': {
+        var centreZoom = message.zoom || map.getZoom();
+        lastCentre = { lat: message.lat, lon: message.lon, zoom: centreZoom, at: Date.now() };
+        map.setView(aboveSheet(message.lat, message.lon, centreZoom), centreZoom, { animate: message.animate !== false });
+        break;
+      }
+      case 'inset':
+        bottomInset = Number(message.px) || 0;
+        // The app often centres and opens its sheet in the same breath, so
+        // the inset can land just after the move it should have shaped.
+        if (lastCentre && Date.now() - lastCentre.at < RECENTRE_WINDOW_MS) {
+          map.setView(aboveSheet(lastCentre.lat, lastCentre.lon, lastCentre.zoom), lastCentre.zoom, { animate: true });
+        }
         break;
       default: break;
     }

@@ -27,6 +27,8 @@ export const OsmMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function Osm
     stale = false,
     nearbyStops,
     selectedStopId,
+    highlightedStopIds = [],
+    bottomInset = 0,
     onSelectVehicle,
     onSelectStop,
     onBackground,
@@ -70,14 +72,23 @@ export const OsmMap = forwardRef<MapSurfaceHandle, MapSurfaceProps>(function Osm
     // A route's own stops own the layer while there is one; the nearby stops
     // would otherwise clear them.
     if (route) return;
-    mapRef.current?.send({ type: 'stops', stops: nearbyStops, selectedId: selectedStopId ?? null });
-  }, [nearbyStops, route, selectedStopId]);
+    mapRef.current?.send({
+      type: 'stops',
+      stops: nearbyStops,
+      selectedId: selectedStopId ?? null,
+      highlightedIds: highlightedStopIds,
+    });
+  }, [highlightedStopIds, nearbyStops, route, selectedStopId]);
 
   useEffect(() => {
     // Selecting a stop must name it straight away, without waiting for the
     // next stops payload to come round.
     mapRef.current?.send({ type: 'selectStop', id: selectedStopId ?? null });
   }, [selectedStopId]);
+
+  useEffect(() => {
+    mapRef.current?.send({ type: 'inset', px: bottomInset });
+  }, [bottomInset]);
 
   useEffect(() => {
     mapRef.current?.send({ type: 'stale', stale });

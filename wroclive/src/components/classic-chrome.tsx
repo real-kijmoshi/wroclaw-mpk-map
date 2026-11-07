@@ -184,6 +184,7 @@ export type ClassicControl = {
   label: string;
   onPress: () => void;
   disabled?: boolean;
+  selected?: boolean;
   /** A count worth seeing before the screen behind the button is opened. */
   badge?: number;
 };
@@ -204,7 +205,7 @@ export function ClassicControls({ controls }: { controls: ClassicControl[] }) {
   );
 }
 
-function RoundButton({ icon, label, onPress, disabled, badge }: ClassicControl) {
+function RoundButton({ icon, label, onPress, disabled, selected, badge }: ClassicControl) {
   const { scheme, tokens } = useMapChrome();
 
   return (
@@ -213,14 +214,17 @@ function RoundButton({ icon, label, onPress, disabled, badge }: ClassicControl) 
       disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={badge ? `${label}, ${badge}` : label}
-      accessibilityState={{ disabled: Boolean(disabled) }}
+      accessibilityState={{ disabled: Boolean(disabled), selected: Boolean(selected) }}
       style={({ pressed }) => [
         styles.roundPress,
         pressed && !disabled && styles.pressed,
         disabled && styles.pressed,
       ]}>
       <View style={styles.roundWrap}>
-        <Glass variant="control" scheme={scheme} style={styles.round}>
+        <Glass
+          variant="control"
+          scheme={scheme}
+          style={[styles.round, selected && { backgroundColor: tokens.fill }]}>
           <Ionicons name={icon} size={20} color={tokens.text} />
         </Glass>
         {badge !== undefined && badge > 0 && (

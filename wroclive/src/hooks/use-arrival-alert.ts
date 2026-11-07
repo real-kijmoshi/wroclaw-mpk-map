@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { ActionSheetIOS, Alert, Linking, Platform } from 'react-native';
 
 import { usePoll, type PollState } from '@/hooks/use-poll';
@@ -8,6 +8,8 @@ import { REFRESH_MS } from '@/lib/config';
 import { failed, tapped } from '@/lib/haptics';
 
 const followServer = () => vehiclePollDelay(REFRESH_MS.vehicles);
+/** How long a tracked vehicle must stay unknown to the server before its alert ends. */
+const MISSING_GRACE_MS = 90_000;
 
 /**
  * A stop in a vehicle's list means one of two things, and only the rider
@@ -16,17 +18,39 @@ const followServer = () => vehiclePollDelay(REFRESH_MS.vehicles);
  * tram cannot tell "on board" from "standing at the kerb beside it".
  */
 function askKind(stopName: string): Promise<AlertKind | null> {
-  if (Platform.OS !== 'ios') return Promise.resolve('arrival');
-  return new Promise((resolve) =>
-    ActionSheetIOS.showActionSheetWithOptions(
-      {
-        title: stopName,
-        options: ['Jadę tym pojazdem — wysiadam tutaj', 'Czekam tutaj na ten pojazd', 'Anuluj'],
-        cancelButtonIndex: 2,
-      },
-      (index) => resolve(index === 0 ? 'trip' : index === 1 ? 'arrival' : null),
-    ),
-  );
+  if (Platform.OS === 'ios') {
+    return new Promise((resolve) =>
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          title: stopName,
+          options: ['Jadę tym pojazdem — wysiadam tutaj', 'Czekam tutaj na ten pojazd', 'Anuluj'],
+          cancelButtonIndex: 2,
+        },
+        (index) => resolve(index === 0 ? 'trip' : index === 1 ? 'arrival' : null),
+      ),
+    );
+  }
+  if (Platform.OS === 'android') {
+    return new Promise((resolve) => {
+      let settled = false;
+      const choose = (kind: AlertKind | null) => {
+        if (settled) return;
+        settled = true;
+        resolve(kind);
+      };
+      Alert.alert(
+        stopName,
+        'Co chcesz śledzić?',
+        [
+          { text: 'Jadę — wysiadam tutaj', onPress: () => choose('trip') },
+          { text: 'Czekam na ten pojazd', onPress: () => choose('arrival') },
+          { text: 'Anuluj', style: 'cancel', onPress: () => choose(null) },
+        ],
+        { cancelable: true, onDismiss: () => choose(null) },
+      );
+    });
+  }
+  return Promise.resolve(null);
 }
 
 /**
@@ -43,22 +67,48 @@ export function useArrivalAlertTracking(detail: PollState<VehicleDetail>, openVe
     (signal) => getVehicle(alert?.vehicleId as string, { signal, retryWhileLoading: false }),
     REFRESH_MS.vehicles,
     {
-      enabled: Boolean(alert) && alert?.vehicleId !== openVehicleId,
+      enabled: Boolean(alert) && alert?.phase !== 'completed' && alert?.vehicleId !== openVehicleId,
       key: alert?.vehicleId ?? '',
       delayMs: followServer,
     },
   );
 
+  // A 404 is how the server says "not tracked", but it also says it to every
+  // phone at once for a moment after a deploy (the fleet is empty until the
+  // first poll) and once MPK's feed has been down past the server's stale
+  // window. Ending the alert on the first one cancelled every rider's
+  // notification in those cases, so the vehicle has to stay missing.
+  const missingSince = useRef<number | null>(null);
+  const missing = useCallback((error: Error | null) => {
+    if (!(error instanceof ApiError) || error.status !== 404) return;
+    const now = Date.now();
+    missingSince.current ??= now;
+    if (now - missingSince.current >= MISSING_GRACE_MS) {
+      missingSince.current = null;
+      void arrivalAlertStore.finish();
+    }
+  }, []);
   useEffect(() => {
-    if (detail.data) void arrivalAlertStore.follow(detail.data);
+    missingSince.current = null;
+  }, [alert?.vehicleId]);
+
+  useEffect(() => {
+    if (!detail.data) return;
+    if (detail.data.vehicle.id === alert?.vehicleId) missingSince.current = null;
+    void arrivalAlertStore.follow(detail.data);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- follows each answer, not each alert edit
   }, [detail.data]);
   useEffect(() => {
-    if (own.data) void arrivalAlertStore.follow(own.data);
+    if (!own.data) return;
+    missingSince.current = null;
+    void arrivalAlertStore.follow(own.data);
   }, [own.data]);
   useEffect(() => {
-    // No longer tracked: the run ended or the vehicle left the feed.
-    if (own.error instanceof ApiError && own.error.status === 404) void arrivalAlertStore.disarm();
-  }, [own.error]);
+    missing(own.error);
+  }, [missing, own.error]);
+  useEffect(() => {
+    if (alert?.vehicleId === openVehicleId) missing(detail.error);
+  }, [alert?.vehicleId, detail.error, missing, openVehicleId]);
 
   const toggle = useCallback(
     async (stop: { id: string; name: string }) => {

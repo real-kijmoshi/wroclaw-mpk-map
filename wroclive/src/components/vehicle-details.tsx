@@ -9,6 +9,7 @@ import type { Vehicle, VehicleDetail, VehicleTripDetail } from '@/lib/api';
 import type { ArrivalAlert } from '@/lib/arrival-alerts';
 import { AT_STOP_ETA, etaParts, formatDelay, formatScheduled, plural } from '@/lib/format';
 import { colorFor } from '@/lib/lines';
+import { usePreferences } from '@/lib/preferences';
 import { tripProgress } from '@/lib/trip-progress';
 
 /**
@@ -130,6 +131,7 @@ export function VehicleDetails({
   onDisarm,
 }: VehicleDetailsProps) {
   const theme = useTheme();
+  const { arrivalLeadSeconds } = usePreferences();
 
   if (loading && !detail) {
     return (
@@ -227,7 +229,7 @@ export function VehicleDetails({
                       : riding
                         ? `${riding.stopsAway === 1 ? 'Następny przystanek' : `Jeszcze ${riding.stopsAway} ${plural(riding.stopsAway, ['przystanek', 'przystanki', 'przystanków'])}`} · powiadomimy przed wysiadką.`
                         : 'Powiadomimy Cię przed wysiadką.'
-                    : 'Powiadomimy Cię ok. 2 min przed przyjazdem.'}
+                    : `Powiadomimy Cię ok. ${Math.round(arrivalLeadSeconds / 60)} min przed przyjazdem.`}
                 </ThemedText>
               </View>
               {onDisarm && (

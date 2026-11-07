@@ -203,10 +203,14 @@ class LiveActivityService {
         aps: {
           timestamp: Math.floor(now / 1000),
           event: 'end',
-          'dismissal-date': Math.floor(now / 1000) + 60,
+          // The vehicle has left the rider's stop. Keeping the ended card on
+          // the Lock Screen makes its frozen 0:00 look like a live countdown.
+          'dismissal-date': Math.floor(now / 1000),
         },
       },
-      5,
+      // Departure is the one end event that must not wait behind routine
+      // updates: the activity should leave with the vehicle.
+      10,
     );
   }
 

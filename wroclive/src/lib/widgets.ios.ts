@@ -269,6 +269,35 @@ function registerPush(
   });
 }
 
+/** Reconnect a JS session to a native activity that survived process death. */
+function attachActivity(
+  kind: Kind,
+  input: ArrivalActivityInput | TripActivityInput,
+  handle: ArrivalHandle | TripHandle,
+) {
+  const current: NonNullable<typeof activity> = {
+    kind,
+    vehicleId: input.vehicleId,
+    stopId: input.stopId,
+    handle,
+    token: null,
+    pushed: false,
+    registeredAt: 0,
+    subscription: null,
+  };
+  activity = current;
+  current.subscription = handle.addPushTokenListener(({ pushToken }) =>
+    registerPush(current, pushToken, input),
+  );
+  void handle
+    .getPushToken()
+    .then((token) => {
+      if (token && activity === current) registerPush(current, token, input);
+    })
+    .catch(() => {});
+  return current;
+}
+
 function show(kind: Kind, input: ArrivalActivityInput | TripActivityInput) {
   if (!layouts) return;
   const now = Date.now();
@@ -309,31 +338,29 @@ function show(kind: Kind, input: ArrivalActivityInput | TripActivityInput) {
         .catch(() => {});
       return;
     }
+    if (!activity) {
+      const own = kind === 'trip' ? layouts.tripActivity.getInstances() : layouts.arrivalActivity.getInstances();
+      const other = kind === 'trip' ? layouts.arrivalActivity.getInstances() : layouts.tripActivity.getInstances();
+      // This module deliberately owns one activity. Remove stale siblings left
+      // by an interrupted session, then adopt the matching one instead of
+      // starting a duplicate after the persisted trip is restored.
+      for (const handle of [...other, ...own.slice(1)]) void handle.end('immediate').catch(() => {});
+      const existing = own[0];
+      if (existing) {
+        attachActivity(kind, input, existing);
+        void (existing as { update: (next: typeof props, stale: Date) => Promise<void> })
+          .update(props, staleDate)
+          .catch(() => {});
+        return;
+      }
+    }
     endLiveActivity();
     const url = vehicleAppUrl(input.vehicleId);
     const handle =
       kind === 'trip' && 'totalStops' in props
         ? layouts.tripActivity.start(props, url, staleDate)
         : layouts.arrivalActivity.start(base, url, staleDate);
-    const current: NonNullable<typeof activity> = {
-      kind,
-      vehicleId: input.vehicleId,
-      stopId: input.stopId,
-      handle,
-      token: null,
-      pushed: false,
-      registeredAt: 0,
-      subscription: null,
-    };
-    activity = current;
-    // iOS may issue the token later, and may rotate it; register each one.
-    current.subscription = handle.addPushTokenListener(({ pushToken }) => registerPush(current, pushToken, input));
-    void handle
-      .getPushToken()
-      .then((token) => {
-        if (token && activity === current) registerPush(current, token, input);
-      })
-      .catch(() => {});
+    attachActivity(kind, input, handle);
   } catch {
     // Live Activities switched off in Settings, or the system refused: the
     // notification still arrives, which is what the rider asked for.
@@ -355,5 +382,7 @@ export function endLiveActivity() {
   if (!current) return;
   current.subscription?.remove();
   if (current.token) void apiSend('DELETE', `/live-activities/${current.token}`);
-  void current.handle.end('default').catch(() => {});
+  // Once the destination is behind the vehicle there is no useful final
+  // state to preserve: remove the lock-screen card with the ride itself.
+  void current.handle.end('immediate').catch(() => {});
 }

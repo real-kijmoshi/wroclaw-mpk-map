@@ -218,12 +218,16 @@ export function MapSheetHome({
             <View style={styles.bannerText}>
               <ThemedText type="callout" weight="semibold" numberOfLines={1}>
                 {arrivalAlert.kind === 'trip'
-                  ? `Jedziesz do: ${arrivalAlert.stopName}`
+                  ? arrivalAlert.phase === 'arrived' || arrivalAlert.phase === 'completed'
+                    ? `${arrivalAlert.stopName} — wysiądź tutaj`
+                    : `Jedziesz do: ${arrivalAlert.stopName}`
                   : `Linia ${arrivalAlert.line}${arrivalAlert.towards ? ` → ${arrivalAlert.towards}` : ''}`}
               </ThemedText>
               <ThemedText type="footnote" themeColor="textSecondary" numberOfLines={1}>
                 {arrivalAlert.kind === 'trip'
-                  ? `Linia ${arrivalAlert.line}${
+                  ? arrivalAlert.phase === 'completed'
+                    ? `Linia ${arrivalAlert.line} · przejazd zakończony`
+                    : `Linia ${arrivalAlert.line}${
                       arrivalAlert.stopsAway === undefined
                         ? ''
                         : arrivalAlert.stopsAway === 0

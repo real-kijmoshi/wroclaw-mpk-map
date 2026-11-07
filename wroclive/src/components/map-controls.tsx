@@ -10,15 +10,15 @@ export type MapControl = {
   label: string;
   onPress: () => void;
   disabled?: boolean;
+  selected?: boolean;
 };
 
 /**
  * The controls that belong to the map itself.
  *
- * Only two things qualify: where am I, and what am I looking at. Lines and
- * alerts used to sit here as well, which made a four-button tower down the
- * right edge of a map that already had a HUD card on it; they are rows in the
- * sheet now.
+ * Permanent controls answer where am I and what am I looking at. During an
+ * onboard trip, temporary focus and camera-follow controls join them; lines
+ * and alerts remain rows in the sheet.
  *
  * They are drawn as one column on a single stack of glass, the way the
  * platform's own map controls are, so they read as one instrument rather than
@@ -37,9 +37,13 @@ export function MapControls({ controls }: { controls: MapControl[] }) {
             disabled={control.disabled}
             accessibilityRole="button"
             accessibilityLabel={control.label}
-            accessibilityState={{ disabled: Boolean(control.disabled) }}
+            accessibilityState={{
+              disabled: Boolean(control.disabled),
+              selected: Boolean(control.selected),
+            }}
             style={({ pressed }) => [
               styles.button,
+              control.selected && { backgroundColor: tokens.fill },
               control.disabled && styles.disabled,
               pressed && { backgroundColor: tokens.fill },
             ]}>

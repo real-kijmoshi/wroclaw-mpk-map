@@ -29,9 +29,6 @@ export type FavouriteStop = RecentStop & {
   label?: string;
 };
 
-/** What a list, the widget and a quick action call a starred stop. */
-export const favouriteTitle = (stop: FavouriteStop) => stop.label || stop.name;
-
 let list: FavouriteStop[] = [];
 const listeners = new Set<() => void>();
 

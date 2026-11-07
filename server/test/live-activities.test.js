@@ -202,9 +202,13 @@ describe('Live Activity service', () => {
   it('ends the activity once the stop is behind the vehicle', async () => {
     const { fake, state, service } = await setup();
     state.stops = ['S3'];
-    await service.tick(Date.now());
+    const now = Date.now();
+    await service.tick(now);
     service.stop();
-    assert.equal(fake.received[0].body.aps.event, 'end');
+    const { headers, body } = fake.received[0];
+    assert.equal(body.aps.event, 'end');
+    assert.equal(body.aps['dismissal-date'], Math.floor(now / 1000));
+    assert.equal(headers['apns-priority'], '10');
     assert.equal(service.status.active, 0);
   });
 

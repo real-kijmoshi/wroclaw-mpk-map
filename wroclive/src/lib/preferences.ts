@@ -63,6 +63,12 @@ export type MarkerStyle = 'modern' | 'classic';
  */
 export type BoardView = 'time' | 'route';
 
+/** How early a waiting rider is warned that their selected vehicle is close. */
+export type ArrivalLeadSeconds = 60 | 120 | 300;
+
+/** How many stops away the get-off alert should fire during an active trip. */
+export type TripLeadStops = 1 | 2 | 3;
+
 export type Preferences = {
   mapProvider: MapProvider;
   /** Base map style for the system (MapKit) surface on iOS. */
@@ -85,6 +91,10 @@ export type Preferences = {
   markerStyle: MarkerStyle;
   /** Departure order, or grouped by line — remembered, because it is a habit. */
   boardView: BoardView;
+  /** Local alert lead time while waiting at a stop. */
+  arrivalLeadSeconds: ArrivalLeadSeconds;
+  /** Local alert threshold while riding. */
+  tripLeadStops: TripLeadStops;
 };
 
 const DEFAULTS: Preferences = {
@@ -96,6 +106,8 @@ const DEFAULTS: Preferences = {
   layout: 'sheet',
   markerStyle: 'modern',
   boardView: 'time',
+  arrivalLeadSeconds: 120,
+  tripLeadStops: 1,
 };
 
 let preferences: Preferences = DEFAULTS;

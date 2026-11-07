@@ -50,6 +50,15 @@ export type MapSurfaceProps = {
   nearbyStops: Stop[];
   /** Always drawn with its name, whatever the zoom or the de-collision pass. */
   selectedStopId?: string | null;
+  /**
+   * Points of the map hidden at the bottom by the sheet at its resting
+   * detent. The camera centres what it is asked to show in the part of the
+   * map that is still visible, so an opened vehicle is not parked under the
+   * sheet's top edge. Surfaces that cannot offset the camera ignore it.
+   */
+  bottomInset?: number;
+  /** Stops named by the disruption currently opened from the alerts screen. */
+  highlightedStopIds?: string[];
   onSelectVehicle: (id: string) => void;
   /** The complete record keeps a platform's ids and coordinates intact. */
   onSelectStop: (stop: Stop) => void;

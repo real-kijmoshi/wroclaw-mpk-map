@@ -179,6 +179,29 @@ their own copy of the same `Platform.select` shadow.
   has one flat class namespace and `.dot` is already the live/stale indicator
   in its status pill: a plain `.dot` on the marker picked up its grey
   background and painted a disc behind every zoomed-out vehicle.
+- **Classic badges are thinned by on-screen spacing, not by a grid**
+  (`spaceMarkers()` in `src/lib/marker-spacing.ts`, used by `native-map.tsx`
+  at `mid` and `near`). Under the classic style every drawn vehicle is a 40pt
+  badge, and `mid` used to draw them all: district zoom was numbers piled on
+  numbers, the ones underneath untappable. A grid alone is not enough — two
+  vehicles either side of a cell boundary win a cell each and land a point
+  apart — so a badge closer than `CLASSIC_BADGE` to one already kept is left
+  out. The selected vehicle is always kept. The Leaflet page carries a hand
+  copy (`spacePoints()` in `map-html.ts`) that `test/app-pure-modules.test.js`
+  runs against this one on the same scene.
+- **The camera centres above the sheet** (`bottomInset` on `MapSurfaceProps`).
+  `centerOn()` and follow aimed at the middle of the whole screen, which put an
+  opened vehicle at the sheet's top edge with its route underneath it. The
+  native map moves the region's centre south by half the hidden share; the
+  Leaflet page does the same in pixels (`aboveSheet()`, fed by an `inset`
+  command). Callers
+  often centre first and open the sheet in the same breath, so an inset change
+  within `RECENTRE_WINDOW_MS` of a `centerOn` re-aims that move.
+- **A vehicle's route is fetched again once the fleet knows it.** A vehicle
+  opened from a link on a cold start (a widget or Live Activity tap) is
+  selected before the fleet's first answer; the route effect looked it up,
+  found nothing, and — keyed on the id alone — never ran again. It is keyed on
+  `selectedVehicleKnown` too.
 - **The bucketed heading is the drawn heading.** Every surface rebuilds a
   marker only when the 15° bucket changes, so the raw heading must never be
   what gets drawn: `tracksViewChanges` is false on native, and a rotation the
@@ -335,12 +358,31 @@ Activity push, and it is optional.
   screen that can show one. A stop link carries its own name and position so
   it opens without a lookup.
 - **Arrival alerts** (`src/lib/arrival-alerts.ts`). Tap a stop in a vehicle's
-  list: a *local* notification two minutes before the ETA, rescheduled on
+  list: a *local* notification before the ETA — one, two or five minutes,
+  `preferences.arrivalLeadSeconds` — rescheduled on
   every poll while the app runs. Once the app is suspended the last schedule
   stands — a tram that then loses time is announced early, never dropped.
+  The same local flow works on Android through runtime-created channels; an
+  onboard trip also has one silent ongoing notification, updated in place.
   `expo-notifications`' config plugin is deliberately **not** in `app.json`:
   it writes a push entitlement, and these alerts are local. Permission is
-  asked when a rider arms an alert, never at launch.
+  asked when a rider arms an alert, never at launch. The active alert is saved
+  in AsyncStorage and restored before the splash screen leaves; restore is
+  capped at six hours, and the final "wysiądź tutaj" state clears after one
+  minute. Three rules that each cost a bug:
+  - A tracked vehicle's 404 ends the alert only after it persists for
+    `MISSING_GRACE_MS` (`use-arrival-alert.ts`). The server 404s *every*
+    vehicle for a moment after a deploy and once MPK's feed has been down past
+    its stale window; ending on the first one cancelled every rider's alert.
+  - Notification scheduling is serialised and re-checks after each await that
+    the alert is still the one it started for (`sameAlert` in
+    `arrival-alerts.ts`, `generation` in `leave-alerts.ts`). Two overlapping
+    polls each scheduled one and the overwritten id fired anyway; a disarm
+    mid-schedule left an orphan that announced a vehicle the rider let go.
+  - A leave reminder whose departure is missing from one board keeps its
+    schedule until the departure's own time has passed (`followLeaveAlert()`
+    in `src/lib/leave-timing.ts`). Dropping it on absence cancelled reminders
+    on a short board with nothing on screen to say so.
 - **Favourite boards** (`src/lib/favourite-boards.ts`,
   `src/hooks/use-favourite-boards.ts`). One fetch of every starred stop's
   departures (at most twelve) serves the sheet's "Ulubione" rows, the widget and the
@@ -380,7 +422,11 @@ Activity push, and it is optional.
   Direct services only; there is no transfer planning. An older server
   ignores `?to=` and serves the whole board without arrivals, which
   `getJourneyDepartures()` reports as `supported: false` rather than showing
-  trams that may not go there. A trip is one more entry in the Departures
+  trams that may not go there. `src/app/saved-trip.tsx` shows one saved
+  trip's departures and can arm a one-shot "Czas wyjść" reminder for one of
+  them (`src/lib/leave-alerts.ts`): a local notification at departure minus
+  the walk, re-timed from each fresh board while the app runs and dropped
+  when that departure leaves the board. A trip is one more entry in the Departures
   widget (`kind: 'trip'`, id `trip:<id>`), offered by the same picker.
 - **Background refresh** (`src/lib/background-refresh.ios.ts`,
   `expo-background-task`). iOS wakes the app now and then to rebuild the
@@ -392,16 +438,25 @@ Activity push, and it is optional.
   lock screen and in the Dynamic Island. `Trip` is the other direction: a rider
   on board taps their stop in the vehicle's list, chooses "Jadę tym pojazdem —
   wysiadam tutaj", and the activity counts *stops* down with a progress bar;
-  the local alert fires as the stop before theirs is left, or 90 s before
-  arrival, whichever is later. Stops are counted by `tripProgress()`
+  the local alert fires when their stop is one, two or three stops away
+  (`preferences.tripLeadStops`), timed from the ETA of the stop at that
+  threshold — `alertFireTime()` in `src/lib/alert-timing.ts`, which
+  `server/test/alert-timing.test.js` runs. There is no seconds cap any more: on
+  a long leg the alert can arrive minutes before the stop. Stops are counted by `tripProgress()`
   (`src/lib/trip-progress.ts`), which the server carries a copy of for its
   pushes — `server/test/trip-progress.test.js` runs both on the same payloads.
+  On the map, the trip route ends at the rider's stop and temporary controls
+  can hide the rest of the fleet or make the camera follow the tracked vehicle.
+  The banner carries the destination ETA, next stop, arrival instruction and
+  an active disruption affecting that line; amber remains exclusive to the
+  ETA countdown.
   The countdown is a native timer, so it keeps ticking with the app suspended;
   the stale date greys it out when nothing has refreshed it. When the server
   has an APNs key, the app registers the activity's push token
   (`POST /live-activities`, `kind: 'arrival' | 'trip'` — absent means arrival)
   and the server pushes each update on every vehicle poll until the stop is
-  passed; without one it answers 503 and the app updates the activity itself
+  passed, then ends and dismisses it immediately; without one it answers 503
+  and the app updates the activity itself
   while it runs. Nothing else can: once the app is suspended a stop count is
   frozen, and it said "4 przystanki" for a whole ride and after the rider got
   off. So a trip that no server is pushing goes stale as its next stop is due
@@ -503,7 +558,8 @@ picked up, so both must work at once — that is what invariant 9 buys.
 | `src/lib/updates.ts` | The only module touching `expo-updates`; inert off release builds |
 | `src/lib/favourite-stops.ts` / `recent-stops.ts` | Starred and recently opened stops, persisted |
 | `src/lib/links.ts`, `src/app/+native-intent.tsx` | Share links out, `wroclive://` links in |
-| `src/lib/arrival-alerts.ts`, `src/hooks/use-arrival-alert.ts` | Local "2 min before" notification; drives the Live Activity |
+| `src/lib/arrival-alerts.ts`, `src/lib/alert-timing.ts`, `src/hooks/use-arrival-alert.ts` | Local arrival / get-off notification; drives the Live Activity and Android's ongoing card |
+| `src/lib/leave-alerts.ts`, `src/app/saved-trip.tsx` | "Czas wyjść" reminder for one departure of a saved trip |
 | `src/widgets/layouts.tsx`, `src/lib/widgets*.ts` | iOS widget and Live Activity; guarded, iOS only |
 | `src/lib/favourite-boards.ts`, `src/lib/background-refresh*.ts` | Starred stops' boards: sheet, widget, background refresh |
 | `src/lib/walking.ts` | Walking time, "when to leave", Apple Maps directions |
