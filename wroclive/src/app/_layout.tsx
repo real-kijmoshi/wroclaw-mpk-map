@@ -6,6 +6,7 @@ import { Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { ErrorScreen } from '@/components/error-screen';
+import { IncidentNotificationRouter } from '@/components/incident-notification-router';
 import { getLines } from '@/lib/api';
 import { hydrateArrivalAlert } from '@/lib/arrival-alerts';
 import { hydratePreferences, usePreferences } from '@/lib/preferences';
@@ -15,6 +16,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { registerBackgroundRefresh } from '@/lib/background-refresh';
 import { hydrateFavouriteStops } from '@/lib/favourite-stops';
 import { hydrateFavouriteTrips } from '@/lib/favourite-trips';
+import { incidentAlertsAvailable } from '@/lib/incident-alerts';
 import { hydrateLeaveAlert } from '@/lib/leave-alerts';
 import { hydrateRecentStops } from '@/lib/recent-stops';
 import { hydrateSelection, selectionStore } from '@/lib/selection';
@@ -165,6 +167,7 @@ export default function RootLayout() {
           <Stack.Screen name="saved-trip" options={SEARCH_MODAL_OPTIONS} />
           <Stack.Screen name="search" options={SEARCH_MODAL_OPTIONS} />
         </Stack>
+        {incidentAlertsAvailable && <IncidentNotificationRouter />}
       </ThemeProvider>
     </GestureHandlerRootView>
   );

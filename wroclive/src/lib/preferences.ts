@@ -69,6 +69,9 @@ export type ArrivalLeadSeconds = 60 | 120 | 300;
 /** How many stops away the get-off alert should fire during an active trip. */
 export type TripLeadStops = 1 | 2 | 3;
 
+/** Which new disruptions are announced: none, the lines on the map, or all. */
+export type IncidentAlertMode = 'off' | 'mine' | 'all';
+
 export type Preferences = {
   mapProvider: MapProvider;
   /** Base map style for the system (MapKit) surface on iOS. */
@@ -95,6 +98,8 @@ export type Preferences = {
   arrivalLeadSeconds: ArrivalLeadSeconds;
   /** Local alert threshold while riding. */
   tripLeadStops: TripLeadStops;
+  /** Opt-in notifications about new disruptions (`src/lib/incident-alerts.ts`). */
+  incidentAlerts: IncidentAlertMode;
 };
 
 const DEFAULTS: Preferences = {
@@ -108,6 +113,7 @@ const DEFAULTS: Preferences = {
   boardView: 'time',
   arrivalLeadSeconds: 120,
   tripLeadStops: 1,
+  incidentAlerts: 'off',
 };
 
 let preferences: Preferences = DEFAULTS;

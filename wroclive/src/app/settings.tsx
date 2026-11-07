@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useState, type ReactNode } from 'react';
-import { Linking, Platform, Pressable, StyleSheet, Switch, View } from 'react-native';
+import { Alert, Linking, Platform, Pressable, StyleSheet, Switch, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -29,8 +29,10 @@ import {
   type LayoutMode,
   type MapProvider,
   type MarkerStyle,
+  type IncidentAlertMode,
   type TripLeadStops,
 } from '@/lib/preferences';
+import { incidentAlertsAvailable, setIncidentAlertMode } from '@/lib/incident-alerts';
 import { withAlpha } from '@/constants/theme';
 import {
   checkForUpdate,
@@ -90,6 +92,12 @@ const TRIP_LEADS: { id: TripLeadStops; label: string }[] = [
   { id: 1, label: '1 przyst.' },
   { id: 2, label: '2 przyst.' },
   { id: 3, label: '3 przyst.' },
+];
+
+const INCIDENT_MODES: { id: IncidentAlertMode; label: string }[] = [
+  { id: 'off', label: 'Wyłączone' },
+  { id: 'mine', label: 'Moje linie' },
+  { id: 'all', label: 'Wszystkie' },
 ];
 
 const LEGAL_BASE_URL = 'https://wroclive.kijmoshi.xyz';
@@ -464,6 +472,44 @@ export default function SettingsScreen() {
               />
             </View>
           </Section>
+
+          {incidentAlertsAvailable && (
+            <Section
+              title="Utrudnienia"
+              icon="warning-outline"
+              footer={
+                preferences.incidentAlerts === 'mine'
+                  ? 'Tylko utrudnienia na liniach wybranych na mapie. Gdy aplikacja jest zamknięta, iOS sam decyduje, kiedy ją wybudzić — powiadomienie może przyjść z opóźnieniem.'
+                  : 'Nowe utrudnienia od chwili włączenia. Gdy aplikacja jest zamknięta, iOS sam decyduje, kiedy ją wybudzić — powiadomienie może przyjść z opóźnieniem.'
+              }>
+              <View style={styles.segmentWrap}>
+                <ThemedText
+                  type="footnote"
+                  weight="semibold"
+                  themeColor="textSecondary"
+                  style={styles.segmentLabel}>
+                  POWIADOMIENIA O UTRUDNIENIACH
+                </ThemedText>
+                <Segmented
+                  value={preferences.incidentAlerts}
+                  onChange={(value) => {
+                    void setIncidentAlertMode(value).then((result) => {
+                      if (result !== 'denied') return;
+                      Alert.alert(
+                        'Powiadomienia są wyłączone',
+                        'Włącz je w ustawieniach telefonu, aby dostawać informacje o utrudnieniach.',
+                        [
+                          { text: 'Anuluj', style: 'cancel' },
+                          { text: 'Ustawienia', onPress: () => void Linking.openSettings() },
+                        ],
+                      );
+                    });
+                  }}
+                  options={INCIDENT_MODES}
+                />
+              </View>
+            </Section>
+          )}
 
           <Section title="Na mapie" icon="eye-outline">
             <Row

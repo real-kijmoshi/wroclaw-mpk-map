@@ -383,6 +383,19 @@ Activity push, and it is optional.
     schedule until the departure's own time has passed (`followLeaveAlert()`
     in `src/lib/leave-timing.ts`). Dropping it on absence cancelled reminders
     on a short board with nothing on screen to say so.
+- **Disruption notifications** (`src/lib/incident-alerts.ts`, opt-in under
+  Settings → Utrudnienia: off / the lines on the map / all). Local
+  notifications again, not push: the app announces new incidents from its own
+  incidents poll while it runs and from the iOS background refresh while it
+  does not — so delivery while closed is whenever iOS wakes the app, and the
+  Settings footer says so. Timely delivery would need a remote push, which is
+  the entitlement and the server-side subscriber registry invariant 15 keeps
+  out. `planIncidentAlerts()` (`src/lib/incident-alert-plan.ts`, tested) is
+  the whole policy: only incidents first seen *after* opting in (the archive
+  holds ~100, and switching this on must not replay them), each once, none
+  older than three hours (a late background wake), and a burst folded into
+  one summary. A tap opens the disruptions screen
+  (`incident-notification-router.tsx`).
 - **Favourite boards** (`src/lib/favourite-boards.ts`,
   `src/hooks/use-favourite-boards.ts`). One fetch of every starred stop's
   departures (at most twelve) serves the sheet's "Ulubione" rows, the widget and the

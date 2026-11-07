@@ -32,6 +32,7 @@ import { shareStop, shareVehicle } from '@/lib/share';
 import { colorFor } from '@/lib/lines';
 import { arrivalAlertStore, arrivalAlertsAvailable } from '@/lib/arrival-alerts';
 import { favouriteStopsStore, useFavouriteStops } from '@/lib/favourite-stops';
+import { checkIncidents } from '@/lib/incident-alerts';
 import { incidentFocusView } from '@/lib/incident-focus';
 import { useFavouriteTrips } from '@/lib/favourite-trips';
 import { mapIntentStore, useMapIntent } from '@/lib/map-intent';
@@ -65,6 +66,9 @@ type MapDisruptions = { count: number; items: DisruptionSummary[] };
 async function getMapDisruptions(signal: AbortSignal): Promise<MapDisruptions> {
   try {
     const response = await getIncidents({ signal, retryWhileLoading: false });
+    // The same answer feeds the opt-in disruption notifications; it does
+    // nothing while they are switched off.
+    void checkIncidents(response.incidents);
     const items = response.incidents
       .filter((incident) => incident.status === 'active')
       .map((incident) => ({

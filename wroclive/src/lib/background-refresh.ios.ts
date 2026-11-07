@@ -3,6 +3,10 @@ import { requireOptionalNativeModule } from 'expo';
 import { refreshFavouriteBoards } from '@/lib/favourite-boards';
 import { favouriteStopsStore, hydrateFavouriteStops } from '@/lib/favourite-stops';
 import { favouriteTripsStore, hydrateFavouriteTrips } from '@/lib/favourite-trips';
+import { getIncidents } from '@/lib/api';
+import { checkIncidents } from '@/lib/incident-alerts';
+import { hydratePreferences, preferencesStore } from '@/lib/preferences';
+import { hydrateSelection } from '@/lib/selection';
 import { widgetsAvailable } from '@/lib/widgets';
 
 /**
@@ -42,9 +46,18 @@ if (TaskManager && BackgroundTask) {
   TaskManager.defineTask(TASK, async () => {
     try {
       // A background launch starts cold: nothing has read storage yet.
-      await Promise.all([hydrateFavouriteStops(), hydrateFavouriteTrips()]);
-      await refreshFavouriteBoards(favouriteStopsStore.getSnapshot(), favouriteTripsStore.getSnapshot());
-      return BackgroundTask.BackgroundTaskResult.Success;
+      await Promise.all([hydrateFavouriteStops(), hydrateFavouriteTrips(), hydratePreferences(), hydrateSelection()]);
+      // Independent jobs: a failed board fetch must not cost the incident
+      // check, nor the other way round.
+      const [boards] = await Promise.allSettled([
+        refreshFavouriteBoards(favouriteStopsStore.getSnapshot(), favouriteTripsStore.getSnapshot()),
+        preferencesStore.getSnapshot().incidentAlerts === 'off'
+          ? Promise.resolve()
+          : getIncidents({ retryWhileLoading: false }).then((response) => checkIncidents(response.incidents)),
+      ]);
+      return boards.status === 'fulfilled'
+        ? BackgroundTask.BackgroundTaskResult.Success
+        : BackgroundTask.BackgroundTaskResult.Failed;
     } catch {
       return BackgroundTask.BackgroundTaskResult.Failed;
     }

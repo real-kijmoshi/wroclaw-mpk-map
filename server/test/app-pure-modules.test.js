@@ -163,3 +163,70 @@ describe('classic marker spacing, app and Leaflet page', () => {
     }
   });
 });
+
+describe('incident notifications', () => {
+  const NOW = 50_000_000;
+  const HOUR = 60 * 60 * 1_000;
+  const incident = (id, minutesAgo, affected = ['4'], status = 'active') => ({
+    id,
+    status,
+    affected,
+    firstSeenAt: NOW - minutesAgo * 60_000,
+  });
+  const load = (t) => loadAppModule(t, 'incident-alert-plan.ts', ['planIncidentAlerts']);
+  const on = (mode = 'all', enabledAt = NOW - HOUR, seen = {}) => ({ mode, enabledAt, seen });
+
+  it('announces nothing that started before it was switched on', (t) => {
+    const mod = load(t);
+    if (!mod) return;
+    // The archive holds days of incidents; switching this on must not replay them.
+    const history = Array.from({ length: 100 }, (_, index) => incident(`old${index}`, 120 + index));
+    const plan = mod.planIncidentAlerts(history, on('all', NOW - 10 * 60_000), [], NOW);
+    assert.equal(plan.separate.length, 0);
+    assert.equal(plan.summarised, 0);
+  });
+
+  it('announces each new incident once', (t) => {
+    const mod = load(t);
+    if (!mod) return;
+    const first = mod.planIncidentAlerts([incident('a', 5)], on(), [], NOW);
+    assert.deepEqual(first.separate.map((item) => item.id), ['a']);
+    const again = mod.planIncidentAlerts([incident('a', 5)], on('all', NOW - HOUR, first.seen), [], NOW + 60_000);
+    assert.equal(again.separate.length, 0);
+  });
+
+  it('stays quiet when off, and on resolved or stale incidents', (t) => {
+    const mod = load(t);
+    if (!mod) return;
+    assert.equal(mod.planIncidentAlerts([incident('a', 5)], { mode: 'off', enabledAt: NOW - HOUR, seen: {} }, [], NOW).separate.length, 0);
+    assert.equal(mod.planIncidentAlerts([incident('a', 5, ['4'], 'resolved')], on(), [], NOW).separate.length, 0);
+    // A background wake hours late must not announce this morning's news.
+    assert.equal(mod.planIncidentAlerts([incident('a', 4 * 60)], on('all', NOW - 10 * HOUR), [], NOW).separate.length, 0);
+  });
+
+  it('keeps to the rider\'s lines in "mine", and remembers what it skipped', (t) => {
+    const mod = load(t);
+    if (!mod) return;
+    const plan = mod.planIncidentAlerts([incident('a', 5, ['4']), incident('b', 5, ['145'])], on('mine'), ['145'], NOW);
+    assert.deepEqual(plan.separate.map((item) => item.id), ['b']);
+    // Widening to "all" later does not replay 'a': it is not new any more.
+    const wider = mod.planIncidentAlerts([incident('a', 5, ['4'])], on('all', NOW - HOUR, plan.seen), [], NOW);
+    assert.equal(wider.separate.length, 0);
+  });
+
+  it('folds a burst into one summary, newest shown separately', (t) => {
+    const mod = load(t);
+    if (!mod) return;
+    const burst = ['a', 'b', 'c', 'd', 'e'].map((id, index) => incident(id, 10 - index));
+    const plan = mod.planIncidentAlerts(burst, on(), [], NOW);
+    assert.deepEqual(plan.separate.map((item) => item.id), ['e', 'd']);
+    assert.equal(plan.summarised, 3);
+  });
+
+  it('forgets seen ids after their time', (t) => {
+    const mod = load(t);
+    if (!mod) return;
+    const plan = mod.planIncidentAlerts([], on('all', NOW - HOUR, { old: NOW - 4 * 24 * HOUR, recent: NOW - HOUR }), [], NOW);
+    assert.deepEqual(Object.keys(plan.seen), ['recent']);
+  });
+});
