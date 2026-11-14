@@ -86,3 +86,7 @@ yarn-error.*
 *.tsbuildinfo
 
 app-example
+
+# Claude Code worktrees and Playwright MCP output
+.claude/worktrees/
+.playwright-mcp/
