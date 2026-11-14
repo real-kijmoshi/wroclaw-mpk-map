@@ -22,7 +22,8 @@ const corsOptions = config.cors.origins.includes('*')
 const createApp = (services) => {
   const app = express();
 
-  if (config.trustProxy) app.set('trust proxy', true);
+  // A hop count, never `true`: see `proxyHops()` in config.js.
+  if (config.trustProxy) app.set('trust proxy', config.trustProxy);
   app.disable('x-powered-by');
 
   // Shapes are the largest responses by far and compress to a fraction of

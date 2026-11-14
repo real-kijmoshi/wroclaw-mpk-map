@@ -40,6 +40,11 @@ const MODES = new Set(['mine', 'all']);
  * app in a month — or a token that never belonged to one — reaches it.
  */
 const DEVICE_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
+/**
+ * A registration that comes back after this long is a phone, not a script:
+ * the app re-registers on launch, days apart. See `#makeRoom()`.
+ */
+const CONFIRM_AFTER_MS = 24 * 60 * 60 * 1_000;
 /** APNs answers that mean the token will never work again. */
 const DEAD_REASONS = new Set(['BadDeviceToken', 'Unregistered', 'DeviceTokenNotForTopic']);
 
@@ -160,7 +165,13 @@ class IncidentPushService {
       const device = parseDevice(entry);
       if (typeof device === 'string' || !Number.isFinite(entry.enabledAt)) continue;
       if (Number.isFinite(entry.updatedAt) && now - entry.updatedAt > this.deviceTtlMs) continue;
-      this.devices.set(device.token, { ...device, enabledAt: entry.enabledAt, updatedAt: entry.updatedAt ?? now });
+      this.devices.set(device.token, {
+        ...device,
+        enabledAt: entry.enabledAt,
+        registeredAt: Number.isFinite(entry.registeredAt) ? entry.registeredAt : entry.enabledAt,
+        updatedAt: entry.updatedAt ?? now,
+        confirmed: entry.confirmed === true,
+      });
     }
     if (parsed?.seen && typeof parsed.seen === 'object') {
       this.seen = freshIncidents([], parsed.seen, now).seen;
@@ -198,29 +209,47 @@ class IncidentPushService {
     const device = parseDevice(body);
     if (typeof device === 'string') return { ok: false, status: 400, error: device };
     const existing = this.devices.get(device.token);
-    if (!existing && this.devices.size >= this.maxDevices) this.#makeRoom(now);
+    if (!existing && this.devices.size >= this.maxDevices && !this.#makeRoom(now)) {
+      return { ok: false, status: 503, error: 'Too many devices' };
+    }
     // Re-registering keeps the opt-in date: it is when the rider started
     // listening, not when they last opened the app or changed the scope.
-    this.devices.set(device.token, { ...device, enabledAt: existing?.enabledAt ?? now, updatedAt: now });
+    const registeredAt = existing?.registeredAt ?? now;
+    this.devices.set(device.token, {
+      ...device,
+      enabledAt: existing?.enabledAt ?? now,
+      registeredAt,
+      updatedAt: now,
+      confirmed: Boolean(existing?.confirmed) || now - registeredAt >= CONFIRM_AFTER_MS,
+    });
     this.#save();
     return { ok: true };
   }
 
   /**
-   * The registry is public and unauthenticated: anyone can register tokens
-   * that belong to no phone. Refusing new devices once it was full let a
-   * script lock every real rider out for good, so a full registry first drops
-   * what has expired and then the registration refreshed longest ago — a
-   * phone that opens the app re-registers and is always the freshest.
+   * Room for one more device in a full registry, or false.
+   *
+   * The registry is public and unauthenticated, so anyone can register tokens
+   * that belong to no phone. Two wrong answers came first: refusing new
+   * devices once full let a script lock every new rider out, and evicting the
+   * stalest let the same script push out riders already listening. Only a
+   * registration that has never proven itself can be evicted. One is proven
+   * when APNs has accepted a push to it (a made-up token fails with
+   * BadDeviceToken and is dropped on its first push) or when it has come back
+   * a day or more after it first registered, which a phone does and a burst
+   * does not. With every entry proven, the newcomer is refused instead.
    */
   #makeRoom(now) {
     this.#expire(now);
-    if (this.devices.size < this.maxDevices) return;
+    if (this.devices.size < this.maxDevices) return true;
     let oldest = null;
     for (const device of this.devices.values()) {
+      if (device.confirmed) continue;
       if (!oldest || device.updatedAt < oldest.updatedAt) oldest = device;
     }
-    if (oldest) this.devices.delete(oldest.token);
+    if (!oldest) return false;
+    this.devices.delete(oldest.token);
+    return true;
   }
 
   #expire(now) {
@@ -249,6 +278,12 @@ class IncidentPushService {
     });
     if (result.status === 200) {
       this.stats.pushed += 1;
+      // The record as it is now: a re-registration mid-push replaced the object.
+      const current = this.devices.get(device.token);
+      if (current && !current.confirmed) {
+        current.confirmed = true;
+        this.#save();
+      }
       return;
     }
     this.stats.failed += 1;
@@ -353,6 +388,7 @@ class IncidentPushService {
       enabled: this.enabled,
       reason: this.enabled ? null : this.apns?.error ?? 'APNS_KEY_ID, APNS_TEAM_ID and a key are not set',
       devices: this.devices.size,
+      confirmed: [...this.devices.values()].filter((device) => device.confirmed).length,
       ...this.stats,
     };
   }

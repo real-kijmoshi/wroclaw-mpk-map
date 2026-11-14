@@ -96,16 +96,38 @@ describe('incident push registry bounds', () => {
   const DAY = 24 * 60 * MIN;
   const token = (index) => index.toString(16).padStart(64, '0');
 
-  it('makes room for a new phone instead of refusing it once full', async () => {
+  it('makes room by evicting only registrations that never proved to be a phone', async () => {
     const { service } = await serviceWith(alertsWith());
     service.maxDevices = 3;
-    // A script fills the registry with tokens that belong to no phone…
-    for (let index = 1; index <= 3; index += 1) service.register({ token: token(index), mode: 'all' }, NOW - index * MIN);
-    // …and a real rider still gets in; the registration refreshed longest ago goes.
+    // A rider who has been listening for days: proven by coming back.
+    service.register({ token: OTHER, mode: 'all' }, NOW - 3 * DAY);
+    service.register({ token: OTHER, mode: 'all' }, NOW - MIN);
+    assert.equal(service.devices.get(OTHER).confirmed, true);
+    // A script fills the rest with tokens that belong to no phone…
+    for (let index = 1; index <= 2; index += 1) service.register({ token: token(index), mode: 'all' }, NOW - index * MIN);
+    // …a new rider still gets in, and the rider already listening is untouched.
     assert.equal(service.register({ token: TOKEN, mode: 'all' }, NOW).ok, true);
-    assert.equal(service.devices.size, 3);
-    assert.equal(service.devices.has(token(3)), false);
-    assert.equal(service.devices.has(TOKEN), true);
+    assert.equal(service.devices.has(OTHER), true);
+    assert.equal(service.devices.has(token(2)), false);
+  });
+
+  it('refuses a newcomer rather than evict a proven registration', async () => {
+    const { service } = await serviceWith(alertsWith());
+    service.maxDevices = 1;
+    service.register({ token: OTHER, mode: 'all' }, NOW - 2 * DAY);
+    service.register({ token: OTHER, mode: 'all' }, NOW);
+    assert.equal(service.register({ token: TOKEN, mode: 'all' }, NOW).status, 503);
+    assert.deepEqual([...service.devices.keys()], [OTHER]);
+  });
+
+  it('counts a token as proven once APNs has accepted a push to it', async () => {
+    const alerts = alertsWith();
+    const { service } = await serviceWith(alerts);
+    service.register({ token: TOKEN, mode: 'all' }, NOW - 60 * MIN);
+    assert.equal(service.devices.get(TOKEN).confirmed, false);
+    alerts.list = [incident('a', 5)];
+    await service.tick(NOW);
+    assert.equal(service.devices.get(TOKEN).confirmed, true);
   });
 
   it('drops a registration nobody has refreshed, on a pass and on restore', async () => {

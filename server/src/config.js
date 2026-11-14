@@ -18,6 +18,22 @@ const decimal = (value, fallback) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+/**
+ * How many reverse proxies sit in front of the server, for Express's
+ * `trust proxy`. `true` used to be passed straight through, which trusts
+ * every `X-Forwarded-For` entry and so reads the client address from the
+ * leftmost one — which the client writes itself, and one header per request
+ * walked around every per-client rate limit. A count trusts only the entries
+ * those proxies appended: `true`/`yes`/`on` mean one (nginx in front), a
+ * number means that many, anything else means none.
+ */
+const proxyHops = (value, fallback) => {
+  if (value === undefined || value === '') return fallback === true ? 1 : Number(fallback) || 0;
+  if (/^(true|yes|on)$/i.test(value)) return 1;
+  const hops = Number.parseInt(value, 10);
+  return Number.isFinite(hops) && hops > 0 ? hops : 0;
+};
+
 const bool = (value, fallback) => {
   if (value === undefined || value === '') return fallback;
   return /^(1|true|yes|on)$/i.test(value);
@@ -111,7 +127,7 @@ module.exports = {
   port: num(process.env.PORT, DEFAULTS.port),
   host: process.env.HOST || DEFAULTS.host,
   logLevel: process.env.LOG_LEVEL || DEFAULTS.logLevel,
-  trustProxy: bool(process.env.TRUST_PROXY, DEFAULTS.trustProxy),
+  trustProxy: proxyHops(process.env.TRUST_PROXY, DEFAULTS.trustProxy),
 
   cors: {
     // Comma separated list, or "*" for anything.
