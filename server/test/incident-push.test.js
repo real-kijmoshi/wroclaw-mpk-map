@@ -37,7 +37,10 @@ const alertsWith = (initial = []) => {
 };
 
 const startFakeApns = async (respond = () => ({ status: 200 })) => {
+  // Alerts only: the silent verification sent on registration goes to
+  // `verifications`, so a test counts what a rider would actually see.
   const received = [];
+  const verifications = [];
   const server = http2.createServer();
   server.on('stream', (stream, headers) => {
     let body = '';
@@ -45,14 +48,15 @@ const startFakeApns = async (respond = () => ({ status: 200 })) => {
     stream.on('data', (chunk) => (body += chunk));
     stream.on('end', () => {
       const token = headers[':path'].split('/').pop();
-      received.push({ headers, token, body: JSON.parse(body) });
-      const { status, reason } = respond(token);
+      const push = { headers, token, body: JSON.parse(body) };
+      (headers['apns-push-type'] === 'background' ? verifications : received).push(push);
+      const { status, reason } = respond(token, headers);
       stream.respond({ ':status': status });
       stream.end(reason ? JSON.stringify({ reason }) : '');
     });
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  return { server, received, origin: `http://127.0.0.1:${server.address().port}` };
+  return { server, received, verifications, origin: `http://127.0.0.1:${server.address().port}` };
 };
 
 const servers = [];
@@ -67,7 +71,7 @@ async function serviceWith(alerts, respond) {
   const service = new IncidentPushService({ apns, alerts, bundleId: 'com.kijmoshi.wroclive' });
   // Primed: this pass is not the first one after a fresh deploy.
   service.primed = true;
-  return { service, received: fake.received, apns };
+  return { service, received: fake.received, verifications: fake.verifications, apns };
 }
 
 describe('incident push registration', () => {
@@ -96,34 +100,64 @@ describe('incident push registry bounds', () => {
   const DAY = 24 * 60 * MIN;
   const token = (index) => index.toString(16).padStart(64, '0');
 
-  it('makes room by evicting only registrations that never proved to be a phone', async () => {
-    const { service } = await serviceWith(alertsWith());
+  // The verification push: real installs answer 200, a script's tokens are
+  // made up. A 500 is APNs unable to say right now — the token stays unproven.
+  const unverifiable = (prefix) => (token, headers) =>
+    headers['apns-push-type'] === 'background' && token.startsWith(prefix) ? { status: 500 } : { status: 200 };
+
+  it('confirms a new token only once APNs accepts the silent verification push', async () => {
+    const { service, verifications } = await serviceWith(alertsWith());
+    const result = service.register({ token: TOKEN, mode: 'all' }, NOW);
+    assert.equal(service.devices.get(TOKEN).confirmed, false);
+    await result.verified;
+    assert.equal(service.devices.get(TOKEN).confirmed, true);
+    assert.equal(verifications.length, 1);
+    assert.equal(verifications[0].headers['apns-priority'], '5');
+    assert.deepEqual(verifications[0].body, { aps: { 'content-available': 1 } });
+    // Re-registering a confirmed phone does not ask APNs again.
+    await service.register({ token: TOKEN, mode: 'all' }, NOW + MIN).verified;
+    assert.equal(verifications.length, 1);
+  });
+
+  it('drops a made-up token as soon as APNs rejects its verification', async () => {
+    const { service } = await serviceWith(alertsWith(), () => ({ status: 400, reason: 'BadDeviceToken' }));
+    await service.register({ token: TOKEN, mode: 'all' }, NOW).verified;
+    assert.equal(service.devices.has(TOKEN), false);
+  });
+
+  it('cannot be made permanent by waiting and registering again', async () => {
+    // The rule this replaced trusted a token that came back a day later.
+    const { service } = await serviceWith(alertsWith(), unverifiable('00'));
+    await service.register({ token: token(1), mode: 'all' }, NOW - 3 * DAY).verified;
+    await service.register({ token: token(1), mode: 'all' }, NOW).verified;
+    assert.equal(service.devices.get(token(1)).confirmed, false);
+  });
+
+  it('makes room by evicting only what APNs has not vouched for', async () => {
+    const { service } = await serviceWith(alertsWith(), unverifiable('00'));
     service.maxDevices = 3;
-    // A rider who has been listening for days: proven by coming back.
-    service.register({ token: OTHER, mode: 'all' }, NOW - 3 * DAY);
-    service.register({ token: OTHER, mode: 'all' }, NOW - MIN);
-    assert.equal(service.devices.get(OTHER).confirmed, true);
-    // A script fills the rest with tokens that belong to no phone…
-    for (let index = 1; index <= 2; index += 1) service.register({ token: token(index), mode: 'all' }, NOW - index * MIN);
-    // …a new rider still gets in, and the rider already listening is untouched.
+    await service.register({ token: OTHER, mode: 'all' }, NOW - 3 * DAY).verified;
+    for (let index = 1; index <= 2; index += 1) {
+      await service.register({ token: token(index), mode: 'all' }, NOW - index * MIN).verified;
+    }
+    // A new rider still gets in, and the rider already listening is untouched.
     assert.equal(service.register({ token: TOKEN, mode: 'all' }, NOW).ok, true);
     assert.equal(service.devices.has(OTHER), true);
     assert.equal(service.devices.has(token(2)), false);
   });
 
-  it('refuses a newcomer rather than evict a proven registration', async () => {
+  it('refuses a newcomer rather than evict a confirmed phone', async () => {
     const { service } = await serviceWith(alertsWith());
     service.maxDevices = 1;
-    service.register({ token: OTHER, mode: 'all' }, NOW - 2 * DAY);
-    service.register({ token: OTHER, mode: 'all' }, NOW);
+    await service.register({ token: OTHER, mode: 'all' }, NOW).verified;
     assert.equal(service.register({ token: TOKEN, mode: 'all' }, NOW).status, 503);
     assert.deepEqual([...service.devices.keys()], [OTHER]);
   });
 
-  it('counts a token as proven once APNs has accepted a push to it', async () => {
+  it('confirms a token whose verification failed once a real alert reaches it', async () => {
     const alerts = alertsWith();
-    const { service } = await serviceWith(alerts);
-    service.register({ token: TOKEN, mode: 'all' }, NOW - 60 * MIN);
+    const { service } = await serviceWith(alerts, unverifiable('cd'));
+    await service.register({ token: TOKEN, mode: 'all' }, NOW - 60 * MIN).verified;
     assert.equal(service.devices.get(TOKEN).confirmed, false);
     alerts.list = [incident('a', 5)];
     await service.tick(NOW);

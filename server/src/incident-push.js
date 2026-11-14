@@ -40,11 +40,6 @@ const MODES = new Set(['mine', 'all']);
  * app in a month — or a token that never belonged to one — reaches it.
  */
 const DEVICE_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
-/**
- * A registration that comes back after this long is a phone, not a script:
- * the app re-registers on launch, days apart. See `#makeRoom()`.
- */
-const CONFIRM_AFTER_MS = 24 * 60 * 60 * 1_000;
 /** APNs answers that mean the token will never work again. */
 const DEAD_REASONS = new Set(['BadDeviceToken', 'Unregistered', 'DeviceTokenNotForTopic']);
 
@@ -168,7 +163,6 @@ class IncidentPushService {
       this.devices.set(device.token, {
         ...device,
         enabledAt: entry.enabledAt,
-        registeredAt: Number.isFinite(entry.registeredAt) ? entry.registeredAt : entry.enabledAt,
         updatedAt: entry.updatedAt ?? now,
         confirmed: entry.confirmed === true,
       });
@@ -203,7 +197,11 @@ class IncidentPushService {
     }
   }
 
-  /** @returns {{ ok: true } | { ok: false, status: number, error: string }} */
+  /**
+   * @returns {{ ok: true, verified: Promise<void> } | { ok: false, status: number, error: string }}
+   *   `verified` settles once APNs has answered for a new token; the route does
+   *   not wait for it, tests do.
+   */
   register(body, now = Date.now()) {
     if (!this.enabled) return { ok: false, status: 503, error: 'Incident push is not configured' };
     const device = parseDevice(body);
@@ -214,30 +212,69 @@ class IncidentPushService {
     }
     // Re-registering keeps the opt-in date: it is when the rider started
     // listening, not when they last opened the app or changed the scope.
-    const registeredAt = existing?.registeredAt ?? now;
     this.devices.set(device.token, {
       ...device,
       enabledAt: existing?.enabledAt ?? now,
-      registeredAt,
       updatedAt: now,
-      confirmed: Boolean(existing?.confirmed) || now - registeredAt >= CONFIRM_AFTER_MS,
+      confirmed: Boolean(existing?.confirmed),
     });
     this.#save();
-    return { ok: true };
+    return { ok: true, verified: existing?.confirmed ? Promise.resolve() : this.#verify(device.token) };
+  }
+
+  /**
+   * Ask APNs whether a token is real before it can be trusted.
+   *
+   * A silent background push (`content-available`, priority 5): it shows
+   * nothing, and Apple may never deliver it at all, but APNs answers the
+   * request itself — 200 for a token that belongs to an install of this app,
+   * BadDeviceToken for one that does not. Only APNs can say so: any rule the
+   * client can satisfy on its own (coming back a day later was the last one)
+   * is a rule a script satisfies too. A token that cannot be checked right
+   * now — APNs unreachable — stays unconfirmed and is checked again on its
+   * next registration.
+   */
+  async #verify(token) {
+    let result;
+    try {
+      result = await this.apns.send(token, { aps: { 'content-available': 1 } }, {
+        topic: this.topic,
+        pushType: 'background',
+        priority: 5,
+      });
+    } catch {
+      return;
+    }
+    const current = this.devices.get(token);
+    if (!current) return;
+    if (result.status === 200) {
+      if (!current.confirmed) {
+        current.confirmed = true;
+        this.#save();
+      }
+      return;
+    }
+    if (result.status === 410 || DEAD_REASONS.has(result.reason)) {
+      this.devices.delete(token);
+      this.stats.removed += 1;
+      this.#save();
+    }
   }
 
   /**
    * Room for one more device in a full registry, or false.
    *
    * The registry is public and unauthenticated, so anyone can register tokens
-   * that belong to no phone. Two wrong answers came first: refusing new
-   * devices once full let a script lock every new rider out, and evicting the
-   * stalest let the same script push out riders already listening. Only a
-   * registration that has never proven itself can be evicted. One is proven
-   * when APNs has accepted a push to it (a made-up token fails with
-   * BadDeviceToken and is dropped on its first push) or when it has come back
-   * a day or more after it first registered, which a phone does and a burst
-   * does not. With every entry proven, the newcomer is refused instead.
+   * that belong to no phone. Three wrong answers came first: refusing new
+   * devices once full let a script lock every new rider out; evicting the
+   * stalest let it push out riders already listening; and trusting a token
+   * that re-registered a day later let it make its own tokens permanent by
+   * waiting. Only a registration APNs has vouched for is protected — accepted
+   * the verification push sent on registration (`#verify()`), or a real
+   * alert. A made-up token is rejected with BadDeviceToken and dropped within
+   * seconds, so what is left unconfirmed is a phone whose check has not come
+   * back yet, which the app's next launch repeats. With every entry
+   * confirmed, the newcomer is refused: each of those is a real install.
    */
   #makeRoom(now) {
     this.#expire(now);
