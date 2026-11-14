@@ -8,6 +8,7 @@ import {
   planIncidentAlerts,
   type IncidentAlertMode,
 } from '@/lib/incident-alert-plan';
+import { incidentPushActive } from '@/lib/incident-push';
 import { preferencesStore } from '@/lib/preferences';
 import { selectionStore } from '@/lib/selection';
 
@@ -18,9 +19,10 @@ import { selectionStore } from '@/lib/selection';
  * just fetched — on every incidents poll while it runs, and from the iOS
  * background refresh while it does not. That second path runs when iOS
  * decides, so this is "you will hear about it", never "you will hear about it
- * the minute it happens", and the Settings copy says so. A remote push would
- * be timely, and would need the remote-notification entitlement and a
- * subscriber registry on the server — see invariant 15.
+ * the minute it happens". The timely path is the server's push
+ * (`incident-push.ts`); while the server has accepted this phone's token,
+ * this module only keeps the seen-set current and announces nothing, so the
+ * same closure never arrives twice. Without a push server it is the only path.
  *
  * What gets announced is decided by `planIncidentAlerts()`; this module only
  * keeps its state and talks to the operating system.
@@ -132,6 +134,11 @@ export function checkIncidents(incidents: readonly Incident[]): Promise<void> {
         selectionStore.getSnapshot(),
         Date.now(),
       );
+      // The server is pushing these: remember them, announce nothing.
+      if ((plan.separate.length || plan.summarised) && (await incidentPushActive())) {
+        await save({ ...state, seen: plan.seen });
+        return;
+      }
       if (plan.separate.length || plan.summarised) {
         // Permission can be withdrawn in Settings at any time; a refusal now
         // means stay quiet, not ask again from a background wake.

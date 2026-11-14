@@ -206,6 +206,7 @@ const createRouter = ({
   klosok = null,
   runtimeSettings = null,
   liveActivities = null,
+  incidentPush = null,
   startedAt,
 }) => {
   const router = express.Router();
@@ -509,6 +510,23 @@ const createRouter = ({
     return res.status(204).end();
   });
 
+  /**
+   * Disruption push registration (see src/incident-push.js): a device token
+   * and the scope the rider chose in Settings. 503 when no APNs key is
+   * configured — the app then announces disruptions locally, as before.
+   */
+  router.post('/incident-push', noStore, express.json({ limit: '8kb' }), (req, res) => {
+    if (!incidentPush) return res.status(503).json({ error: 'Incident push is not configured' });
+    const result = incidentPush.register(req.body);
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    return res.status(204).end();
+  });
+
+  router.delete('/incident-push/:token', noStore, (req, res) => {
+    incidentPush?.unregister(req.params.token);
+    return res.status(204).end();
+  });
+
   router.get('/shapes/:line/variants', requireGtfs, revalidateShape, (req, res) => {
     const { line } = req.params;
     const variants = gtfs.getVariants(line);
@@ -682,6 +700,7 @@ const createRouter = ({
       performance: performanceBlock,
       klosok: klosok ? klosok.status : { enabled: false },
       liveActivities: liveActivities ? liveActivities.status : { enabled: false },
+      incidentPush: incidentPush ? incidentPush.status : { enabled: false },
       alerts: alerts.status,
       lines: {
         total: Object.values(gtfs.lines).flat().length,

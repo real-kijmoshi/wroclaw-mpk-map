@@ -33,6 +33,7 @@ import {
   type TripLeadStops,
 } from '@/lib/preferences';
 import { incidentAlertsAvailable, setIncidentAlertMode } from '@/lib/incident-alerts';
+import { useIncidentPushActive } from '@/lib/incident-push';
 import { withAlpha } from '@/constants/theme';
 import {
   checkForUpdate,
@@ -305,6 +306,7 @@ export default function SettingsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const preferences = usePreferences();
+  const incidentPushActive = useIncidentPushActive();
   const router = useRouter();
   const favourites = useFavouriteStops();
 
@@ -478,9 +480,14 @@ export default function SettingsScreen() {
               title="Utrudnienia"
               icon="warning-outline"
               footer={
-                preferences.incidentAlerts === 'mine'
-                  ? 'Tylko utrudnienia na liniach wybranych na mapie — a gdy żadna nie jest wybrana, na wszystkich. Gdy aplikacja jest zamknięta, iOS sam decyduje, kiedy ją wybudzić — powiadomienie może przyjść z opóźnieniem.'
-                  : 'Nowe utrudnienia od chwili włączenia. Gdy aplikacja jest zamknięta, iOS sam decyduje, kiedy ją wybudzić — powiadomienie może przyjść z opóźnieniem.'
+                [
+                  preferences.incidentAlerts === 'mine'
+                    ? 'Tylko utrudnienia na liniach wybranych na mapie — a gdy żadna nie jest wybrana, na wszystkich.'
+                    : 'Nowe utrudnienia od chwili włączenia.',
+                  incidentPushActive
+                    ? 'Przychodzą także, gdy aplikacja jest zamknięta.'
+                    : 'Gdy aplikacja jest zamknięta, iOS sam decyduje, kiedy ją wybudzić — powiadomienie może przyjść z opóźnieniem.',
+                ].join(' ')
               }>
               <View style={styles.segmentWrap}>
                 <ThemedText

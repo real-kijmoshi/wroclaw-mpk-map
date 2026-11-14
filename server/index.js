@@ -11,6 +11,7 @@ const { AlertArchive } = require('./src/alert-archive');
 const { GtfsStore } = require('./src/gtfs/store');
 const { KlosokService } = require('./src/klosok/service');
 const { ApnsClient } = require('./src/apns');
+const { IncidentPushService } = require('./src/incident-push');
 const { LiveActivityService, bothFleets } = require('./src/live-activities');
 const { RuntimeSettings } = require('./src/runtime-settings');
 const { StatsTracker } = require('./src/stats');
@@ -72,13 +73,26 @@ const stats = config.stats.enabled
 // Lock-screen countdowns kept current over APNs while the app is suspended.
 // Inert without an operator's APNs key: registration answers 503 and the app
 // keeps updating its own activity while it runs.
+// One APNs connection for both kinds of push.
+const apns = new ApnsClient(config.apns);
 const liveActivities = new LiveActivityService({
-  apns: new ApnsClient(config.apns),
+  apns,
   gtfs,
   vehicles: bothFleets(vehicles, klosok),
   bundleId: config.apns.bundleId,
   maxActivities: config.apns.maxActivities,
   maxAgeMs: config.apns.maxAgeMs,
+  logger,
+});
+
+// Disruption notifications that arrive with the app closed. Inert without an
+// APNs key in the same way: registration answers 503 and the app announces
+// disruptions itself, from its own polls.
+const incidentPush = new IncidentPushService({
+  apns,
+  alerts,
+  bundleId: config.apns.bundleId,
+  file: path.join(config.stats.cacheDir, 'incident-push.json'),
   logger,
 });
 
@@ -100,6 +114,7 @@ const stopBackgroundWork = () => {
   alerts.stop();
   klosok.stop();
   liveActivities.stop();
+  incidentPush.stop();
   stats?.stop();
 };
 
@@ -120,6 +135,7 @@ const loadGtfs = async (attempt = 0) => {
     vehicles.start();
     alerts.start();
     liveActivities.start();
+    incidentPush.start();
   } catch {
     const delay = RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
     logger.warn(`Retrying GTFS load in ${delay / 1000}s`);
@@ -136,6 +152,7 @@ const start = () => {
     stats,
     runtimeSettings,
     liveActivities,
+    incidentPush,
     startedAt: new Date(),
   });
   stats?.start();

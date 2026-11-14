@@ -5,11 +5,12 @@ const fs = require('node:fs');
 const http2 = require('node:http2');
 
 /**
- * A minimal APNs client for Live Activity updates: token-based auth (an ES256
- * JWT signed with the operator's .p8 key) over one reused HTTP/2 session.
+ * A minimal APNs client: token-based auth (an ES256 JWT signed with the
+ * operator's .p8 key) over one reused HTTP/2 session. It sends two kinds of
+ * push — Live Activity updates (`live-activities.js`) and disruption alerts
+ * (`incident-push.js`) — over the one connection.
  *
- * Deliberately small — no dependency — because it sends exactly one kind of
- * push. Apple asks that the auth token be reused for between 20 and 60 minutes
+ * Deliberately small — no dependency. Apple asks that the auth token be reused for between 20 and 60 minutes
  * rather than minted per request, and that the connection be kept open rather
  * than reopened per push; both are done here.
  */
@@ -80,7 +81,7 @@ class ApnsClient {
    * Send one push. Resolves `{ status, reason }`; never throws for an APNs
    * answer, only for a missing key.
    */
-  send(deviceToken, payload, { topic, pushType = 'liveactivity', priority = 10 } = {}) {
+  send(deviceToken, payload, { topic, pushType = 'liveactivity', priority = 10, collapseId = null } = {}) {
     if (!this.configured) throw new Error('APNs is not configured');
     return new Promise((resolve) => {
       let settled = false;
@@ -99,6 +100,7 @@ class ApnsClient {
           'apns-push-type': pushType,
           'apns-priority': String(priority),
           'content-type': 'application/json',
+          ...(collapseId ? { 'apns-collapse-id': collapseId } : {}),
         });
       } catch (error) {
         this.session = null;

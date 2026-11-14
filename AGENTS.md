@@ -183,11 +183,14 @@ cannot answer. Still true today: every permission in `wroclive/app.json` maps to
 real code (`expo-location` for the locate button and nearby stops, local
 notifications for the arrival alert, background processing for the widget
 refresh). The rule reaches entitlements too. The push entitlement is used, and
-by exactly one thing: Live Activity updates from the server
-(`server/src/live-activities.js`), enabled through `expo-widgets`'
-`enablePushNotifications`. The arrival alert itself stays a *local*
-notification, so `expo-notifications`' config plugin — which would declare
-remote notifications for it — is still left out of `app.json`. Android's `RECEIVE_BOOT_COMPLETED` (from `expo-notifications`) is blocked in
+by exactly two things, both sent by the server over one APNs connection:
+Live Activity updates (`server/src/live-activities.js`) and disruption alerts
+for riders who switched them on (`server/src/incident-push.js`, registered by
+`wroclive/src/lib/incident-push.ts`). The entitlement comes from
+`expo-widgets`' `enablePushNotifications`; the disruption alerts reuse it, so
+they shipped as JS and a server deploy, with no store build. The arrival alert
+itself stays a *local* notification, and the alerts need no background push
+mode, so `expo-notifications`' config plugin is still left out of `app.json`. Android's `RECEIVE_BOOT_COMPLETED` (from `expo-notifications`) is blocked in
 `app.json` for the same reason — an alert minutes away does not survive a
 reboot worth re-arming. The iOS location strings are "when in use" only; the
 plugin fills in "Always" by default and each unused key is set to `false`.

@@ -20,6 +20,7 @@ import { incidentAlertsAvailable } from '@/lib/incident-alerts';
 import { hydrateLeaveAlert } from '@/lib/leave-alerts';
 import { hydrateRecentStops } from '@/lib/recent-stops';
 import { hydrateSelection, selectionStore } from '@/lib/selection';
+import { watchIncidentPush } from '@/lib/incident-push';
 import { syncUpdates, watchForUpdatesOnResume } from '@/lib/updates';
 
 SplashScreen.preventAutoHideAsync();
@@ -101,6 +102,8 @@ export default function RootLayout() {
   };
 
   useEffect(() => {
+    let stopIncidentPush: (() => void) | null = null;
+    let unmounted = false;
     const init = async () => {
       try {
         const hasStoredSelection = await hydrateSelection();
@@ -129,8 +132,15 @@ export default function RootLayout() {
       } finally {
         SplashScreen.hideAsync();
       }
+      // After hydration: the scope it registers is the stored one, not the
+      // defaults the stores start with.
+      if (!unmounted) stopIncidentPush = watchIncidentPush();
     };
     init();
+    return () => {
+      unmounted = true;
+      stopIncidentPush?.();
+    };
   }, []);
 
   /**

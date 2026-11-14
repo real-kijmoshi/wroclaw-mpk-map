@@ -386,13 +386,22 @@ Activity push, and it is optional.
     in `src/lib/leave-timing.ts`). Dropping it on absence cancelled reminders
     on a short board with nothing on screen to say so.
 - **Disruption notifications** (`src/lib/incident-alerts.ts`, opt-in under
-  Settings → Utrudnienia: off / the lines on the map / all). Local
-  notifications again, not push: the app announces new incidents from its own
-  incidents poll while it runs and from the iOS background refresh while it
-  does not — so delivery while closed is whenever iOS wakes the app, and the
-  Settings footer says so. Timely delivery would need a remote push, which is
-  the entitlement and the server-side subscriber registry invariant 15 keeps
-  out. `planIncidentAlerts()` (`src/lib/incident-alert-plan.ts`, tested) is
+  Settings → Utrudnienia: off / the lines on the map / all). Two paths.
+  **Push**, on iOS: `src/lib/incident-push.ts` registers the device token and
+  the scope with `POST /incident-push` after hydration and on every scope or
+  token change, and the server (`server/src/incident-push.js`) pushes each new
+  incident over APNs — the only way to hear about a closure that lasts a
+  quarter of an hour while the app is closed. **Local**, everywhere else and
+  whenever the server answers 503 (no APNs key): the app announces from its
+  own incidents poll and from the iOS background refresh, which is whenever
+  iOS wakes it. While the server has accepted the token, the local path keeps
+  its seen-set and announces nothing (`incidentPushActive()`), so nothing
+  arrives twice; a push's `apns-collapse-id` is also the local notification's
+  identifier, `incident:<id>`. The Settings footer says which path is live.
+  The server counts an incident as new by its *source posts*, not its id — the
+  id is a hash of the posts and changes as a cluster grows. A push carries its
+  data under a top-level `body` key, which is what `expo-notifications` hands
+  the app as `content.data`. `planIncidentAlerts()` (`src/lib/incident-alert-plan.ts`, tested) is
   the whole policy: only incidents first seen *after* opting in (the archive
   holds ~100, and switching this on must not replay them), each once, none
   older than three hours (a late background wake), and a burst folded into
