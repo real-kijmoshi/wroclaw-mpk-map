@@ -479,7 +479,7 @@ export default function SettingsScreen() {
               icon="warning-outline"
               footer={
                 preferences.incidentAlerts === 'mine'
-                  ? 'Tylko utrudnienia na liniach wybranych na mapie. Gdy aplikacja jest zamknięta, iOS sam decyduje, kiedy ją wybudzić — powiadomienie może przyjść z opóźnieniem.'
+                  ? 'Tylko utrudnienia na liniach wybranych na mapie — a gdy żadna nie jest wybrana, na wszystkich. Gdy aplikacja jest zamknięta, iOS sam decyduje, kiedy ją wybudzić — powiadomienie może przyjść z opóźnieniem.'
                   : 'Nowe utrudnienia od chwili włączenia. Gdy aplikacja jest zamknięta, iOS sam decyduje, kiedy ją wybudzić — powiadomienie może przyjść z opóźnieniem.'
               }>
               <View style={styles.segmentWrap}>

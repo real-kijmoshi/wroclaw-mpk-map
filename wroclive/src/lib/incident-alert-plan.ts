@@ -55,7 +55,11 @@ export function planIncidentAlerts<T extends IncidentForAlert>(
     return { separate: [], summarised: 0, seen };
   }
 
-  const wanted = new Set(lines);
+  // An empty selection is the map showing every line (`selection.ts`), so
+  // "mine" is then every line too. Read literally it matched nothing: the
+  // setting said on, every incident was marked seen without a word, and
+  // switching to "all" afterwards could not replay any of them.
+  const wanted = lines.length > 0 ? new Set(lines) : null;
   const fresh: T[] = [];
   for (const incident of incidents) {
     if (incident.status !== 'active' || !incident.id) continue;
@@ -65,7 +69,7 @@ export function planIncidentAlerts<T extends IncidentForAlert>(
     if (!Number.isFinite(incident.firstSeenAt)) continue;
     if (incident.firstSeenAt < state.enabledAt) continue;
     if (now - incident.firstSeenAt > INCIDENT_ALERT_MAX_AGE_MS) continue;
-    if (state.mode === 'mine' && !incident.affected.some((line) => wanted.has(line))) continue;
+    if (state.mode === 'mine' && wanted && !incident.affected.some((line) => wanted.has(line))) continue;
     fresh.push(incident);
   }
 

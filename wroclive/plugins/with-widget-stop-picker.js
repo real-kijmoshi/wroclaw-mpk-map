@@ -15,8 +15,9 @@ const { withFinalizedMod } = require('expo/config-plugins');
  * So `app.json` declares the parameter as a plain string called `stop`, and
  * this plugin rewrites the file `expo-widgets` generated from it:
  *
- * - the parameter becomes a `DeparturesStopEntity?`, and
- * - the environment hands the layout its `id`,
+ * - the parameter becomes a `DeparturesStopEntity?`,
+ * - the environment hands the layout its `id`, and
+ * - the timeline's reload policy becomes `.never` (see `POLICY_BEFORE`),
  *
  * and appends the entity and its query. The query reads the starred stops out
  * of the widget's own timeline (`props.favourites`, written by
@@ -39,6 +40,20 @@ const PARAMETER_AFTER = '@Parameter(title: "Przystanek")\n  var stop: Departures
 const ENVIRONMENT_BEFORE = '"stop": entry.configuration.stop\n';
 const ENVIRONMENT_AFTER = '"stop": entry.configuration.stop?.id ?? ""\n';
 const TITLE_BEFORE = '"Przystanek Configuration"';
+
+/**
+ * `expo-widgets` asks WidgetKit to come back `.atEnd`. The provider can only
+ * re-read what the app last wrote, so half an hour after the app last ran it
+ * handed back the same timeline, every entry in the past — and WidgetKit
+ * asked again, every few minutes, all night. Each of those asks spends the
+ * widget's daily reload budget; once it is gone, the reloads the background
+ * refresh requests are dropped too, and the widget sat on the last entry's
+ * clock times with fresh data waiting for it. Every write the app makes
+ * already reloads the widget (`updateTimeline` calls `reloadTimelines`), so
+ * WidgetKit never needs to ask on its own.
+ */
+const POLICY_BEFORE = 'Timeline<DeparturesTimelineEntry>(entries: entries, policy: .atEnd)';
+const POLICY_AFTER = 'Timeline<DeparturesTimelineEntry>(entries: entries, policy: .never)';
 const TITLE_AFTER = '"Przystanek"';
 
 const ENTITY = `
@@ -100,6 +115,7 @@ function patchWidgetSource(source) {
   for (const [label, anchor] of [
     ['parameter', PARAMETER_BEFORE],
     ['environment', ENVIRONMENT_BEFORE],
+    ['timeline policy', POLICY_BEFORE],
   ]) {
     if (!source.includes(anchor)) {
       throw new Error(
@@ -112,6 +128,7 @@ function patchWidgetSource(source) {
     source
       .replace(PARAMETER_BEFORE, PARAMETER_AFTER)
       .replace(ENVIRONMENT_BEFORE, ENVIRONMENT_AFTER)
+      .replace(POLICY_BEFORE, POLICY_AFTER)
       .replace(TITLE_BEFORE, TITLE_AFTER) + ENTITY
   );
 }

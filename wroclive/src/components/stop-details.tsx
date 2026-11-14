@@ -8,7 +8,7 @@ import { CloseButton, HeaderButton } from './vehicle-details';
 import { Motion, Radius, Space } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
 import type { Departure, Departures, Stop } from '@/lib/api';
-import { boardLines, departureSeconds, groupByRoute } from '@/lib/departures';
+import { boardLines, departureOnTime, departureSeconds, groupByRoute } from '@/lib/departures';
 import { etaParts, formatDistance, formatScheduled } from '@/lib/format';
 import { tapped } from '@/lib/haptics';
 import { preferencesStore, usePreferences, type BoardView } from '@/lib/preferences';
@@ -313,6 +313,7 @@ export function StopDetails({
                   headsign={route.headsign}
                   seconds={route.departures.slice(0, ROUTE_DEPARTURES).map(secondsTo)}
                   live={Boolean(route.departures[0]?.realtime)}
+                  onTime={Boolean(route.departures[0] && departureOnTime(route.departures[0]))}
                   walk={walk}
                   onOpen={
                     onOpenVehicle && route.departures[0] && canOpenVehicle?.(route.departures[0])
@@ -330,6 +331,7 @@ export function StopDetails({
                 const scheduled = formatScheduled(departure.departure);
                 const leave = walk === null ? null : leaveLabel(leaveInSeconds(seconds, walk));
                 const openable = Boolean(onOpenVehicle && canOpenVehicle?.(departure));
+                const countdown = departureOnTime(departure) ? theme.success : theme.amber;
 
                 return (
                   <Pressable
@@ -371,13 +373,13 @@ export function StopDetails({
                       )}
                     </View>
 
-                    {/* Amber is reserved for countdowns; nothing else competes. */}
+                    {/* Amber is reserved for countdowns; a live one on time is green. */}
                     <View style={styles.eta}>
-                      <ThemedText type="title" color={theme.amber} style={styles.etaValue}>
+                      <ThemedText type="title" color={countdown} style={styles.etaValue}>
                         {eta.value}
                       </ThemedText>
                       {!!eta.unit && (
-                        <ThemedText type="footnote" weight="semibold" color={theme.amber}>
+                        <ThemedText type="footnote" weight="semibold" color={countdown}>
                           {eta.unit}
                         </ThemedText>
                       )}
@@ -405,6 +407,7 @@ function RouteRow({
   headsign,
   seconds,
   live,
+  onTime,
   walk,
   onOpen,
 }: {
@@ -414,6 +417,8 @@ function RouteRow({
   headsign: string | null;
   seconds: number[];
   live: boolean;
+  /** The next departure is live and running to the timetable. */
+  onTime: boolean;
   walk: number | null;
   /** Present when the next departure's vehicle is on the road. */
   onOpen?: () => void;
@@ -461,11 +466,11 @@ function RouteRow({
         )}
       </View>
       <View style={styles.eta}>
-        <ThemedText type="title" color={theme.amber} style={styles.etaValue}>
+        <ThemedText type="title" color={onTime ? theme.success : theme.amber} style={styles.etaValue}>
           {eta.value}
         </ThemedText>
         {!!eta.unit && (
-          <ThemedText type="footnote" weight="semibold" color={theme.amber}>
+          <ThemedText type="footnote" weight="semibold" color={onTime ? theme.success : theme.amber}>
             {eta.unit}
           </ThemedText>
         )}

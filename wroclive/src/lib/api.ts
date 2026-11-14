@@ -958,10 +958,29 @@ export const getDepartures = async (stopId: string, options?: GetOptions) =>
     await apiGet<unknown>(`/stop/${encodeURIComponent(stopId)}/departures?limit=${BOARD_LIMIT}&within=1440`, options),
   );
 
+/**
+ * The boards of several platforms of one place, keeping whichever answered.
+ *
+ * A platform that no longer answers costs only its own departures. A starred
+ * stop or a saved trip keeps the ids it was saved with, and a new timetable
+ * snapshot can drop one of them: with `Promise.all` that single 404 failed the
+ * whole board on every poll, so its "Ulubione" row and its widget never
+ * refreshed again. Only when every id fails does the board fail.
+ */
+async function eachPlatform<T>(ids: string[], load: (id: string) => Promise<T>): Promise<T[]> {
+  const settled = await Promise.allSettled(ids.map((id) => load(id)));
+  const boards = settled.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
+  if (boards.length === 0) {
+    const failure = settled.find((result) => result.status === 'rejected');
+    throw failure?.reason ?? new ApiError('No departures', 0);
+  }
+  return boards;
+}
+
 /** Merge only GTFS records that search identified as one physical platform. */
 export const getDeparturesForStops = async (stop: Stop, options?: GetOptions): Promise<Departures> => {
   const ids = [...new Set([stop.id, ...(stop.ids ?? [])])];
-  const boards = await Promise.all(ids.map((id) => getDepartures(id, options)));
+  const boards = await eachPlatform(ids, (id) => getDepartures(id, options));
   const seen = new Set<string>();
   const departures = boards
     .flatMap((board) => board.departures)
@@ -997,13 +1016,11 @@ export const getJourneyDepartures = async (
   options?: GetOptions,
 ): Promise<JourneyBoard> => {
   const to = toIds.slice(0, 20).map(encodeURIComponent).join(',');
-  const boards = await Promise.all(
-    [...new Set(fromIds)].map(async (id) =>
-      normaliseDepartures(
-        await apiGet<unknown>(
-          `/stop/${encodeURIComponent(id)}/departures?limit=20&within=${JOURNEY_WITHIN_MINUTES}&to=${to}`,
-          options,
-        ),
+  const boards = await eachPlatform([...new Set(fromIds)], async (id) =>
+    normaliseDepartures(
+      await apiGet<unknown>(
+        `/stop/${encodeURIComponent(id)}/departures?limit=20&within=${JOURNEY_WITHIN_MINUTES}&to=${to}`,
+        options,
       ),
     ),
   );

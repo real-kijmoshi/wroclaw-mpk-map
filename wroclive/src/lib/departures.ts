@@ -13,6 +13,21 @@ export const departureSeconds = (departure: Departure) =>
   departure.realtime && departure.predictedInSeconds != null ? departure.predictedInSeconds : departure.inSeconds;
 
 /**
+ * A live departure running to the timetable — what the board paints green.
+ *
+ * Only a live prediction can say so: a timetable-only row has no evidence
+ * either way and keeps the countdown amber. The threshold is `formatDelay()`'s
+ * "Punktualnie" — under two minutes either side, rounded — so the board and
+ * the vehicle sheet never disagree about the same tram.
+ */
+export const departureOnTime = (departure: Departure) => {
+  if (!departure.realtime || departure.predictedInSeconds == null) return false;
+  const delay = departure.predictedInSeconds - departure.inSeconds;
+  if (!Number.isFinite(delay)) return false;
+  return Math.abs(Math.round(delay / 60)) < 2;
+};
+
+/**
  * Where vehicles from this platform go, busiest first.
  *
  * Two platforms of one stop share a name and face opposite ways, and "Tramwaje"

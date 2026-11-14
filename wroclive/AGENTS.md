@@ -322,7 +322,9 @@ their own copy of the same `Platform.select` shadow.
 - **Polish has three plural forms.** `plural()` in `src/lib/format.ts` picks
   between them; "1 pojazdów" reads as broken software.
 - **Amber is for countdowns.** `theme.amber` is the one loud colour in the app;
-  use weight or spacing elsewhere.
+  use weight or spacing elsewhere. On the stop board a live departure that is
+  on time (`departureOnTime()`) counts down green instead; timetable-only rows
+  stay amber.
 - **Do not pass a computed height alongside an animated transform.** The web
   build drops the separate `{ height }` object, so the sheet grew to its content
   and hung off the top. `Sheet` sizes itself with a percentage — see the comment
@@ -394,7 +396,8 @@ Activity push, and it is optional.
   the whole policy: only incidents first seen *after* opting in (the archive
   holds ~100, and switching this on must not replay them), each once, none
   older than three hours (a late background wake), and a burst folded into
-  one summary. A tap opens the disruptions screen
+  one summary. "Moje linie" with nothing selected on the map means every
+  line, as the map does — read literally it matched nothing. A tap opens the disruptions screen
   (`incident-notification-router.tsx`).
 - **Favourite boards** (`src/lib/favourite-boards.ts`,
   `src/hooks/use-favourite-boards.ts`). One fetch of every starred stop's
@@ -411,7 +414,10 @@ Activity push, and it is optional.
   `expo-widgets` wrote the file — and it fails the prebuild if the generated
   text moves. The old "first / second / third" enum made riders remember the
   order they had starred things in. Every starred stop is in the timeline for
-  that reason. A rider adds one widget per stop — a "next stop" button would
+  that reason. The same plugin sets the timeline's reload policy to `.never`:
+  the provider only re-reads what the app wrote, so `.atEnd` asked WidgetKit
+  for the same all-past timeline every few minutes after the app last ran and
+  spent the reload budget the background refresh needs. A rider adds one widget per stop — a "next stop" button would
   not work: a button press only rewrites the current timeline entry, and the
   next minute's entry puts the old stop back. That configuration makes it an
   iOS 17+ widget; the app itself targets 16.4. WidgetKit cannot fetch, so the

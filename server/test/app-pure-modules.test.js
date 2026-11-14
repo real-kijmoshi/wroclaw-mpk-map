@@ -214,6 +214,15 @@ describe('incident notifications', () => {
     assert.equal(wider.separate.length, 0);
   });
 
+  it('reads "mine" with nothing selected as every line, the way the map does', (t) => {
+    const mod = load(t);
+    if (!mod) return;
+    // An empty selection is the map showing everything. Read literally it
+    // matched nothing, and the setting said "on" over total silence.
+    const plan = mod.planIncidentAlerts([incident('a', 5, ['4']), incident('b', 5, ['145'])], on('mine'), [], NOW);
+    assert.deepEqual(plan.separate.map((item) => item.id).sort(), ['a', 'b']);
+  });
+
   it('folds a burst into one summary, newest shown separately', (t) => {
     const mod = load(t);
     if (!mod) return;
@@ -228,5 +237,30 @@ describe('incident notifications', () => {
     if (!mod) return;
     const plan = mod.planIncidentAlerts([], on('all', NOW - HOUR, { old: NOW - 4 * 24 * HOUR, recent: NOW - HOUR }), [], NOW);
     assert.deepEqual(Object.keys(plan.seen), ['recent']);
+  });
+});
+
+describe('departure on time', () => {
+  const load = (t) => loadAppModule(t, 'departures.ts', ['departureOnTime']);
+  const departure = (inSeconds, predictedInSeconds, realtime = true) => ({ inSeconds, predictedInSeconds, realtime });
+
+  it('is on time within formatDelay\'s "Punktualnie" window', (t) => {
+    const mod = load(t);
+    if (!mod) return;
+    assert.equal(mod.departureOnTime(departure(600, 600)), true);
+    assert.equal(mod.departureOnTime(departure(600, 600 + 89)), true);
+    assert.equal(mod.departureOnTime(departure(600, 600 - 89)), true);
+    // 90 s rounds to two minutes: "2 min spóźnienia", not on time.
+    assert.equal(mod.departureOnTime(departure(600, 600 + 90)), false);
+    assert.equal(mod.departureOnTime(departure(600, 600 - 150)), false);
+  });
+
+  it('never calls a timetable-only departure on time', (t) => {
+    const mod = load(t);
+    if (!mod) return;
+    // No prediction is no evidence: the countdown stays amber.
+    assert.equal(mod.departureOnTime(departure(600, 600, false)), false);
+    assert.equal(mod.departureOnTime(departure(600, null)), false);
+    assert.equal(mod.departureOnTime(departure(600, undefined)), false);
   });
 });
