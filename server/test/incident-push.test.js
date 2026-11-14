@@ -92,6 +92,38 @@ describe('incident push registration', () => {
   });
 });
 
+describe('incident push registry bounds', () => {
+  const DAY = 24 * 60 * MIN;
+  const token = (index) => index.toString(16).padStart(64, '0');
+
+  it('makes room for a new phone instead of refusing it once full', async () => {
+    const { service } = await serviceWith(alertsWith());
+    service.maxDevices = 3;
+    // A script fills the registry with tokens that belong to no phone…
+    for (let index = 1; index <= 3; index += 1) service.register({ token: token(index), mode: 'all' }, NOW - index * MIN);
+    // …and a real rider still gets in; the registration refreshed longest ago goes.
+    assert.equal(service.register({ token: TOKEN, mode: 'all' }, NOW).ok, true);
+    assert.equal(service.devices.size, 3);
+    assert.equal(service.devices.has(token(3)), false);
+    assert.equal(service.devices.has(TOKEN), true);
+  });
+
+  it('drops a registration nobody has refreshed, on a pass and on restore', async () => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'incident-push-')), 'incident-push.json');
+    const { service, apns } = await serviceWith(alertsWith());
+    service.file = file;
+    service.register({ token: TOKEN, mode: 'all' }, NOW - 40 * DAY);
+    service.register({ token: OTHER, mode: 'all' }, NOW);
+    service.saveNow();
+    const restored = new IncidentPushService({ apns, alerts: alertsWith(), bundleId: 'x', file });
+    restored.load(NOW);
+    assert.deepEqual([...restored.devices.keys()], [OTHER]);
+    await service.tick(NOW);
+    assert.deepEqual([...service.devices.keys()], [OTHER]);
+    service.stop();
+  });
+});
+
 describe('which incidents are new', () => {
   it('is new only when none of its posts has been seen, so a growing cluster is not news twice', () => {
     const first = freshIncidents([incident('a', 5, { sources: ['p1'] })], {}, NOW);
@@ -256,6 +288,26 @@ describe('/incident-push', () => {
       assert.equal((await post(base, { token: TOKEN, mode: 'loud' })).status, 400);
       assert.equal((await fetch(`${base}/incident-push/${TOKEN}`, { method: 'DELETE' })).status, 204);
       assert.equal(service.status.devices, 0);
+    } finally {
+      service.stop();
+      close();
+    }
+  });
+
+  it('rate-limits registration per client, so one script cannot fill the registry', async () => {
+    const service = new IncidentPushService({
+      apns: new ApnsClient({ keyId: 'K', teamId: 'T', privateKey: PEM, origin: 'http://127.0.0.1:1' }),
+      alerts: fakeAlerts,
+      bundleId: 'x',
+    });
+    const { base, close } = await serve(service);
+    try {
+      const statuses = [];
+      for (let index = 0; index < 35; index += 1) {
+        statuses.push((await post(base, { token: index.toString(16).padStart(64, '0'), mode: 'all' })).status);
+      }
+      assert.equal(statuses.filter((status) => status === 204).length, 30);
+      assert.equal(statuses.at(-1), 429);
     } finally {
       service.stop();
       close();

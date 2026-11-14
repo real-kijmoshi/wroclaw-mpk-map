@@ -11,6 +11,7 @@ const { sharedRoster } = require('./fleet');
 const { simplify } = require('./gtfs/geo');
 const { CATEGORIES } = require('./lines');
 const { describeVehicle } = require('./progress');
+const { createRateLimit } = require('./rate-limit');
 const { enrichDepartures } = require('./realtime-departures');
 
 const shapeCache = new LruCache(config.cache.shapeEntries);
@@ -515,7 +516,14 @@ const createRouter = ({
    * and the scope the rider chose in Settings. 503 when no APNs key is
    * configured — the app then announces disruptions locally, as before.
    */
-  router.post('/incident-push', noStore, express.json({ limit: '8kb' }), (req, res) => {
+  // A phone registers a handful of times a day; this is the floor that keeps
+  // one script from filling the registry with tokens that belong to no phone.
+  const incidentPushLimit = createRateLimit({
+    windowMs: 10 * 60_000,
+    max: 30,
+    enabled: config.rateLimit.enabled,
+  });
+  router.post('/incident-push', noStore, incidentPushLimit, express.json({ limit: '8kb' }), (req, res) => {
     if (!incidentPush) return res.status(503).json({ error: 'Incident push is not configured' });
     const result = incidentPush.register(req.body);
     if (!result.ok) return res.status(result.status).json({ error: result.error });

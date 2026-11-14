@@ -34,6 +34,12 @@ const SEEN_TTL_MS = 3 * 24 * 60 * 60 * 1_000;
 const TOKEN_PATTERN = /^[0-9a-f]{32,256}$/i;
 const LINE_PATTERN = /^[0-9A-Z]{1,6}$/i;
 const MODES = new Set(['mine', 'all']);
+/**
+ * A registration nobody has refreshed in this long is dropped. The app
+ * registers again on every launch, so only a phone that has not opened the
+ * app in a month — or a token that never belonged to one — reaches it.
+ */
+const DEVICE_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 /** APNs answers that mean the token will never work again. */
 const DEAD_REASONS = new Set(['BadDeviceToken', 'Unregistered', 'DeviceTokenNotForTopic']);
 
@@ -115,12 +121,13 @@ class IncidentPushService {
    * @param {{ apns: import('./apns').ApnsClient | null, alerts: { getIncidents: Function },
    *   bundleId: string, file?: string | null, maxDevices?: number, logger?: object }} options
    */
-  constructor({ apns, alerts, bundleId, file = null, maxDevices = 20_000, logger = null }) {
+  constructor({ apns, alerts, bundleId, file = null, maxDevices = 20_000, deviceTtlMs = DEVICE_TTL_MS, logger = null }) {
     this.apns = apns;
     this.alerts = alerts;
     this.topic = bundleId;
     this.file = file;
     this.maxDevices = maxDevices;
+    this.deviceTtlMs = deviceTtlMs;
     this.logger = logger;
     /** token → { token, mode, lines, enabledAt, updatedAt } */
     this.devices = new Map();
@@ -152,6 +159,7 @@ class IncidentPushService {
     for (const entry of Array.isArray(parsed?.devices) ? parsed.devices : []) {
       const device = parseDevice(entry);
       if (typeof device === 'string' || !Number.isFinite(entry.enabledAt)) continue;
+      if (Number.isFinite(entry.updatedAt) && now - entry.updatedAt > this.deviceTtlMs) continue;
       this.devices.set(device.token, { ...device, enabledAt: entry.enabledAt, updatedAt: entry.updatedAt ?? now });
     }
     if (parsed?.seen && typeof parsed.seen === 'object') {
@@ -190,14 +198,40 @@ class IncidentPushService {
     const device = parseDevice(body);
     if (typeof device === 'string') return { ok: false, status: 400, error: device };
     const existing = this.devices.get(device.token);
-    if (!existing && this.devices.size >= this.maxDevices) {
-      return { ok: false, status: 503, error: 'Too many devices' };
-    }
+    if (!existing && this.devices.size >= this.maxDevices) this.#makeRoom(now);
     // Re-registering keeps the opt-in date: it is when the rider started
     // listening, not when they last opened the app or changed the scope.
     this.devices.set(device.token, { ...device, enabledAt: existing?.enabledAt ?? now, updatedAt: now });
     this.#save();
     return { ok: true };
+  }
+
+  /**
+   * The registry is public and unauthenticated: anyone can register tokens
+   * that belong to no phone. Refusing new devices once it was full let a
+   * script lock every real rider out for good, so a full registry first drops
+   * what has expired and then the registration refreshed longest ago — a
+   * phone that opens the app re-registers and is always the freshest.
+   */
+  #makeRoom(now) {
+    this.#expire(now);
+    if (this.devices.size < this.maxDevices) return;
+    let oldest = null;
+    for (const device of this.devices.values()) {
+      if (!oldest || device.updatedAt < oldest.updatedAt) oldest = device;
+    }
+    if (oldest) this.devices.delete(oldest.token);
+  }
+
+  #expire(now) {
+    let removed = false;
+    for (const device of [...this.devices.values()]) {
+      if (now - device.updatedAt > this.deviceTtlMs) {
+        this.devices.delete(device.token);
+        removed = true;
+      }
+    }
+    if (removed) this.#save();
   }
 
   unregister(token) {
@@ -231,6 +265,7 @@ class IncidentPushService {
     // Learning from an alerts service that has not refreshed yet would learn
     // an empty list, and the first real refresh would then all be "new".
     if (!this.primed && this.alerts.status?.lastRefreshAt === null) return;
+    this.#expire(now);
     const { fresh, seen } = freshIncidents(this.alerts.getIncidents({ now }), this.seen, now);
     this.seen = seen;
     this.stats.lastPassAt = new Date(now).toISOString();
