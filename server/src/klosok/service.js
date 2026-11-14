@@ -269,10 +269,10 @@ class KlosokService {
         finalVehiclesAdded: added,
         dedupDroppedWroclaw: dropped,
       };
-      logger.info(
-        `Kłosok GTFS-RT: ${enriched.length} buses served (${counters.unmatched} unmatched) from ` +
-          `${parsed.stats.freshPositions} fresh positions`,
-      );
+      // logger.info(
+      //   `Kłosok GTFS-RT: ${enriched.length} buses served (${counters.unmatched} unmatched) from ` +
+      //     `${parsed.stats.freshPositions} fresh positions`,
+      // );
     } catch (error) {
       // Fail soft: keep the last good snapshot, and say why on /health.
       this.pollRevision += 1;
