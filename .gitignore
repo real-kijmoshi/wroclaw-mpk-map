@@ -88,5 +88,5 @@ yarn-error.*
 app-example
 
 # Claude Code worktrees and Playwright MCP output
-.claude/worktrees/
+.claude/
 .playwright-mcp/
