@@ -430,9 +430,13 @@ Activity push, and it is optional.
   not work: a button press only rewrites the current timeline entry, and the
   next minute's entry puts the old stop back. That configuration makes it an
   iOS 17+ widget; the app itself targets 16.4. WidgetKit cannot fetch, so the
-  app hands it a half-hour *timeline* — the rows once a minute, each entry
-  counting from its own date — and the last entry shows clock times, since
-  nothing redraws it and a countdown there would freeze. The walk from the
+  app hands it a *timeline* (`timelineSlots()` in
+  `src/lib/widget-timeline.ts`): a countdown once a minute for half an hour,
+  then clock times in one entry per departure leaving, then a last entry with
+  no rows that asks for the app to be opened. WidgetKit gives a layout the
+  *entry's* date as "now", so the last entry is up for as long as nothing
+  replaces it — when it was a list of clock times, the widget showed the
+  08:08 trams at 18:33, the catchable-looking ones still amber. The walk from the
   rider's last known position (`rememberPosition()`, device only) dims a
   departure the walk cannot reach. Layouts are strings run in the extension:
   no Babel helpers either — `const [a, ...rest] =` compiles to `_toArray`,

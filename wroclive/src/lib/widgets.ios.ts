@@ -8,6 +8,7 @@ import type { FavouriteStop } from '@/lib/favourite-stops';
 import { colorFor } from '@/lib/lines';
 import { toPropertyList } from '@/lib/property-list';
 import { carryOverRows } from '@/lib/widget-carry-over';
+import { listedAt, timelineSlots } from '@/lib/widget-timeline';
 import { activityStaleAt } from '@/lib/trip-progress';
 import { walkSeconds } from '@/lib/walking';
 import type { FavouriteTrip } from '@/lib/favourite-trips';
@@ -21,10 +22,9 @@ export type { ArrivalActivityInput, TripActivityInput, TripBoard, WidgetBoard, W
  *
  * Neither can fetch anything: WidgetKit renders what the app last handed it.
  * So the widget gets a *timeline* — every starred stop's next departures,
- * repeated once a minute for the next half hour, each entry counting from its
- * own date — which keeps it honest for a while after the app is closed. Its
- * last entry is never redrawn, so it shows clock times instead of countdowns
- * that would freeze. The Live Activities get a native countdown that ticks on
+ * counting down once a minute for half an hour, then in clock times as each
+ * known departure leaves, then "open the app" (`timelineSlots()`) — which
+ * keeps it honest after the app is closed, however long it stays closed. The Live Activities get a native countdown that ticks on
  * the lock screen with the app suspended, refreshed on every poll while the
  * app runs, and a stale date so the system greys it out when that stops.
  *
@@ -44,8 +44,6 @@ export const widgetsAvailable = requireOptionalNativeModule('ExpoWidgets') !== n
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const layouts: typeof import('@/widgets/layouts') | null = widgetsAvailable ? require('@/widgets/layouts') : null;
 
-/** How far ahead the widget's timeline reaches, one entry a minute. */
-const TIMELINE_MINUTES = 30;
 /** Rows kept per stop per entry: the large widget draws eight. */
 const ROWS_PER_STOP = 8;
 
@@ -187,30 +185,34 @@ export async function syncDeparturesWidget(
       })),
       updatedAt: now,
       final: false,
+      expired: false,
     };
     if (stops.length === 0) {
       layouts.departuresWidget.updateSnapshot(toPropertyList(base) as DeparturesWidgetProps);
       return;
     }
-    const start = Math.floor(now / 60_000) * 60_000;
+    const slots = timelineSlots(
+      now,
+      stops.flatMap((stop) => stop.rows.map((row) => row.at)),
+    );
     layouts.departuresWidget.updateTimeline(
-      Array.from({ length: TIMELINE_MINUTES + 1 }, (_, minute) => {
-        const date = start + minute * 60_000;
-        return {
-          date: new Date(date),
-          // UserDefaults refuses the whole timeline over a single null.
-          props: toPropertyList({
-            ...base,
-            final: minute === TIMELINE_MINUTES,
-            // Each entry carries only what has not left by its own minute, so
-            // a small widget's three rows are three departures still to come.
-            stops: stops.map((stop) => ({
-              ...stop,
-              rows: stop.rows.filter((row) => row.at >= date - 30_000).slice(0, ROWS_PER_STOP),
-            })),
-          }) as DeparturesWidgetProps,
-        };
-      }),
+      slots.map(({ date, final, expired }) => ({
+        date: new Date(date),
+        // UserDefaults refuses the whole timeline over a single null.
+        props: toPropertyList({
+          ...base,
+          final,
+          expired,
+          // Each entry carries only what has not left by its own date, so a
+          // small widget's three rows are three departures still to come. The
+          // last entry carries none: nothing redraws it, so it only says
+          // "open the app" (see `widget-timeline.ts`).
+          stops: stops.map((stop) => ({
+            ...stop,
+            rows: expired ? [] : stop.rows.filter((row) => listedAt(row.at, date)).slice(0, ROWS_PER_STOP),
+          })),
+        }) as DeparturesWidgetProps,
+      })),
     );
   } catch {
     // A widget that fails to refresh keeps its last timeline; never the app's problem.

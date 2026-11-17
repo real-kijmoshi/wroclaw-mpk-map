@@ -92,8 +92,14 @@ export type DeparturesWidgetProps = {
   favourites: { id: string; name: string; detail: string }[];
   /** When the boards were fetched. */
   updatedAt: number;
-  /** The timeline's last entry: nothing will redraw it, so it shows clock times, not countdowns. */
+  /** Past the first half hour no entry redraws this one a minute later, so it shows clock times, not countdowns. */
   final: boolean;
+  /**
+   * The timeline's last entry. Nothing replaces it, so it carries no rows and
+   * only asks for the app to be opened: a departure listed here would still
+   * be listed hours after it left. Missing on timelines written before it existed.
+   */
+  expired?: boolean;
   /** `theme.amber` for each scheme — the countdown colour and nothing else (invariant 10). */
   amberLight: string;
   amberDark: string;
@@ -188,6 +194,7 @@ const DeparturesWidget = (
   // steps back. The last entry is never redrawn, so it trades countdowns
   // (which would freeze) for clock times, which stay true.
   const final = Boolean(props?.final);
+  const expired = Boolean(props?.expired);
   const upcoming = stop.rows.filter((row) => row.at >= now - 30_000);
   const minutesTo = (row: DeparturesWidgetRow) => Math.max(0, Math.round((row.at - now) / 60_000));
   const when = (row: DeparturesWidgetRow) =>
@@ -267,7 +274,7 @@ const DeparturesWidget = (
           <Text modifiers={[font({ textStyle: 'caption', weight: 'bold' }), lineLimit(1)]}>{title}</Text>
         </HStack>
         {upcoming.length === 0 ? (
-          <Text modifiers={[font({ textStyle: 'caption' })]}>Brak odjazdów</Text>
+          <Text modifiers={[font({ textStyle: 'caption' })]}>{expired ? 'Otwórz, aby odświeżyć' : 'Brak odjazdów'}</Text>
         ) : (
           upcoming.slice(0, 2).map((row) => (
             <HStack key={`${row.line}-${row.at}`} spacing={4}>
@@ -289,7 +296,9 @@ const DeparturesWidget = (
   const empty = (
     <VStack alignment="leading" spacing={2}>
       <Text modifiers={[font({ textStyle: 'footnote', weight: 'semibold' })]}>
-        {trip
+        {expired
+          ? 'Odjazdy wymagają odświeżenia'
+          : trip
           ? 'Brak połączeń w najbliższych godzinach'
           : stop.rows.length === 0
             ? 'Brak danych o odjazdach'
