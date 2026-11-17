@@ -324,7 +324,9 @@ their own copy of the same `Platform.select` shadow.
 - **Amber is for countdowns.** `theme.amber` is the one loud colour in the app;
   use weight or spacing elsewhere. On the stop board a live departure that is
   on time (`departureOnTime()`) counts down green instead; timetable-only rows
-  stay amber.
+  stay amber. The vehicle sheet follows the same rule: its countdowns are live,
+  so a run `formatDelay()` calls "Punktualnie" counts down green, and a run with
+  no matched timetable stays amber.
 - **Do not pass a computed height alongside an animated transform.** The web
   build drops the separate `{ height }` object, so the sheet grew to its content
   and hung off the top. `Sheet` sizes itself with a percentage — see the comment

@@ -160,6 +160,11 @@ export function VehicleDetails({
   const etaFor = (stop: { id: string; etaSeconds: number | null }) =>
     stop.id === standingAt ? AT_STOP_ETA : etaParts(agedEta(stop.etaSeconds, ageSeconds));
   const nextEta = nextStop ? etaFor(nextStop) : null;
+  // Every countdown here comes from the vehicle's live position, so the stop
+  // board's rule applies: a run matched to the timetable and within
+  // "Punktualnie" counts down green. An unmatched run (no delay) stays amber —
+  // no timetable is no evidence it is on time.
+  const countdownColor = formatDelay(trip?.delaySeconds).tone === 'onTime' ? theme.success : theme.amber;
   const alertStopId = alert?.stopId ?? null;
   const riding = alert?.kind === 'trip' ? tripProgress(trip, alert.stopId) : null;
   const destinationIndex = riding ? stops.findIndex((stop) => stop.id === alertStopId) : -1;
@@ -185,11 +190,11 @@ export function VehicleDetails({
 
         {nextEta && (
           <View style={styles.nextEta}>
-            <ThemedText type="display" color={theme.amber} style={styles.nextEtaValue}>
+            <ThemedText type="display" color={countdownColor} style={styles.nextEtaValue}>
               {nextEta.value}
             </ThemedText>
             {!!nextEta.unit && (
-              <ThemedText type="footnote" weight="semibold" color={theme.amber}>
+              <ThemedText type="footnote" weight="semibold" color={countdownColor}>
                 {nextEta.unit}
               </ThemedText>
             )}
@@ -326,11 +331,11 @@ export function VehicleDetails({
                 <View style={styles.eta}>
                   {/* The next stop's countdown leads — it is what the card
                       above the list used to be for. */}
-                  <ThemedText type={first ? 'title' : 'headline'} color={theme.amber} style={styles.etaValue}>
+                  <ThemedText type={first ? 'title' : 'headline'} color={countdownColor} style={styles.etaValue}>
                     {eta.value}
                   </ThemedText>
                   {!!eta.unit && (
-                    <ThemedText type="footnote" weight={first ? 'semibold' : 'regular'} color={theme.amber}>
+                    <ThemedText type="footnote" weight={first ? 'semibold' : 'regular'} color={countdownColor}>
                       {eta.unit}
                     </ThemedText>
                   )}
