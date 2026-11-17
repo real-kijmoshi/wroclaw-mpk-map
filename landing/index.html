@@ -3,18 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="description" content="wroclive — tramwaje i autobusy Wrocławia na żywo. Darmowa aplikacja na iPhone'a i mapa w przeglądarce: pozycje pojazdów co 10 sekund, trasy, odjazdy i utrudnienia.">
+  <meta name="description" content="wroclive — tramwaje i autobusy Wrocławia na żywo. Darmowa aplikacja na iPhone'a i mapa w przeglądarce: pozycje pojazdów co 10 sekund, odjazdy z przystanków, widżet, Live Activity i powiadomienia o utrudnieniach.">
   <meta name="author" content="real-kijmoshi">
   <link rel="canonical" href="https://wroclive.kijmoshi.xyz/">
-  <title>wroclive — mapa tramwajów i autobusów Wrocławia na żywo</title>
+  <title>wroclive — tramwaje i autobusy Wrocławia na żywo</title>
 
   <!-- Baner instalacji w Safari na iOS. app-id musi zgadzać się z linkiem do App Store poniżej. -->
   <meta name="apple-itunes-app" content="app-id=6799716104">
 
-  <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="wroclive" />
-  <meta property="og:title" content="wroclive — mapa tramwajów i autobusów Wrocławia na żywo" />
+  <meta property="og:title" content="wroclive — tramwaje i autobusy Wrocławia na żywo" />
   <meta property="og:description" content="Sprawdź, gdzie jest Twój tramwaj lub autobus, dokąd jedzie i kiedy pojawi się na przystanku. Darmowa aplikacja na iPhone'a." />
   <meta property="og:image" content="https://wroclive.kijmoshi.xyz/images/og.jpg" />
   <meta property="og:image:width" content="1200" />
@@ -23,12 +22,12 @@
   <meta property="og:locale" content="pl_PL" />
   <meta property="og:url" content="https://wroclive.kijmoshi.xyz/" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="wroclive — mapa tramwajów i autobusów Wrocławia na żywo" />
+  <meta name="twitter:title" content="wroclive — tramwaje i autobusy Wrocławia na żywo" />
   <meta name="twitter:description" content="Sprawdź, gdzie jest Twój tramwaj lub autobus, dokąd jedzie i kiedy pojawi się na przystanku. Darmowa aplikacja na iPhone'a." />
   <meta name="twitter:image" content="https://wroclive.kijmoshi.xyz/images/og.jpg" />
   <meta name="twitter:image:alt" content="wroclive — mapa tramwajów i autobusów Wrocławia na żywo" />
-  <meta name="theme-color" content="#0B5FBF" />
-  <meta name="theme-color" content="#05070C" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#E6ECF1" />
+  <meta name="theme-color" content="#0A1621" media="(prefers-color-scheme: dark)" />
   <meta name="color-scheme" content="light dark" />
 
   <script type="application/ld+json">
@@ -97,1002 +96,833 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="preconnect" href="https://api.wroclive.kijmoshi.xyz" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Spline+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="preload" as="image" href="images/IMG_9061.webp" type="image/webp" fetchpriority="high" />
+  <link rel="preload" href="data/network.json" as="fetch" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&display=swap" rel="stylesheet" />
   <style>
     /*
-     * System wizualny: schemat sieci + tablica odjazdów.
-     * Granat kolejowy (--rail) zostaje marką z prawdziwej apki,
-     * zieleń (--live) wyłącznie dla wskaźników "na żywo" — nigdzie
-     * indziej jako dekoracja. Bursztyn nadal zarezerwowany dla
-     * odliczania minut w aplikacji i tu się nie pojawia.
-     * Mono (IBM Plex Mono) dla wszystkiego co odczytowe/techniczne:
-     * etykiety sekcji, statusy, liczniki — jak na panelu dyspozytora.
+     * Strona stoi na jednym pomyśle: wszystko, co tu widać, jest prawdziwe.
+     * Mapa w nagłówku to sieć tramwajów i autobusów z rozkładu GTFS
+     * (data/network.json, generowane przez server/scripts/build-landing-network.js)
+     * i pozycje pojazdów z /locations. Tablica, widżet, Live Activity
+     * i powiadomienie są wypełniane z tego samego API co aplikacja.
+     *
+     * Kolory linii to LINE_COLOR z aplikacji (tramwaj niebieski, autobus
+     * czerwony). Bursztyn — tylko dla odliczania minut, jak w aplikacji
+     * (inwariant 10). Zieleń — tylko dla "na żywo".
+     *
+     * Jedna rodzina: Archivo, z osią szerokości. Szeroka i ciężka na
+     * nagłówkach, zwężona jak wyświetlacz kierunkowy na tablicy odjazdów.
      */
     :root {
       color-scheme: light dark;
 
-      --rail: #0B5FBF;
-      --rail-dark: #084A96;
-      --rail-tint: rgba(11, 95, 191, 0.12);
-      --ink: #0E141B;
-      --ink-2: #0B1F38;
-      --live: #16A34A;
-      --live-glow: rgba(22, 163, 74, 0.45);
+      --ground: #E6ECF1;
+      --ground-2: #DCE4EB;
+      --paper: #F7F9FB;
+      --ink: #0C1D2B;
+      --ink-2: #3E5163;
+      --rule: rgba(12, 29, 43, 0.14);
 
-      --bg: #F2F2F7;
-      --surface: #FFFFFF;
-      --surface-2: #FAFAFC;
-      --text: #0F172A;
-      --muted: #64748B;
-      --separator: rgba(60, 60, 67, 0.18);
-      --fill: rgba(120, 120, 128, 0.12);
+      --tram: #0B5FBF;
+      --bus: #B91C1C;
+      --amber: #9A5B00;
+      --live: #15803D;
 
-      --shadow-float: 0 8px 30px rgba(15, 23, 42, 0.18);
-      --shadow-chip: 0 2px 10px rgba(15, 23, 42, 0.14);
+      --board: #0E1A24;
+      --board-ink: #EAF1F7;
+      --board-dim: #7D8E9D;
+      --board-amber: #FFB020;
+      --board-live: #3DDC84;
 
-      --radius-card: 18px;
-      --radius-control: 12px;
+      --net-tram: rgba(11, 95, 191, 0.34);
+      --net-bus: rgba(185, 28, 28, 0.13);
+
+      --wide: 'Archivo', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
       --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
-
-      --font-display: 'Spline Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Text',
-          'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      --gutter: clamp(16px, 4vw, 40px);
+      --measure: 1180px;
     }
 
     @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #000000;
-        --surface: #1C1C1E;
-        --surface-2: #141416;
-        --text: #F5F5F7;
-        --muted: #98989F;
-        --separator: rgba(255, 255, 255, 0.14);
-        --fill: rgba(120, 120, 128, 0.24);
-        --rail-tint: rgba(11, 95, 191, 0.24);
-        --shadow-float: 0 8px 30px rgba(0, 0, 0, 0.6);
-        --shadow-chip: 0 2px 10px rgba(0, 0, 0, 0.5);
+      :root:not([data-theme="light"]) {
+        --ground: #0A1621;
+        --ground-2: #0E1D2A;
+        --paper: #112231;
+        --ink: #E6EDF3;
+        --ink-2: #93A6B7;
+        --rule: rgba(230, 237, 243, 0.12);
+        --amber: #FFB020;
+        --live: #3DDC84;
+        --board: #060D14;
+        --net-tram: rgba(77, 148, 235, 0.36);
+        --net-bus: rgba(239, 90, 90, 0.13);
       }
     }
-
-    *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-
-    html {
-      scroll-behavior: smooth;
-      scroll-padding-top: 72px;
+    :root[data-theme="dark"] {
+      --ground: #0A1621;
+      --ground-2: #0E1D2A;
+      --paper: #112231;
+      --ink: #E6EDF3;
+      --ink-2: #93A6B7;
+      --rule: rgba(230, 237, 243, 0.12);
+      --amber: #FFB020;
+      --live: #3DDC84;
+      --board: #060D14;
+      --net-tram: rgba(77, 148, 235, 0.36);
+      --net-bus: rgba(239, 90, 90, 0.13);
     }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
 
     body {
       margin: 0;
-      font-family: var(--font-display);
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.6;
+      background: var(--ground);
+      color: var(--ink);
+      font-family: var(--wide);
+      font-size: 17px;
+      line-height: 1.55;
+      font-variation-settings: 'wdth' 100;
       -webkit-font-smoothing: antialiased;
-      text-rendering: optimizeLegibility;
+      overflow-x: hidden;
     }
 
-    a { color: var(--rail); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-
+    a { color: inherit; }
     a:focus-visible, button:focus-visible, summary:focus-visible {
-      outline: 2px solid var(--rail);
+      outline: 2px solid var(--tram);
       outline-offset: 3px;
-      border-radius: 4px;
+      border-radius: 6px;
     }
 
-    .container {
-      width: min(1120px, 100% - 2 * 24px);
-      margin: 0 auto;
-    }
+    .wrap { width: min(var(--measure), 100% - 2 * var(--gutter)); margin: 0 auto; }
 
-    section { padding: clamp(3.5rem, 8vw, 5.5rem) 0; }
-    section + section { border-top: 1px solid var(--separator); }
-    section > .container > .eyebrow { margin: 0 0 0.6rem; }
-    section > .container > h2 {
-      margin: 0 0 0.5rem;
-      font-size: clamp(1.7rem, 3.4vw, 2.3rem);
-      line-height: 1.15;
-      letter-spacing: -0.025em;
+    .skip {
+      position: absolute; left: 1rem; top: -4rem; z-index: 50;
+      background: var(--ink); color: var(--ground);
+      padding: 0.7rem 1rem; border-radius: 10px; font-weight: 600; text-decoration: none;
     }
-    section > .container > .lead {
-      margin: 0 0 2.5rem;
-      max-width: 62ch;
-      color: var(--muted);
-      font-size: 1.05rem;
-    }
-
-    .eyebrow {
-      display: block;
-      font-family: var(--font-mono);
-      font-size: 0.75rem;
-      font-weight: 600;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      color: var(--rail);
-    }
-
-    /* ---------- dostępność ---------- */
-    .skip-link {
-      position: absolute;
-      left: 1rem;
-      top: -3.5rem;
-      background: var(--rail);
-      color: #fff;
-      padding: 0.7rem 1.1rem;
-      border-radius: var(--radius-control);
-      z-index: 100;
-      font-weight: 600;
-      transition: top 0.2s var(--ease);
-    }
-    .skip-link:focus { top: 1rem; }
+    .skip:focus { top: 1rem; }
 
     .sr-only {
-      position: absolute;
-      width: 1px; height: 1px;
-      padding: 0; margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
     }
 
-    /* ---------- nawigacja ---------- */
-    .nav {
-      position: sticky;
-      top: 0;
-      z-index: 20;
-      background: color-mix(in srgb, var(--bg) 82%, transparent);
-      -webkit-backdrop-filter: blur(20px) saturate(180%);
-      backdrop-filter: blur(20px) saturate(180%);
-      border-bottom: 1px solid var(--separator);
-      border-top: 3px solid var(--rail);
+    /* ---------------- nagłówek: mapa sieci ---------------- */
+
+    .hero {
+      position: relative;
+      min-height: max(640px, 100svh);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      isolation: isolate;
+      overflow: hidden;
     }
-    .nav__inner {
+    .hero__map {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+    }
+    .hero__map canvas { display: block; width: 100%; height: 100%; }
+    /* Tekst stoi na mapie — po lewej stronie mapa gaśnie w tło,
+       żeby nagłówek był czytelny także tam, gdzie gęsto od linii. */
+    .hero__map::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(90deg, var(--ground) 0%, color-mix(in srgb, var(--ground) 82%, transparent) 30%, transparent 58%),
+        linear-gradient(0deg, var(--ground) 0%, transparent 22%);
+    }
+
+    .nav {
       display: flex;
       align-items: center;
-      gap: 0.85rem;
-      height: 60px;
+      gap: 1.5rem;
+      padding-block: 1.25rem;
     }
-    .nav__logo {
+    .nav__brand {
       display: inline-flex;
       align-items: center;
       gap: 0.6rem;
-      font-weight: 700;
-      font-size: 1.05rem;
-      color: var(--text);
+      font-weight: 800;
+      font-variation-settings: 'wdth' 112;
+      font-size: 1.15rem;
+      letter-spacing: -0.01em;
+      text-decoration: none;
     }
-    .nav__logo:hover { text-decoration: none; }
-    .nav__mark {
-      width: 28px;
-      height: 28px;
-      border-radius: 8px;
-      flex: none;
-      box-shadow: var(--shadow-chip);
-    }
-    .nav__mark img {
-      width: 100%;
-      height: 100%;
-      display: block;
-      border-radius: 8px;
-    }
-    .nav__status {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--live);
-      box-shadow: 0 0 0 0 var(--live-glow);
-      animation: pulseDot 2.2s var(--ease) infinite;
-      flex: none;
-    }
-    .nav__links {
-      display: flex;
-      gap: 1.25rem;
-      margin-left: auto;
-      align-items: center;
-      font-size: 0.9rem;
-    }
-    .nav__links a:not(.btn) { color: var(--muted); font-weight: 500; }
-    .nav__links a:not(.btn):hover { color: var(--text); }
-    .nav__links .btn { padding: 0.5rem 1rem; }
+    .nav__brand img { width: 30px; height: 30px; border-radius: 8px; display: block; }
+    .nav__links { margin-left: auto; display: flex; gap: 1.5rem; align-items: center; font-size: 0.95rem; }
+    .nav__links a { text-decoration: none; color: var(--ink-2); font-weight: 500; }
+    .nav__links a:hover { color: var(--ink); }
 
-    /* ---------- przyciski ---------- */
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.5rem;
-      padding: 0.8rem 1.6rem;
-      border-radius: var(--radius-control);
-      font-weight: 600;
-      font-size: 0.95rem;
-      transition: transform var(--ease), background var(--ease), box-shadow var(--ease);
+    .hero__copy {
+      align-self: end;
+      padding-bottom: clamp(2rem, 6vh, 4rem);
     }
-    .btn:hover { text-decoration: none; }
-    .btn-primary {
-      background: var(--rail);
-      color: #fff;
-      box-shadow: var(--shadow-chip);
-    }
-    .btn-ghost {
-      background: transparent;
-      color: var(--text);
-      border: 1px solid var(--separator);
-    }
-
-    /* Przycisk instalacji. Nie jest oficjalną plakietką Apple — własny
-       kształt w typografii tej strony, żeby nie podszywać się pod artwork. */
-    .install {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.75rem;
-      padding: 0.7rem 1.4rem 0.75rem;
-      border-radius: 14px;
-      background: #0B0B0C;
-      color: #fff;
-      border: 1px solid rgba(255, 255, 255, 0.22);
-      box-shadow: var(--shadow-chip);
-      transition: transform var(--ease), background var(--ease);
-    }
-    .install:hover { text-decoration: none; }
-    .install svg { width: 26px; height: 26px; flex: none; fill: currentColor; }
-    .install__label { display: block; line-height: 1.15; text-align: left; }
-    .install__label small {
-      display: block;
-      font-size: 0.68rem;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      opacity: 0.75;
-      font-family: var(--font-mono);
-    }
-    .install__label strong { display: block; font-size: 1.12rem; font-weight: 600; letter-spacing: -0.01em; }
-
-    /* ---------- hero ---------- */
-    .hero {
-      position: relative;
-      overflow: hidden;
-      padding: clamp(3rem, 8vh, 5.5rem) 0 clamp(3rem, 8vh, 5rem);
-      background:
-        radial-gradient(1100px 500px at 85% -10%, rgba(11, 95, 191, 0.45), transparent 60%),
-        radial-gradient(800px 420px at -10% 110%, rgba(8, 74, 150, 0.35), transparent 60%),
-        linear-gradient(180deg, var(--ink), var(--ink-2));
-      color: #fff;
-    }
-    .hero__bg {
-      position: absolute;
-      inset: 0;
-      overflow: hidden;
-      pointer-events: none;
-    }
-    .hero__bg svg { width: 100%; height: 100%; display: block; }
-    .hero__bg .track {
-      fill: none;
-      stroke: rgba(255, 255, 255, 0.16);
-      stroke-width: 3;
-      stroke-linejoin: round;
-    }
-    .hero__bg .station { fill: rgba(255, 255, 255, 0.35); }
-    .hero__bg .station--active {
-      fill: var(--live);
-      animation: dotPulse 2.2s ease-in-out infinite;
-    }
-    .hero__bg .station--active.is-offset { animation-delay: 1.1s; }
-    .hero__bg .vehicle__glow { fill: var(--live); opacity: 0.35; filter: blur(6px); }
-    .hero__bg .vehicle__core { fill: var(--live); }
-
-    .hero > .container { position: relative; z-index: 1; }
-    .hero__grid {
-      display: grid;
-      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
-      align-items: center;
-      gap: clamp(2rem, 5vw, 4rem);
-    }
-    .hero .kicker {
-      margin: 0 0 0.9rem;
-      font-family: var(--font-mono);
-      font-size: 0.78rem;
-      font-weight: 600;
-      letter-spacing: 0.22em;
-      text-transform: uppercase;
-      color: #9EC6F5;
-    }
+    .hero__copy > div { max-width: 40rem; }
     .hero h1 {
       margin: 0;
-      font-size: clamp(2.6rem, 6.5vw, 4.2rem);
-      line-height: 1.03;
+      font-weight: 850;
+      font-variation-settings: 'wdth' 118;
+      font-size: clamp(2.6rem, 7.2vw, 5.6rem);
+      line-height: 0.94;
       letter-spacing: -0.035em;
-      font-weight: 700;
+      text-wrap: balance;
     }
-    .hero h1 .h1-sub {
-      display: block;
-      margin-top: 0.5rem;
-      font-size: clamp(1.15rem, 2.4vw, 1.6rem);
-      line-height: 1.25;
-      letter-spacing: -0.01em;
-      font-weight: 500;
-      color: #9EC6F5;
-    }
-    .hero .tagline {
-      margin: 1.25rem 0 2rem;
-      max-width: 44ch;
-      font-size: clamp(1.02rem, 1.6vw, 1.18rem);
-      color: #B9C4D2;
-    }
-    .hero .cta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.9rem;
-      align-items: center;
-    }
-    .hero .btn-ghost {
-      color: #fff;
-      border-color: rgba(255, 255, 255, 0.25);
-    }
-    .hero .meta {
-      margin: 1.1rem 0 0;
-      font-size: 0.85rem;
-      color: #8FA1B6;
-    }
-    .hero__logo {
-      width: 64px;
-      height: 64px;
-      border-radius: 14px;
-      display: block;
-      margin: 0 0 1.4rem;
-      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+    .hero__lead {
+      margin: 1.4rem 0 2rem;
+      max-width: 34rem;
+      font-size: clamp(1.05rem, 1.5vw, 1.2rem);
+      color: var(--ink-2);
+      text-wrap: pretty;
     }
 
-    /* licznik na żywo — wypełniany z API, ukryty gdy API milczy */
-    .livebar {
-      margin: 2.25rem 0 0;
-      padding: 0;
-      list-style: none;
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 1px;
-      background: rgba(255, 255, 255, 0.14);
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      border-radius: var(--radius-card);
-      overflow: hidden;
+    .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+
+    .store {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.7rem;
+      padding: 0.75rem 1.35rem 0.8rem 1.1rem;
+      border-radius: 14px;
+      background: var(--ink);
+      color: var(--ground);
+      text-decoration: none;
+      transition: transform 0.2s var(--ease);
     }
-    .livebar[hidden] { display: none; }
-    .livebar li {
-      background: rgba(5, 7, 12, 0.45);
-      padding: 0.9rem 1rem;
-      text-align: center;
-    }
-    .livebar .num {
-      display: block;
-      font-family: var(--font-mono);
-      font-size: clamp(1.25rem, 2.6vw, 1.65rem);
+    .store svg { width: 24px; height: 24px; fill: currentColor; flex: none; }
+    .store span { display: grid; line-height: 1.1; }
+    .store small { font-size: 0.75rem; opacity: 0.75; }
+    .store strong { font-size: 1.1rem; font-weight: 700; font-variation-settings: 'wdth' 108; }
+
+    .ghost {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.95rem 1.3rem;
+      border-radius: 14px;
+      border: 1.5px solid var(--rule);
+      background: color-mix(in srgb, var(--ground) 70%, transparent);
+      -webkit-backdrop-filter: blur(8px);
+      backdrop-filter: blur(8px);
+      color: var(--ink);
       font-weight: 600;
-      letter-spacing: -0.02em;
+      text-decoration: none;
+      transition: border-color 0.2s var(--ease);
+    }
+
+    /* legenda mapy: co to za kropki i z kiedy są */
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem 1.4rem;
+      align-items: center;
+      padding-block: 1rem 1.4rem;
+      border-top: 1px solid var(--rule);
+      font-size: 0.9rem;
+      color: var(--ink-2);
+      font-variant-numeric: tabular-nums;
+    }
+    .legend__count { color: var(--ink); font-weight: 650; }
+    .legend__key { display: inline-flex; align-items: center; gap: 0.45rem; }
+    .legend__key i {
+      width: 9px; height: 9px; border-radius: 50%;
+      box-shadow: 0 0 0 2px var(--ground);
+    }
+    .legend__time { margin-left: auto; }
+    .pulse {
+      display: inline-block;
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--live);
+      margin-right: 0.45rem;
+      vertical-align: 0.05em;
+    }
+    .is-polling .pulse { animation: pulse 1.2s var(--ease); }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--live) 60%, transparent); }
+      100% { box-shadow: 0 0 0 10px transparent; }
+    }
+
+    .tip {
+      position: absolute;
+      z-index: 5;
+      pointer-events: none;
+      transform: translate(-50%, calc(-100% - 14px));
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.45rem 0.7rem 0.45rem 0.45rem;
+      border-radius: 10px;
+      background: var(--board);
+      color: var(--board-ink);
+      font-size: 0.85rem;
+      font-weight: 600;
+      white-space: nowrap;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+      opacity: 0;
+      transition: opacity 0.12s;
+    }
+    .tip.is-on { opacity: 1; }
+    .tip b {
+      min-width: 2.2rem;
+      padding: 0.1rem 0.4rem;
+      border-radius: 6px;
+      text-align: center;
       color: #fff;
       font-variant-numeric: tabular-nums;
     }
-    .livebar .num.is-live { color: #4ADE80; }
-    .livebar .lbl {
-      display: block;
-      margin-top: 0.15rem;
-      font-size: 0.74rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: #8FA1B6;
-      font-family: var(--font-mono);
-    }
+    .tip span { font-variation-settings: 'wdth' 80; text-transform: uppercase; letter-spacing: 0.01em; }
 
-    /* telefon w hero — specyficzniej niż .phone niżej, bo ta ramka
-       stoi na ciemnym tle i nie może wziąć jasnego tła karty */
-    .hero .hero__phone {
-      justify-self: center;
-      width: min(300px, 78vw);
-      padding: 0.55rem 0.55rem 0.55rem;
-      border-radius: 34px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.16);
-      box-shadow: 0 30px 60px rgba(0, 0, 0, 0.5);
-      transform: rotate(-1.2deg);
-    }
+    /* ---------------- sekcje ---------------- */
 
-    @keyframes pulseDot {
-      0% { box-shadow: 0 0 0 0 var(--live-glow); }
-      70% { box-shadow: 0 0 0 8px rgba(22, 163, 74, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+    section { padding-block: clamp(4.5rem, 11vw, 8rem); }
+    .section-head { max-width: 38rem; margin-bottom: clamp(2rem, 5vw, 3.25rem); }
+    h2 {
+      margin: 0 0 1rem;
+      font-weight: 800;
+      font-variation-settings: 'wdth' 112;
+      font-size: clamp(2rem, 4.4vw, 3.3rem);
+      line-height: 1;
+      letter-spacing: -0.03em;
+      text-wrap: balance;
     }
-    @keyframes dotPulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.35; }
-    }
+    .section-head p { margin: 0; color: var(--ink-2); font-size: 1.1rem; text-wrap: pretty; }
 
-    /* ---------- zrzuty ekranu ---------- */
-    .screenshots {
+    /* ---------------- tablica odjazdów ---------------- */
+
+    .stopboard {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+      gap: clamp(2rem, 5vw, 4.5rem);
+      align-items: start;
+    }
+    .places {
       display: flex;
       flex-wrap: wrap;
-      justify-content: center;
-      align-items: flex-end;
-      gap: clamp(1.25rem, 4vw, 2.5rem);
-      margin: 0;
+      gap: 0.5rem;
+      margin: 1.75rem 0 0;
+      padding: 0;
+      list-style: none;
     }
-    .phone {
-      width: min(240px, 60vw);
-      margin: 0;
-      padding: 0.55rem 0.55rem 0.75rem;
-      background: var(--surface);
-      border: 1px solid var(--separator);
-      border-radius: 30px;
-      box-shadow: var(--shadow-float);
-      transition: transform var(--ease);
-    }
-    .phone--feature { width: min(280px, 70vw); }
-    .phone__frame {
-      position: relative;
-      border-radius: 24px;
-      overflow: hidden;
-      background: #000;
-    }
-    .phone__frame::before {
-      content: "";
-      position: absolute;
-      top: 8px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 34%;
-      height: 18px;
+    .places button {
+      font: inherit;
+      font-size: 0.95rem;
+      font-weight: 600;
+      padding: 0.55rem 0.95rem;
       border-radius: 999px;
-      background: rgba(0, 0, 0, 0.85);
-      z-index: 2;
+      border: 1.5px solid var(--rule);
+      background: transparent;
+      color: var(--ink);
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
     }
-    .phone img {
+    .places button[aria-pressed="true"] {
+      background: var(--ink);
+      border-color: var(--ink);
+      color: var(--ground);
+    }
+    .places .near { display: inline-flex; align-items: center; gap: 0.4rem; }
+    .places .near svg { width: 15px; height: 15px; }
+    .places__note { margin: 0.9rem 0 0; font-size: 0.9rem; color: var(--ink-2); min-height: 1.4em; }
+
+    .board {
+      background: var(--board);
+      color: var(--board-ink);
+      border-radius: 22px;
+      padding: clamp(1.1rem, 2.6vw, 1.75rem);
+      box-shadow: 0 30px 60px -30px rgba(6, 13, 20, 0.6);
+    }
+    .board__head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+      padding-bottom: 0.9rem;
+      border-bottom: 1px solid rgba(234, 241, 247, 0.12);
+    }
+    .board__stop {
+      margin: 0;
+      font-size: clamp(1.15rem, 2.2vw, 1.45rem);
+      font-weight: 750;
+      font-variation-settings: 'wdth' 90;
+      letter-spacing: 0;
+    }
+    .board__clock {
+      font-variant-numeric: tabular-nums;
+      color: var(--board-dim);
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+    .board ol { list-style: none; margin: 0; padding: 0; min-height: 22rem; }
+    .board li {
+      display: grid;
+      grid-template-columns: 3.1rem minmax(0, 1fr) auto;
+      gap: 0.9rem;
+      align-items: center;
+      padding: 0.72rem 0;
+      border-bottom: 1px solid rgba(234, 241, 247, 0.07);
+    }
+    .board li:last-child { border-bottom: 0; }
+    .badge {
+      display: inline-grid;
+      place-items: center;
+      height: 1.9rem;
+      border-radius: 7px;
+      color: #fff;
+      font-weight: 750;
+      font-size: 1rem;
+      font-variant-numeric: tabular-nums;
+      font-variation-settings: 'wdth' 100;
+    }
+    .dest {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: clamp(1.05rem, 2vw, 1.25rem);
+      font-weight: 600;
+      font-variation-settings: 'wdth' 72;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+    .dest small {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 500;
+      text-transform: none;
+      letter-spacing: 0;
+      color: var(--board-dim);
+      font-variation-settings: 'wdth' 100;
+    }
+    .dest small .on { color: var(--board-live); }
+    .when {
+      text-align: right;
+      font-weight: 750;
+      font-size: clamp(1.1rem, 2.2vw, 1.35rem);
+      font-variant-numeric: tabular-nums;
+      color: var(--board-amber);
+      font-variation-settings: 'wdth' 90;
+    }
+    .when.is-live { color: var(--board-live); }
+    .board__empty { padding: 3rem 0; color: var(--board-dim); text-align: center; }
+    .board__foot {
+      margin: 0.8rem 0 0;
+      font-size: 0.82rem;
+      color: var(--board-dim);
+    }
+
+    /* ---------------- poza aplikacją ---------------- */
+
+    .outside { background: var(--ground-2); }
+    .exhibits {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: clamp(1.5rem, 3vw, 2.5rem);
+      align-items: start;
+    }
+    .exhibit h3 {
+      margin: 1.4rem 0 0.4rem;
+      font-size: 1.2rem;
+      font-weight: 750;
+      font-variation-settings: 'wdth' 106;
+      letter-spacing: -0.01em;
+    }
+    .exhibit p { margin: 0; color: var(--ink-2); font-size: 0.98rem; text-wrap: pretty; }
+
+    /* Ekran blokady: tło z mapy sieci, żeby karty stały na czymś
+       z tego miasta, a nie na losowej tapecie. */
+    .lock {
+      position: relative;
+      aspect-ratio: 4 / 3.3;
+      border-radius: 26px;
+      padding: 1rem;
+      display: grid;
+      align-content: center;
+      overflow: hidden;
+      background:
+        radial-gradient(120% 90% at 20% 0%, #2E4A66 0%, transparent 60%),
+        radial-gradient(120% 90% at 100% 100%, #3B2B4F 0%, transparent 60%),
+        #16212C;
+      color: #fff;
+    }
+
+    .widget {
+      background: rgba(18, 22, 28, 0.92);
+      border-radius: 20px;
+      padding: 0.85rem 0.95rem 0.7rem;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', var(--wide);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+    }
+    .widget__head { display: flex; justify-content: space-between; align-items: baseline; }
+    .widget__title { font-weight: 700; font-size: 0.95rem; }
+    .widget__walk { font-size: 0.78rem; opacity: 0.9; }
+    .widget__sub { font-size: 0.7rem; color: rgba(255, 255, 255, 0.5); margin-bottom: 0.35rem; text-transform: uppercase; }
+    .widget__row {
+      display: grid;
+      grid-template-columns: 2.1rem minmax(0, 1fr) auto;
+      gap: 0.55rem;
+      align-items: center;
+      padding: 0.18rem 0;
+      font-size: 0.86rem;
+    }
+    .widget__row .badge { height: 1.25rem; font-size: 0.72rem; border-radius: 5px; }
+    .widget__row span:nth-child(2) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; }
+    .widget__row b { color: var(--board-amber); font-variant-numeric: tabular-nums; font-weight: 650; }
+    /* Tak jak w prawdziwym widżecie: odjazd, na który nie zdążysz dojść, cofa się. */
+    .widget__row.is-dim b { color: rgba(255, 255, 255, 0.35); }
+
+    .activity {
+      background: rgba(18, 22, 28, 0.9);
+      border-radius: 22px;
+      padding: 0.95rem 1.05rem;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', var(--wide);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+      display: grid;
+      gap: 0.7rem;
+    }
+    .activity__top { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.7rem; align-items: center; }
+    .activity__top .badge { height: 2rem; min-width: 2.4rem; font-size: 0.95rem; padding: 0 0.4rem; }
+    .activity__dest { min-width: 0; font-size: 0.85rem; line-height: 1.25; }
+    .activity__dest strong { display: block; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; }
+    .activity__dest span { color: rgba(255, 255, 255, 0.55); }
+    .activity__eta { font-size: 1.6rem; font-weight: 700; color: var(--board-amber); font-variant-numeric: tabular-nums; }
+    .track { position: relative; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.14); }
+    .track i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--board-amber); width: 40%; transition: width 1s linear; }
+
+    .notice {
+      background: rgba(236, 239, 243, 0.86);
+      color: #10151B;
+      border-radius: 20px;
+      padding: 0.75rem 0.85rem;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', var(--wide);
+      display: grid;
+      grid-template-columns: 2.1rem minmax(0, 1fr);
+      gap: 0.7rem;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
+    }
+    .notice img { width: 2.1rem; height: 2.1rem; border-radius: 0.5rem; }
+    .notice__meta { display: flex; justify-content: space-between; font-size: 0.72rem; color: #5B6570; }
+    .notice strong { display: block; font-size: 0.88rem; line-height: 1.25; margin-top: 0.1rem; }
+    .notice p {
+      margin: 0.15rem 0 0;
+      font-size: 0.84rem;
+      line-height: 1.3;
+      color: #1D242C;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    /* ---------------- aplikacja ---------------- */
+
+    .app {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+      gap: clamp(2rem, 6vw, 5rem);
+      align-items: center;
+    }
+    .phones {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: clamp(0.6rem, 2vw, 1.2rem);
+      align-items: end;
+    }
+    .phones figure { margin: 0; }
+    .phones figure:nth-child(2) { transform: translateY(-2.5rem); }
+    .phones img {
       display: block;
       width: 100%;
       height: auto;
       aspect-ratio: 1290 / 2796;
       object-fit: cover;
+      border-radius: clamp(14px, 2.4vw, 26px);
+      border: 5px solid var(--ink);
+      background: var(--ink);
     }
-    .phone__live {
-      position: absolute;
-      top: 14px;
-      left: 14px;
-      z-index: 3;
-      display: inline-flex;
-      align-items: center;
-      gap: 0.35rem;
-      padding: 0.3rem 0.6rem;
-      border-radius: 999px;
-      background: rgba(0, 0, 0, 0.55);
-      -webkit-backdrop-filter: blur(6px);
-      backdrop-filter: blur(6px);
-      color: #fff;
-      font-family: var(--font-mono);
-      font-size: 0.66rem;
-      letter-spacing: 0.08em;
-      font-weight: 600;
-    }
-    .phone__live .dot {
-      width: 6px; height: 6px;
+    .phones figcaption { margin-top: 0.6rem; font-size: 0.85rem; color: var(--ink-2); text-align: center; }
+
+    .does { margin: 0; display: grid; gap: 1.4rem; }
+    .does div { display: grid; grid-template-columns: 1.4rem minmax(0, 1fr); gap: 0.2rem 0.9rem; }
+    .does dt { grid-column: 2; font-weight: 700; font-size: 1.05rem; }
+    .does dd { grid-column: 2; margin: 0; color: var(--ink-2); font-size: 0.98rem; }
+    .does i {
+      grid-row: 1 / span 2;
+      width: 10px; height: 10px; margin-top: 0.5rem;
       border-radius: 50%;
-      background: var(--live);
-      box-shadow: 0 0 0 0 var(--live-glow);
-      animation: pulseDot 2s var(--ease) infinite;
+      background: var(--tram);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--tram) 22%, transparent);
     }
-    .phone__caption {
-      margin: 0.7rem 0 0;
-      text-align: center;
-      font-size: 0.85rem;
-      color: var(--muted);
-    }
-    .hero__phone .phone__frame { border-radius: 28px; }
-    .hero__phone .phone__frame::before { background: rgba(0, 0, 0, 0.9); }
 
-    /* ---------- funkcje ---------- */
-    .grid {
+    /* ---------------- dane i pytania ---------------- */
+
+    .facts {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 1.25rem;
+      grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+      gap: clamp(2rem, 6vw, 5rem);
     }
-    .feature {
-      background: var(--surface);
-      border: 1px solid var(--separator);
-      border-radius: var(--radius-card);
-      padding: 1.5rem;
-      transition: transform var(--ease), box-shadow var(--ease);
-    }
-    .feature h3 { margin: 0.9rem 0 0.4rem; font-size: 1.05rem; line-height: 1.3; }
-    .feature p { margin: 0; font-size: 0.93rem; color: var(--muted); }
-
-    .icon-mark {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 44px;
-      height: 44px;
-      border-radius: var(--radius-control);
-      background: var(--rail-tint);
-      color: var(--rail);
-      flex: none;
-    }
-    .icon-mark svg { width: 22px; height: 22px; }
-
-    /* ---------- pobierz ---------- */
-    .download {
-      display: grid;
-      grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
-      gap: 1.25rem;
-      align-items: stretch;
-    }
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--separator);
-      border-radius: var(--radius-card);
-      padding: clamp(1.4rem, 3vw, 2rem);
-    }
-    .card h3 { margin: 0 0 0.4rem; font-size: 1.25rem; letter-spacing: -0.015em; }
-    .card p { margin: 0 0 1.25rem; color: var(--muted); font-size: 0.95rem; }
-    .card--ios { display: flex; flex-direction: column; }
-    .card--ios .install { align-self: flex-start; }
-    .specs {
-      margin: 1.25rem 0 0;
-      padding: 0;
-      list-style: none;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.4rem;
-      font-family: var(--font-mono);
-      font-size: 0.74rem;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-    .specs li {
-      padding: 0.3rem 0.7rem;
-      border: 1px solid var(--separator);
-      border-radius: 999px;
-      background: var(--surface-2);
-    }
-    .qr {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-      gap: 0.9rem;
-    }
-    .qr img {
-      width: 148px;
-      height: 148px;
-      display: block;
-      border-radius: 12px;
-      background: #fff;
-      padding: 8px;
-      border: 1px solid var(--separator);
-    }
-    .qr p { margin: 0; font-size: 0.88rem; }
-    .alt-platforms {
-      margin: 1.25rem 0 0;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.75rem;
-      align-items: center;
-    }
-    .alt-platforms .note { font-size: 0.85rem; color: var(--muted); margin: 0; }
-
-    /* ---------- dane ---------- */
-    .sources {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 1.25rem;
-      margin: 0;
-      padding: 0;
-      list-style: none;
-    }
-    .source {
-      background: var(--surface);
-      border: 1px solid var(--separator);
-      border-radius: var(--radius-card);
-      padding: 1.4rem;
-    }
-    .source__head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 0.9rem;
-    }
-    .source__status {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-      font-family: var(--font-mono);
-      font-size: 0.72rem;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-    .source__status .dot {
-      width: 6px; height: 6px;
-      border-radius: 50%;
-      background: var(--live);
-      box-shadow: 0 0 0 0 var(--live-glow);
-      animation: pulseDot 2.4s var(--ease) infinite;
-    }
-    .source h3 { margin: 0 0 0.4rem; font-size: 1rem; }
-    .source p { margin: 0; font-size: 0.9rem; color: var(--muted); }
-    .source code {
-      font-family: var(--font-mono);
-      font-size: 0.85em;
-      background: var(--fill);
-      padding: 0.1em 0.4em;
-      border-radius: 4px;
-    }
-
-    /* ---------- faq ---------- */
-    .faq { max-width: 760px; }
-    .faq details {
-      background: var(--surface);
-      border: 1px solid var(--separator);
-      border-radius: var(--radius-card);
-      padding: 0 1.35rem;
-      margin-bottom: 0.75rem;
-    }
+    .facts aside p { color: var(--ink-2); margin: 0 0 1rem; }
+    .faq details { border-top: 1px solid var(--rule); }
+    .faq details:last-child { border-bottom: 1px solid var(--rule); }
     .faq summary {
       list-style: none;
       cursor: pointer;
-      padding: 1.1rem 2rem 1.1rem 0;
-      font-weight: 600;
-      font-size: 1rem;
+      padding: 1.15rem 2.2rem 1.15rem 0;
+      font-weight: 650;
+      font-size: 1.08rem;
       position: relative;
     }
     .faq summary::-webkit-details-marker { display: none; }
     .faq summary::after {
       content: "";
       position: absolute;
-      right: 0.2rem;
+      right: 0.3rem;
       top: 50%;
-      width: 9px;
-      height: 9px;
-      border-right: 2px solid var(--muted);
-      border-bottom: 2px solid var(--muted);
-      transform: translateY(-70%) rotate(45deg);
+      width: 12px;
+      height: 2px;
+      background: var(--ink-2);
+      box-shadow: none;
+    }
+    .faq summary::before {
+      content: "";
+      position: absolute;
+      right: calc(0.3rem + 5px);
+      top: calc(50% - 5px);
+      width: 2px;
+      height: 12px;
+      background: var(--ink-2);
       transition: transform 0.2s var(--ease);
     }
-    .faq details[open] summary::after { transform: translateY(-30%) rotate(-135deg); }
-    .faq p { margin: 0 0 1.2rem; color: var(--muted); font-size: 0.95rem; }
+    .faq details[open] summary::before { transform: scaleY(0); }
+    .faq details p { margin: 0 0 1.3rem; color: var(--ink-2); max-width: 60ch; }
 
-    /* ---------- pasek końcowy ---------- */
+    /* ---------------- zamknięcie ---------------- */
+
     .closer {
-      background:
-        radial-gradient(700px 320px at 80% 0%, rgba(11, 95, 191, 0.4), transparent 60%),
-        linear-gradient(180deg, var(--ink), var(--ink-2));
-      color: #fff;
-      text-align: center;
-      border-top: 0;
+      background: var(--ink);
+      color: var(--ground);
+      padding-block: clamp(4rem, 10vw, 7rem);
     }
-    .closer h2 { margin: 0 0 0.6rem; font-size: clamp(1.6rem, 3.4vw, 2.2rem); letter-spacing: -0.025em; }
-    .closer p { margin: 0 auto 1.9rem; max-width: 46ch; color: #B9C4D2; }
-    .closer .cta { display: flex; flex-wrap: wrap; gap: 0.9rem; justify-content: center; }
-    .closer .btn-ghost { color: #fff; border-color: rgba(255, 255, 255, 0.25); }
+    .closer h2 { color: var(--ground); max-width: 16ch; }
+    .closer p { color: color-mix(in srgb, var(--ground) 70%, transparent); max-width: 34rem; margin: 0 0 2rem; font-size: 1.1rem; }
+    .closer .store { background: var(--ground); color: var(--ink); }
+    .closer .ghost { color: var(--ground); border-color: color-mix(in srgb, var(--ground) 30%, transparent); background: transparent; }
+    .closer__grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2rem; align-items: end; }
+    .qr { text-align: center; font-size: 0.85rem; color: color-mix(in srgb, var(--ground) 70%, transparent); }
+    .qr img { display: block; width: 132px; height: 132px; background: #fff; border-radius: 14px; padding: 8px; margin: 0 auto 0.6rem; }
 
-    /* ---------- stopka ---------- */
-    footer {
-      padding: 3rem 0 4rem;
-      border-top: 1px solid var(--separator);
-      color: var(--muted);
-      font-size: 0.9rem;
-    }
-    footer .container {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 1rem;
-    }
-    footer .links { display: flex; flex-wrap: wrap; gap: 1.25rem; }
-    footer a { color: var(--muted); font-weight: 500; }
-    footer a:hover { color: var(--text); }
-    footer .disclaimer { width: 100%; margin: 1.25rem 0 0; font-size: 0.82rem; }
+    footer { padding-block: 2.5rem 3.5rem; font-size: 0.9rem; color: var(--ink-2); }
+    footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem 2rem; }
+    footer nav { display: flex; flex-wrap: wrap; gap: 0.5rem 1.4rem; }
+    footer a { text-decoration: none; }
+    footer a:hover { color: var(--ink); text-decoration: underline; }
+    footer .fine { width: 100%; margin: 0.5rem 0 0; font-size: 0.82rem; }
 
-    /* ---------- hover tylko dla urządzeń ze wskaźnikiem ---------- */
     @media (hover: hover) {
-      .btn-primary:hover { background: var(--rail-dark); transform: translateY(-1px); }
-      .btn-ghost:hover { background: var(--fill); }
-      .hero .btn-ghost:hover, .closer .btn-ghost:hover { background: rgba(255, 255, 255, 0.08); }
-      .install:hover { background: #17171A; transform: translateY(-1px); }
-      .phone:hover { transform: translateY(-4px); }
-      .feature:hover {
-        transform: translateY(-4px);
-        box-shadow: var(--shadow-float);
-      }
+      .store:hover { transform: translateY(-1px); }
+      .ghost:hover { border-color: var(--ink-2); }
+      .places button:hover:not([aria-pressed="true"]) { border-color: var(--ink-2); }
     }
 
-    /* ---------- ruch zredukowany ---------- */
+    @media (max-width: 960px) {
+      .stopboard, .app, .facts { grid-template-columns: 1fr; }
+      .exhibits { grid-template-columns: 1fr; max-width: 30rem; }
+      .app .phones { order: -1; }
+    }
+
+    @media (max-width: 700px) {
+      body { font-size: 16px; }
+      .nav__links a:not(.nav__cta) { display: none; }
+      .hero { min-height: max(600px, 100svh); }
+      .hero__map::after {
+        background: linear-gradient(0deg, var(--ground) 0%, color-mix(in srgb, var(--ground) 88%, transparent) 42%, transparent 70%);
+      }
+      .legend__time { margin-left: 0; width: 100%; }
+      .closer__grid { grid-template-columns: 1fr; }
+      .qr { display: none; }
+      .board li { grid-template-columns: 2.7rem minmax(0, 1fr) auto; gap: 0.7rem; }
+    }
+
     @media (prefers-reduced-motion: reduce) {
       html { scroll-behavior: auto; }
-      *, *::before, *::after {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-      }
-      .hero__bg .vehicle { display: none; }
-    }
-
-    /* ---------- układy węższe ---------- */
-    @media (max-width: 900px) {
-      .hero__grid { grid-template-columns: 1fr; text-align: center; }
-      .hero .tagline { margin-left: auto; margin-right: auto; }
-      .hero .cta { justify-content: center; }
-      .hero__logo { margin-left: auto; margin-right: auto; }
-      .hero .hero__phone { order: -1; width: min(260px, 66vw); transform: none; }
-      .download { grid-template-columns: 1fr; }
-      .card--ios .install { align-self: center; }
-      .card--ios { text-align: center; }
-      .card--ios .specs { justify-content: center; }
-      .card--ios .alt-platforms { justify-content: center; }
-    }
-
-    /* Kod QR ma sens tylko na dużym ekranie — na telefonie użytkownik
-       już ma telefon w ręku i kartę można schować. */
-    @media (max-width: 700px) {
-      .qr { display: none; }
-    }
-
-    @media (max-width: 480px) {
-      .nav__links { gap: 0.75rem; }
-      .nav__links a:not(.btn) { display: none; }
-      .livebar { grid-template-columns: 1fr; }
-      .phone, .phone--feature { width: min(260px, 78vw); }
+      *, *::before, *::after { animation: none !important; transition: none !important; }
     }
   </style>
 </head>
 <body>
-  <a class="skip-link" href="#main-content">Przejdź do treści głównej</a>
-
-  <nav class="nav" aria-label="Nawigacja">
-    <div class="container nav__inner">
-      <a class="nav__logo" href="#top">
-        <picture class="nav__mark">
-          <source srcset="images/icon-dark.jpeg" media="(prefers-color-scheme: dark)" />
-          <img src="images/icon-light.jpeg" alt="" width="28" height="28" />
-        </picture>wroclive
-      </a>
-      <span class="nav__status" aria-hidden="true"></span>
-      <div class="nav__links">
-        <a href="#funkcje">Funkcje</a>
-        <a href="#dane">Dane</a>
-        <a href="#faq">FAQ</a>
-        <a href="support.html">Pomoc</a>
-        <a class="btn btn-primary" href="https://apps.apple.com/pl/app/wroclive-tramwaje-i-busy/id6799716104" target="_blank" rel="noopener">Pobierz na iPhone'a</a>
-      </div>
-    </div>
-  </nav>
+  <a class="skip" href="#main">Przejdź do treści</a>
 
   <header class="hero" id="top">
-    <div class="hero__bg" aria-hidden="true">
-      <svg viewBox="0 0 1200 480" preserveAspectRatio="xMidYMax slice" focusable="false">
-        <path class="track" d="M -40 400 L 200 400 L 320 280 L 560 280 L 680 160 L 900 160 L 1020 280 L 1220 280" />
-        <circle class="station" cx="200" cy="400" r="5" />
-        <circle class="station" cx="320" cy="280" r="5" />
-        <circle class="station station--active" cx="560" cy="280" r="5" />
-        <circle class="station" cx="680" cy="160" r="5" />
-        <circle class="station station--active is-offset" cx="900" cy="160" r="5" />
-        <circle class="station" cx="1020" cy="280" r="5" />
-        <g class="vehicle">
-          <circle class="vehicle__glow" r="11" />
-          <circle class="vehicle__core" r="5" />
-          <animateMotion dur="13s" repeatCount="indefinite" rotate="auto"
-            path="M -40 400 L 200 400 L 320 280 L 560 280 L 680 160 L 900 160 L 1020 280 L 1220 280" />
-        </g>
-      </svg>
+    <div class="hero__map" aria-hidden="true">
+      <canvas id="map"></canvas>
+      <div class="tip" id="tip"></div>
     </div>
-    <div class="container">
-      <div class="hero__grid">
-        <div>
-          <img class="hero__logo" src="images/icon-dark.jpeg" alt="" width="64" height="64" />
-          <p class="kicker">Wrocław · tramwaje · autobusy</p>
-          <h1>wroclive<span class="h1-sub">Twój tramwaj na mapie, zanim dojdziesz na przystanek.</span></h1>
-          <p class="tagline">Zobacz, gdzie naprawdę jest Twój kurs, dokąd jedzie i ile minut zostało do Twojego przystanku. Bez kont, bez reklam.</p>
-          <div class="cta">
-            <a class="install" href="https://apps.apple.com/pl/app/wroclive-tramwaje-i-busy/id6799716104" target="_blank" rel="noopener">
-              <svg viewBox="0 0 22.773 22.773" aria-hidden="true" focusable="false"><path d="M15.769 0h.162c.13 1.606-.483 2.806-1.228 3.675-.731.863-1.732 1.7-3.351 1.573-.108-1.583.506-2.694 1.25-3.561C13.292.879 14.557.16 15.769 0zm4.901 16.716v.014c-.455 1.377-1.104 2.558-1.896 3.653-.723.994-1.609 2.331-3.191 2.331-1.367 0-2.275-.879-3.676-.903-1.482-.024-2.297.735-3.652.926h-.462c-.995-.144-1.798-.932-2.383-1.642-1.725-2.098-3.058-4.808-3.306-8.276v-1.019c.105-2.482 1.311-4.5 2.914-5.478.846-.52 2.009-.963 3.304-.765.555.086 1.122.276 1.619.464.471.181 1.06.502 1.618.485.378-.011.754-.208 1.135-.347 1.116-.403 2.21-.865 3.652-.648 1.733.262 2.963 1.032 3.723 2.22-1.466.933-2.625 2.339-2.427 4.74.176 2.181 1.443 3.457 3.028 4.245z"/></svg>
-              <span class="install__label">
-                <small>Pobierz za darmo</small>
-                <strong>App Store</strong>
-              </span>
-            </a>
-            <a class="btn btn-ghost" href="/map.html">Otwórz mapę w przeglądarce</a>
-          </div>
-          <p class="meta">iOS 16.4 lub nowszy · 48 MB · bez opłat i bez zakupów w aplikacji</p>
-        </div>
 
-        <figure class="phone hero__phone">
-          <div class="phone__frame">
-            <picture>
-              <source srcset="images/IMG_9061.webp" type="image/webp" />
-              <img src="images/IMG_9061.PNG" alt="Mapa wroclive z pozycjami tramwajów i autobusów oraz narysowaną trasą linii" width="1290" height="2796" fetchpriority="high" />
-            </picture>
-            <span class="phone__live"><span class="dot"></span>NA ŻYWO</span>
-          </div>
-        </figure>
+    <nav class="wrap nav" aria-label="Nawigacja">
+      <a class="nav__brand" href="#top">
+        <picture>
+          <source srcset="images/icon-dark.jpeg" media="(prefers-color-scheme: dark)" />
+          <img src="images/icon-light.jpeg" alt="" width="30" height="30" />
+        </picture>wroclive
+      </a>
+      <div class="nav__links">
+        <a href="#przystanek">Odjazdy</a>
+        <a href="#aplikacja">Aplikacja</a>
+        <a href="#pytania">Pytania</a>
+        <a class="nav__cta" href="/map.html">Mapa</a>
       </div>
+    </nav>
 
-      <ul class="livebar" id="livebar" hidden>
-        <li><span class="num is-live" id="stat-vehicles">—</span><span class="lbl">pojazdów w ruchu</span></li>
-        <li><span class="num" id="stat-lines">—</span><span class="lbl">linii</span></li>
-        <li><span class="num" id="stat-stops">—</span><span class="lbl">przystanków</span></li>
-      </ul>
+    <div class="wrap hero__copy"><div>
+      <h1>Tramwaje i&nbsp;autobusy Wrocławia, tam gdzie są teraz</h1>
+      <p class="hero__lead">Mapa za tym tekstem to sieć MPK i prawdziwe pozycje pojazdów, odświeżane co 10&nbsp;sekund. W aplikacji zobaczysz, który jedzie na Twój przystanek i za ile minut tam będzie.</p>
+      <div class="actions">
+        <a class="store" href="https://apps.apple.com/pl/app/wroclive-tramwaje-i-busy/id6799716104" target="_blank" rel="noopener">
+          <svg viewBox="0 0 22.773 22.773" aria-hidden="true" focusable="false"><path d="M15.769 0h.162c.13 1.606-.483 2.806-1.228 3.675-.731.863-1.732 1.7-3.351 1.573-.108-1.583.506-2.694 1.25-3.561C13.292.879 14.557.16 15.769 0zm4.901 16.716v.014c-.455 1.377-1.104 2.558-1.896 3.653-.723.994-1.609 2.331-3.191 2.331-1.367 0-2.275-.879-3.676-.903-1.482-.024-2.297.735-3.652.926h-.462c-.995-.144-1.798-.932-2.383-1.642-1.725-2.098-3.058-4.808-3.306-8.276v-1.019c.105-2.482 1.311-4.5 2.914-5.478.846-.52 2.009-.963 3.304-.765.555.086 1.122.276 1.619.464.471.181 1.06.502 1.618.485.378-.011.754-.208 1.135-.347 1.116-.403 2.21-.865 3.652-.648 1.733.262 2.963 1.032 3.723 2.22-1.466.933-2.625 2.339-2.427 4.74.176 2.181 1.443 3.457 3.028 4.245z"/></svg>
+          <span><small>Pobierz za darmo z</small><strong>App Store</strong></span>
+        </a>
+        <a class="ghost" href="/map.html">Otwórz mapę w przeglądarce</a>
+      </div>
+    </div></div>
+
+    <div class="wrap legend" id="legend">
+      <span class="legend__count" id="fleet-count">Wczytuję pojazdy…</span>
+      <span class="legend__key"><i style="background:#0B5FBF"></i>tramwaje</span>
+      <span class="legend__key"><i style="background:#B91C1C"></i>autobusy</span>
+      <span class="legend__time" id="fleet-time"></span>
     </div>
   </header>
 
-  <main id="main-content">
-    <section id="funkcje" aria-labelledby="funkcje-heading">
-      <div class="container">
-        <p class="eyebrow">Funkcje</p>
-        <h2 id="funkcje-heading">Do czego służy</h2>
-        <p class="lead">Zbudowany wokół jednego pytania, które pojawia się na każdym przystanku: czy mój tramwaj już jedzie?</p>
-        <div class="grid">
-          <div class="feature">
-            <span class="icon-mark" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-            </span>
-            <h3>Śledzenie na żywo</h3>
-            <p>Pozycje pojazdów aktualizowane co 10 sekund. Tramwaje i autobusy poruszają się na mapie — bez ręcznego odświeżania.</p>
+  <main id="main">
+    <section id="przystanek" aria-labelledby="przystanek-h">
+      <div class="wrap stopboard">
+        <div>
+          <div class="section-head">
+            <h2 id="przystanek-h">Wiesz, kiedy wyjść z&nbsp;domu</h2>
+            <p>Tak wygląda tablica przystanku w&nbsp;aplikacji, tylko że tu jest w&nbsp;przeglądarce i&nbsp;też działa: to prawdziwe odjazdy, liczone od tej chwili. Zielone minuty liczone są z&nbsp;pozycji pojazdu, który już jedzie; bursztynowe pochodzą z&nbsp;rozkładu.</p>
           </div>
-          <div class="feature">
-            <span class="icon-mark" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="16" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="4" cy="7" r="1.3" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="4" cy="17" r="1.3" fill="currentColor" stroke="none"/></svg>
-            </span>
-            <h3>Wszystkie linie</h3>
-            <p>Tramwaje, autobusy dzienne i nocne, podmiejskie, pospieszne i specjalne.</p>
+          <ul class="places" id="places" aria-label="Wybierz przystanek">
+            <li><button type="button" data-lat="51.11158" data-lon="17.06177" data-name="Plac Grunwaldzki" aria-pressed="true">Plac Grunwaldzki</button></li>
+            <li><button type="button" data-lat="51.10823" data-lon="17.03961" data-name="Galeria Dominikańska" aria-pressed="false">Galeria Dominikańska</button></li>
+            <li><button type="button" data-lat="51.09994" data-lon="17.0354" data-name="Dworzec Główny" aria-pressed="false">Dworzec Główny</button></li>
+            <li><button type="button" data-lat="51.10389" data-lon="17.03123" data-name="Renoma" aria-pressed="false">Renoma</button></li>
+            <li><button type="button" class="near" data-near aria-pressed="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 4.5 20.3l.7.7L12 18l6.8 3 .7-.7z"/></svg>
+              Najbliżej mnie
+            </button></li>
+          </ul>
+          <p class="places__note" id="places-note" role="status"></p>
+        </div>
+
+        <div class="board" aria-live="polite" aria-busy="true" id="board">
+          <div class="board__head">
+            <h3 class="board__stop" id="board-stop">Plac Grunwaldzki</h3>
+            <span class="board__clock" id="board-clock"></span>
           </div>
-          <div class="feature">
-            <span class="icon-mark" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="18" r="2"/><path d="M6 18h5l3-8h5"/><circle cx="20" cy="8" r="2"/></svg>
-            </span>
-            <h3>Trasy i kierunek</h3>
-            <p>Pełna trasa na mapie, z każdym przystankiem po drodze i z kierunkiem, w którym pojazd faktycznie jedzie — a nie tym bliższym na mapie.</p>
+          <ol id="board-rows"></ol>
+          <p class="board__foot" id="board-foot">Wszystkie perony w promieniu 200&nbsp;m.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="outside" aria-labelledby="poza-h">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="poza-h">Bez otwierania aplikacji</h2>
+          <p>Najważniejsze rzeczy dochodzą do Ciebie same: na ekran początkowy, na ekran blokady i&nbsp;jako powiadomienie. Poniżej wypełnione tymi samymi danymi co tablica wyżej.</p>
+        </div>
+        <div class="exhibits">
+          <div class="exhibit">
+            <div class="lock">
+              <div class="widget" id="widget">
+                <div class="widget__head"><span class="widget__title">Dom</span><span class="widget__walk">🚶 4 min</span></div>
+                <div class="widget__sub" id="widget-stop">Plac Grunwaldzki</div>
+                <div id="widget-rows"></div>
+              </div>
+            </div>
+            <h3>Widżet ulubionego przystanku</h3>
+            <p>Odjazdy z&nbsp;przystanku, który oznaczysz gwiazdką, na ekranie początkowym albo blokady. Odjazdy, na które nie zdążysz dojść, są przygaszone.</p>
           </div>
-          <div class="feature">
-            <span class="icon-mark" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-            </span>
-            <h3>Komunikaty o utrudnieniach</h3>
-            <p>Objazdy, awarie i zmiany w rozkładach — z filtrem, który przepuszcza komunikat dopiero wtedy, gdy naprawdę coś się dzieje.</p>
+          <div class="exhibit">
+            <div class="lock">
+              <div class="activity" id="activity">
+                <div class="activity__top">
+                  <span class="badge" id="act-line" style="background:#0B5FBF">—</span>
+                  <span class="activity__dest"><strong id="act-dest">—</strong><span id="act-stop">do Twojego przystanku</span></span>
+                  <span class="activity__eta" id="act-eta">—</span>
+                </div>
+                <div class="track"><i id="act-bar"></i></div>
+              </div>
+            </div>
+            <h3>Odliczanie na ekranie blokady</h3>
+            <p>Wybierz pojazd i&nbsp;przystanek, a&nbsp;Live Activity odlicza minuty do przyjazdu lub przystanki do wysiadki. Powiadomienie przychodzi chwilę wcześniej, a&nbsp;czas wybierasz Ty.</p>
           </div>
-          <div class="feature">
-            <span class="icon-mark" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>
-            </span>
-            <h3>Najbliższe odjazdy</h3>
-            <p>Dotknij przystanku na trasie i zobacz najbliższe odjazdy oraz faktyczne opóźnienie pojazdu, który do niego jedzie.</p>
-          </div>
-          <div class="feature">
-            <span class="icon-mark" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><line x1="10.5" y1="18" x2="13.5" y2="18"/></svg>
-            </span>
-            <h3>Dla ulicy</h3>
-            <p>Telefon na pierwszym miejscu: mapa wypełnia ekran, a wszystko inne trzyma wysuwany panel. Bez logowania i bez reklam.</p>
+          <div class="exhibit">
+            <div class="lock">
+              <div class="notice" id="notice">
+                <img src="images/icon-dark.jpeg" alt="" width="34" height="34" />
+                <div>
+                  <div class="notice__meta"><span>wroclive</span><span id="notice-when">teraz</span></div>
+                  <strong id="notice-title">Utrudnienia w komunikacji</strong>
+                  <p id="notice-body">Wczytuję ostatni komunikat…</p>
+                </div>
+              </div>
+            </div>
+            <h3>Utrudnienia na Twoich liniach</h3>
+            <p>Wykolejenie, objazd, zablokowane torowisko: powiadomienie przychodzi, nawet gdy aplikacja jest zamknięta. Tylko o&nbsp;liniach, które wybierzesz. Wyżej ostatni prawdziwy komunikat.</p>
           </div>
         </div>
       </div>
     </section>
 
-    <section id="aplikacja" aria-labelledby="aplikacja-heading">
-      <div class="container">
-        <p class="eyebrow">Podgląd</p>
-        <h2 id="aplikacja-heading">Jak to wygląda</h2>
-        <p class="lead">Najważniejsze informacje są pod ręką: pozycja pojazdu, kierunek, trasa, najbliższe odjazdy i aktualne utrudnienia.</p>
-        <div class="screenshots">
-          <figure class="phone">
-            <div class="phone__frame">
-              <picture>
-                <source srcset="images/IMG_9056.webp" type="image/webp" />
-                <img src="images/IMG_9056.PNG" alt="Trasa linii i najbliższe odjazdy z przystanku" width="1290" height="2796" loading="lazy" decoding="async" />
-              </picture>
-            </div>
-            <figcaption class="phone__caption">Trasa i odjazdy</figcaption>
+    <section id="aplikacja" aria-labelledby="aplikacja-h">
+      <div class="wrap app">
+        <div>
+          <div class="section-head">
+            <h2 id="aplikacja-h">Mapa, która mówi, dokąd kto jedzie</h2>
+          </div>
+          <dl class="does">
+            <div><i></i><dt>Kierunek, a&nbsp;nie tylko kropka</dt><dd>Oba kierunki linii jadą tą samą ulicą. wroclive bierze pod uwagę kurs pojazdu, więc pokazuje właściwą pętlę i&nbsp;przystanki, które jeszcze przed nim są.</dd></div>
+            <div><i></i><dt>Opóźnienie, jeśli da się je ustalić</dt><dd>Gdy kursu nie da się dopasować do rozkładu, aplikacja nie zgaduje. Pokazuje pozostały czas jazdy zamiast wymyślonych minut spóźnienia.</dd></div>
+            <div><i></i><dt>Zapisane przejazdy</dt><dd>Dom → praca jako jeden przycisk: tylko te kursy, które tam dojeżdżają, z&nbsp;godziną dojazdu i&nbsp;przypomnieniem, kiedy wyjść.</dd></div>
+            <div><i></i><dt>Bez konta, bez reklam</dt><dd>Nic nie trzeba zakładać. Twoja lokalizacja zostaje w&nbsp;telefonie.</dd></div>
+          </dl>
+        </div>
+        <div class="phones">
+          <figure>
+            <picture>
+              <source srcset="images/IMG_9056.webp" type="image/webp" />
+              <img src="images/IMG_9056.PNG" alt="Trasa linii i najbliższe odjazdy z przystanku" width="1290" height="2796" loading="lazy" decoding="async" />
+            </picture>
+            <figcaption>Trasa i odjazdy</figcaption>
           </figure>
-          <figure class="phone phone--feature">
-            <div class="phone__frame">
-              <picture>
-                <source srcset="images/IMG_9061.webp" type="image/webp" />
-                <img src="images/IMG_9061.PNG" alt="Mapa z pozycjami pojazdów i narysowaną trasą" width="1290" height="2796" loading="lazy" decoding="async" />
-              </picture>
-              <span class="phone__live"><span class="dot"></span>NA ŻYWO</span>
-            </div>
-            <figcaption class="phone__caption">Mapa na żywo</figcaption>
+          <figure>
+            <picture>
+              <source srcset="images/IMG_9061.webp" type="image/webp" />
+              <img src="images/IMG_9061.PNG" alt="Mapa z pozycjami pojazdów i narysowaną trasą" width="1290" height="2796" loading="lazy" decoding="async" />
+            </picture>
+            <figcaption>Mapa na żywo</figcaption>
           </figure>
-          <figure class="phone">
-            <div class="phone__frame">
-              <picture>
-                <source srcset="images/IMG_9058.webp" type="image/webp" />
-                <img src="images/IMG_9058.PNG" alt="Szczegóły komunikatu o utrudnieniu" width="1290" height="2796" loading="lazy" decoding="async" />
-              </picture>
-            </div>
-            <figcaption class="phone__caption">Utrudnienia</figcaption>
+          <figure>
+            <picture>
+              <source srcset="images/IMG_9058.webp" type="image/webp" />
+              <img src="images/IMG_9058.PNG" alt="Szczegóły komunikatu o utrudnieniu" width="1290" height="2796" loading="lazy" decoding="async" />
+            </picture>
+            <figcaption>Utrudnienia</figcaption>
           </figure>
         </div>
       </div>
     </section>
 
-    <section id="pobierz" aria-labelledby="pobierz-heading">
-      <div class="container">
-        <p class="eyebrow">Pobierz</p>
-        <h2 id="pobierz-heading">Weź wroclive ze sobą</h2>
-        <p class="lead">Na iPhone'a jest aplikacja. Na Androidzie i na komputerze działa ta sama mapa w przeglądarce — nic nie trzeba instalować.</p>
-        <div class="download">
-          <div class="card card--ios">
-            <h3>Aplikacja na iPhone'a</h3>
-            <p>Mapa na cały ekran, wyszukiwarka linii, odjazdy z przystanku i komunikaty — w jednej aplikacji.</p>
-            <a class="install" href="https://apps.apple.com/pl/app/wroclive-tramwaje-i-busy/id6799716104" target="_blank" rel="noopener">
-              <svg viewBox="0 0 22.773 22.773" aria-hidden="true" focusable="false"><path d="M15.769 0h.162c.13 1.606-.483 2.806-1.228 3.675-.731.863-1.732 1.7-3.351 1.573-.108-1.583.506-2.694 1.25-3.561C13.292.879 14.557.16 15.769 0zm4.901 16.716v.014c-.455 1.377-1.104 2.558-1.896 3.653-.723.994-1.609 2.331-3.191 2.331-1.367 0-2.275-.879-3.676-.903-1.482-.024-2.297.735-3.652.926h-.462c-.995-.144-1.798-.932-2.383-1.642-1.725-2.098-3.058-4.808-3.306-8.276v-1.019c.105-2.482 1.311-4.5 2.914-5.478.846-.52 2.009-.963 3.304-.765.555.086 1.122.276 1.619.464.471.181 1.06.502 1.618.485.378-.011.754-.208 1.135-.347 1.116-.403 2.21-.865 3.652-.648 1.733.262 2.963 1.032 3.723 2.22-1.466.933-2.625 2.339-2.427 4.74.176 2.181 1.443 3.457 3.028 4.245z"/></svg>
-              <span class="install__label">
-                <small>Pobierz za darmo</small>
-                <strong>App Store</strong>
-              </span>
-            </a>
-            <ul class="specs">
-              <li>Za darmo</li>
-              <li>iOS 16.4+</li>
-              <li>48 MB</li>
-              <li>Bez reklam</li>
-              <li>Bez kont</li>
-            </ul>
-            <div class="alt-platforms">
-              <a class="btn btn-ghost" href="/map.html">Mapa w przeglądarce</a>
-              <p class="note">Android, komputer, wszystko z przeglądarką.</p>
-            </div>
-          </div>
-          <div class="card qr">
-            <img src="images/qr-appstore.svg" alt="Kod QR prowadzący do aplikacji wroclive w App Store" width="148" height="148" loading="lazy" />
-            <p>Zeskanuj aparatem telefonu,<br>żeby otworzyć App Store.</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section id="dane" aria-labelledby="dane-heading">
-      <div class="container">
-        <p class="eyebrow">Dane</p>
-        <h2 id="dane-heading">Skąd pochodzą dane</h2>
-        <p class="lead">Tylko publiczne otwarte dane, czytane w czasie działania — bez zaszytych na stałe adresów, które psują się, gdy miasto coś zmienia.</p>
-        <ul class="sources">
-          <li class="source">
-            <div class="source__head">
-              <span class="icon-mark" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="16" rx="2"/><line x1="3.5" y1="9.5" x2="20.5" y2="9.5"/><line x1="8" y1="2.5" x2="8" y2="6.5"/><line x1="16" y1="2.5" x2="16" y2="6.5"/></svg>
-              </span>
-              <span class="source__status"><span class="dot"></span>aktywne</span>
-            </div>
-            <h3>Rozkłady i trasy</h3>
-            <p>Miejskie archiwum GTFS, wykrywane w czasie działania i wybierane według daty obowiązywania, żeby przyszły rozkład nigdy nie pokazywał się jako aktualny.</p>
-          </li>
-          <li class="source">
-            <div class="source__head">
-              <span class="icon-mark" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1" fill="currentColor" stroke="none"/></svg>
-              </span>
-              <span class="source__status"><span class="dot"></span>aktywne</span>
-            </div>
-            <h3>Pozycje na żywo</h3>
-            <p>Publiczny punkt końcowy MPK <code>bus_position</code>, odpytywany co 10 sekund i dopasowywany do właściwej trasy i kierunku.</p>
-          </li>
-          <li class="source">
-            <div class="source__head">
-              <span class="icon-mark" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9v6h3l6 4V5L6 9H3Z"/><line x1="17" y1="8" x2="17" y2="16"/><line x1="20" y1="6" x2="20" y2="18"/></svg>
-              </span>
-              <span class="source__status"><span class="dot"></span>aktywne</span>
-            </div>
-            <h3>Komunikaty</h3>
-            <p>Komunikaty ze stron miasta i @AlertMPK, filtrowane tak, żeby nagłówek stał się alertem tylko wtedy, gdy faktycznie coś się dzieje.</p>
-          </li>
-        </ul>
-      </div>
-    </section>
-
-    <section id="faq" aria-labelledby="faq-heading">
-      <div class="container">
-        <p class="eyebrow">FAQ</p>
-        <h2 id="faq-heading">Częste pytania</h2>
-        <p class="lead">Krótko o tym, co widać na mapie i skąd się to bierze.</p>
+    <section id="pytania" aria-labelledby="pytania-h">
+      <div class="wrap facts">
+        <aside>
+          <h2 id="pytania-h">Skąd to wszystko</h2>
+          <p>Tylko otwarte dane miasta: rozkład GTFS, pozycje pojazdów MPK i&nbsp;komunikaty @AlertMPK. wroclive to niezależny projekt, nie aplikacja MPK.</p>
+          <p>Na Androidzie i&nbsp;komputerze działa <a href="/map.html">ta sama mapa w&nbsp;przeglądarce</a>, bez instalacji.</p>
+        </aside>
         <div class="faq">
           <details>
             <summary>Skąd wroclive wie, gdzie jest pojazd?</summary>
@@ -1115,108 +945,583 @@
             <p>Feed MPK nie podaje numeru kursu, więc wroclive rzutuje pozycję pojazdu na trasę i sprawdza, który rozkładowy kurs byłby dokładnie w tym miejscu o tej godzinie. Jeśli żaden nie pasuje wystarczająco blisko, aplikacja nie zgaduje — pokazuje pozostały czas jazdy zamiast wymyślonego opóźnienia.</p>
           </details>
           <details>
-            <summary>Czy wroclive to oficjalna aplikacja MPK?</summary>
-            <p>Nie. To niezależny projekt, który czyta dane publikowane publicznie przez miasto. Kod jest na <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map" target="_blank" rel="noopener noreferrer">GitHubie</a>.</p>
+            <summary>Na czym działają widżet i Live Activity?</summary>
+            <p>Na iPhonie z iOS 16.4 lub nowszym; widżet z wyborem przystanku wymaga iOS 17. Bez otwierania aplikacji widżet pokazuje odjazdy z ostatniego odświeżenia, a gdy te się skończą, prosi o otwarcie aplikacji zamiast pokazywać nieaktualne godziny.</p>
           </details>
         </div>
       </div>
     </section>
 
-    <section class="closer" aria-labelledby="closer-heading">
-      <div class="container">
-        <h2 id="closer-heading">Następny tramwaj już gdzieś jedzie</h2>
-        <p>Zobacz gdzie — na telefonie albo w przeglądarce.</p>
-        <div class="cta">
-          <a class="install" href="https://apps.apple.com/pl/app/wroclive-tramwaje-i-busy/id6799716104" target="_blank" rel="noopener">
-            <svg viewBox="0 0 22.773 22.773" aria-hidden="true" focusable="false"><path d="M15.769 0h.162c.13 1.606-.483 2.806-1.228 3.675-.731.863-1.732 1.7-3.351 1.573-.108-1.583.506-2.694 1.25-3.561C13.292.879 14.557.16 15.769 0zm4.901 16.716v.014c-.455 1.377-1.104 2.558-1.896 3.653-.723.994-1.609 2.331-3.191 2.331-1.367 0-2.275-.879-3.676-.903-1.482-.024-2.297.735-3.652.926h-.462c-.995-.144-1.798-.932-2.383-1.642-1.725-2.098-3.058-4.808-3.306-8.276v-1.019c.105-2.482 1.311-4.5 2.914-5.478.846-.52 2.009-.963 3.304-.765.555.086 1.122.276 1.619.464.471.181 1.06.502 1.618.485.378-.011.754-.208 1.135-.347 1.116-.403 2.21-.865 3.652-.648 1.733.262 2.963 1.032 3.723 2.22-1.466.933-2.625 2.339-2.427 4.74.176 2.181 1.443 3.457 3.028 4.245z"/></svg>
-            <span class="install__label">
-              <small>Pobierz za darmo</small>
-              <strong>App Store</strong>
-            </span>
-          </a>
-          <a class="btn btn-ghost" href="/map.html">Otwórz mapę</a>
+    <section class="closer" aria-labelledby="closer-h">
+      <div class="wrap closer__grid">
+        <div>
+          <h2 id="closer-h">Następny tramwaj już gdzieś jedzie</h2>
+          <p>Zobacz gdzie: w aplikacji na iPhone'a albo na mapie w przeglądarce.</p>
+          <div class="actions">
+            <a class="store" href="https://apps.apple.com/pl/app/wroclive-tramwaje-i-busy/id6799716104" target="_blank" rel="noopener">
+              <svg viewBox="0 0 22.773 22.773" aria-hidden="true" focusable="false"><path d="M15.769 0h.162c.13 1.606-.483 2.806-1.228 3.675-.731.863-1.732 1.7-3.351 1.573-.108-1.583.506-2.694 1.25-3.561C13.292.879 14.557.16 15.769 0zm4.901 16.716v.014c-.455 1.377-1.104 2.558-1.896 3.653-.723.994-1.609 2.331-3.191 2.331-1.367 0-2.275-.879-3.676-.903-1.482-.024-2.297.735-3.652.926h-.462c-.995-.144-1.798-.932-2.383-1.642-1.725-2.098-3.058-4.808-3.306-8.276v-1.019c.105-2.482 1.311-4.5 2.914-5.478.846-.52 2.009-.963 3.304-.765.555.086 1.122.276 1.619.464.471.181 1.06.502 1.618.485.378-.011.754-.208 1.135-.347 1.116-.403 2.21-.865 3.652-.648 1.733.262 2.963 1.032 3.723 2.22-1.466.933-2.625 2.339-2.427 4.74.176 2.181 1.443 3.457 3.028 4.245z"/></svg>
+              <span><small>Pobierz za darmo z</small><strong>App Store</strong></span>
+            </a>
+            <a class="ghost" href="/map.html">Otwórz mapę</a>
+          </div>
+        </div>
+        <div class="qr">
+          <img src="images/qr-appstore.svg" alt="Kod QR prowadzący do aplikacji wroclive w App Store" width="132" height="132" loading="lazy" />
+          Zeskanuj telefonem
         </div>
       </div>
     </section>
   </main>
 
   <footer>
-    <div class="container">
-      <div>
-        <p style="margin:0">Autor: <a href="https://github.com/real-kijmoshi" target="_blank" rel="noopener noreferrer">real-kijmoshi</a></p>
-        <p style="margin:0.35rem 0 0"><a href="https://kijmoshi.xyz" target="_blank" rel="noopener noreferrer">kijmoshi.xyz</a> · <a href="mailto:wroclive@kijmoshi.xyz">wroclive@kijmoshi.xyz</a></p>
-      </div>
-      <div class="links">
-        <a href="https://apps.apple.com/pl/app/wroclive-tramwaje-i-busy/id6799716104" target="_blank" rel="noopener noreferrer">App Store</a>
+    <div class="wrap">
+      <span>wroclive · <a href="mailto:wroclive@kijmoshi.xyz">wroclive@kijmoshi.xyz</a></span>
+      <nav aria-label="Stopka">
         <a href="/map.html">Mapa</a>
+        <a href="support.html">Pomoc</a>
+        <a href="privacy.html">Prywatność</a>
+        <a href="terms.html">Warunki</a>
         <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map" target="_blank" rel="noopener noreferrer">GitHub</a>
-        <a href="privacy.html">Polityka prywatności</a>
-        <a href="terms.html">Warunki korzystania</a>
-        <a href="support.html">Pomoc i kontakt</a>
-        <a href="https://github.com/real-kijmoshi/wroclaw-mpk-map/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Licencja</a>
-      </div>
-      <p class="disclaimer">Projekt niezależny od MPK Wrocław. wroclive czyta otwarte dane publikowane przez miasto. Apple i App Store są znakami towarowymi Apple Inc. © 2026 wroclive.</p>
+      </nav>
+      <p class="fine">Projekt niezależny od MPK Wrocław, oparty na otwartych danych miasta. Apple i App Store są znakami towarowymi Apple Inc. © 2026 wroclive.</p>
     </div>
   </footer>
 
   <script>
-    /*
-     * Licznik na żywo. Ta strona jest statyczna i stoi poza originem API,
-     * więc liczby są dopisywane po załadowaniu — a gdy API milczy albo
-     * dopiero wstaje (503 w trakcie ingestu, tak jak w aplikacji), pasek
-     * po prostu się nie pokazuje. Nigdy nie wyświetlamy tu liczby, której
-     * nie potwierdziło /health.
-     */
-    (function () {
-      /* Ten sam wybór originu i ta sama furtka `?api=` co w map.html. */
-      var API_BASE = (
-        new URLSearchParams(location.search).get('api') ||
-        ((location.hostname === 'localhost' || location.protocol === 'file:')
-          ? 'http://localhost:3000'
-          : 'https://api.wroclive.kijmoshi.xyz')
-      ).replace(/\/+$/, '');
+  (function () {
+    'use strict';
 
-      var bar = document.getElementById('livebar');
-      if (!bar || !window.fetch) return;
+    /* Ten sam wybór originu i ta sama furtka `?api=` co w map.html. */
+    var API = (
+      new URLSearchParams(location.search).get('api') ||
+      ((location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.protocol === 'file:')
+        ? 'http://localhost:3000'
+        : 'https://api.wroclive.kijmoshi.xyz')
+    ).replace(/\/+$/, '');
 
-      var fields = {
-        vehicles: document.getElementById('stat-vehicles'),
-        lines: document.getElementById('stat-lines'),
-        stops: document.getElementById('stat-stops')
-      };
-      var format = new Intl.NumberFormat('pl-PL').format;
+    /* LINE_COLOR z wroclive/src/lib/lines.ts — każdy kolor ma 4.5:1 z białym. */
+    var LINE_COLOR = {
+      tram: '#0B5FBF', tramSpecial: '#0E7490', tramTemporary: '#7C3AED',
+      bus: '#B91C1C', busNight: '#3730A3', busSuburban: '#15803D',
+      busTemporary: '#A16207', busZone: '#9D174D', busExpress: '#C2410C',
+      busSpecial: '#334155', unknown: '#475569'
+    };
+    var colorFor = function (type) { return LINE_COLOR[type] || LINE_COLOR.unknown; };
+    var isTram = function (type) { return String(type || '').indexOf('tram') === 0; };
 
-      function apply(health) {
-        var counts = (health && health.gtfs && health.gtfs.counts) || {};
-        var tracked = health && health.vehicles && health.vehicles.tracked;
-        if (typeof tracked !== 'number' || !counts.routes || !counts.stops) return false;
-        fields.vehicles.textContent = format(tracked);
-        fields.lines.textContent = format(counts.routes);
-        fields.stops.textContent = format(counts.stops);
-        bar.hidden = false;
-        return true;
-      }
-
-      /* Pierwsze zapytanie idzie zawsze — karta wczytana w tle też ma
-         mieć liczby, kiedy użytkownik na nią wróci. Dopiero odświeżanie
-         w tle jest pomijane, żeby nie pompować requestów w nikogo. */
-      function poll(force) {
-        if (document.hidden && !force) return;
-        var abort = new AbortController();
-        var timer = setTimeout(function () { abort.abort(); }, 6000);
-        fetch(API_BASE + '/health', { signal: abort.signal, cache: 'no-store' })
-          .then(function (r) { return r.ok ? r.json() : null; })
-          .then(apply)
-          .catch(function () { /* API milczy — pasek zostaje ukryty */ })
-          .then(function () { clearTimeout(timer); });
-      }
-
-      poll(true);
-      setInterval(poll, 30000);
-      document.addEventListener('visibilitychange', function () {
-        if (!document.hidden) poll(true);
+    var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var pad = function (n) { return String(n).padStart(2, '0'); };
+    var clock = function (d, seconds) {
+      return pad(d.getHours()) + ':' + pad(d.getMinutes()) + (seconds ? ':' + pad(d.getSeconds()) : '');
+    };
+    var plural = function (n, one, few, many) {
+      if (n === 1) return one;
+      var t = n % 100, u = n % 10;
+      return (u >= 2 && u <= 4 && !(t >= 12 && t <= 14)) ? few : many;
+    };
+    var esc = function (s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
       });
-    })();
+    };
+
+    function getJson(path, timeoutMs) {
+      var abort = new AbortController();
+      var timer = setTimeout(function () { abort.abort(); }, timeoutMs || 8000);
+      return fetch(path.indexOf('http') === 0 || path.indexOf('data/') === 0 ? path : API + path, {
+        signal: abort.signal, cache: 'no-store'
+      }).then(function (r) {
+        clearTimeout(timer);
+        /* 503 w trakcie ingestu to nie dane (inwariant 7). */
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json().then(function (body) { return { body: body, headers: r.headers }; });
+      }, function (e) { clearTimeout(timer); throw e; });
+    }
+
+    /* ============================================================
+     * Mapa w nagłówku: sieć z GTFS + flota z /locations.
+     * Rysujemy bez kafelków — OSM to przysługa, nie usługa (inwariant 21),
+     * a ozdoba strony nie powinna jej zużywać.
+     * ============================================================ */
+    var canvas = document.getElementById('map');
+    var ctx = canvas.getContext('2d');
+    var hero = document.querySelector('.hero');
+    var tip = document.getElementById('tip');
+    var countEl = document.getElementById('fleet-count');
+    var timeEl = document.getElementById('fleet-time');
+    var legend = document.getElementById('legend');
+
+    var network = null;          /* {tram: [Float64Array lat/lon...], bus: [...]} */
+    var netLayer = document.createElement('canvas');
+    var view = null;             /* projekcja */
+    var vehicles = new Map();    /* id → {line,type,headsign,from:[lat,lon],to:[lat,lon],t0} */
+    var revealStart = 0;
+    var REVEAL_MS = 1500;
+    var GLIDE_MS = 1000;
+    var KX = Math.cos(51.11 * Math.PI / 180);
+    var hover = null;
+    var heroVisible = true;
+
+    function decode(path, scale) {
+      var out = new Float64Array(path.length);
+      var lat = 0, lon = 0;
+      for (var i = 0; i < path.length; i += 2) {
+        lat += path[i]; lon += path[i + 1];
+        out[i] = lat / scale; out[i + 1] = lon / scale;
+      }
+      return out;
+    }
+
+    function fit() {
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      var w = hero.clientWidth, h = hero.clientHeight;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      netLayer.width = canvas.width;
+      netLayer.height = canvas.height;
+      var narrow = w < 700;
+      /* Kadr na sieć tramwajową — to centrum miasta. Na szerokim ekranie
+         przesunięty w prawo, żeby lewa strona została dla tekstu. */
+      var b = network.bounds;
+      var spanX = (b.maxLon - b.minLon) * KX, spanY = b.maxLat - b.minLat;
+      var availW = narrow ? w * 1.05 : w * 0.66;
+      var availH = narrow ? h * 0.62 : h * 0.92;
+      var s = Math.min(availW / spanX, availH / spanY);
+      var cx = narrow ? w * 0.5 : w * 0.64;
+      var cy = narrow ? h * 0.36 : h * 0.47;
+      view = {
+        dpr: dpr, w: w, h: h, s: s,
+        x0: cx - ((b.minLon + b.maxLon) / 2 - b.minLon) * KX * s,
+        y0: cy + ((b.minLat + b.maxLat) / 2 - b.minLat) * s,
+        minLon: b.minLon, minLat: b.minLat
+      };
+      drawNetwork();
+      frame();
+    }
+
+    function px(lat, lon) {
+      return [view.x0 + (lon - view.minLon) * KX * view.s, view.y0 - (lat - view.minLat) * view.s];
+    }
+
+    function cssVar(name) {
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    function drawNetwork() {
+      var c = netLayer.getContext('2d');
+      c.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+      c.clearRect(0, 0, view.w, view.h);
+      c.lineJoin = 'round';
+      c.lineCap = 'round';
+      [['bus', cssVar('--net-bus'), 1], ['tram', cssVar('--net-tram'), 1.6]].forEach(function (layer) {
+        c.strokeStyle = layer[1];
+        c.lineWidth = layer[2];
+        network[layer[0]].forEach(function (pts) {
+          c.beginPath();
+          for (var i = 0; i < pts.length; i += 2) {
+            var p = px(pts[i], pts[i + 1]);
+            if (i === 0) c.moveTo(p[0], p[1]); else c.lineTo(p[0], p[1]);
+          }
+          c.stroke();
+        });
+      });
+    }
+
+    var ease = function (t) { return 1 - Math.pow(1 - t, 3); };
+    var raf = 0;
+    function schedule() { if (!raf) raf = requestAnimationFrame(function () { raf = 0; frame(); }); }
+
+    function frame() {
+      if (!view) return;
+      var now = performance.now();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      /* Jedno zaplanowane wejście: sieć rozjaśnia się od Rynku na zewnątrz. */
+      var reveal = reduceMotion ? 1 : Math.min(1, (now - revealStart) / REVEAL_MS);
+      var centre = px(51.1100, 17.0320);
+      if (reveal < 1) {
+        ctx.save();
+        ctx.beginPath();
+        var r = ease(reveal) * Math.hypot(view.w, view.h);
+        ctx.arc(centre[0] * view.dpr, centre[1] * view.dpr, r * view.dpr, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(netLayer, 0, 0);
+        ctx.restore();
+      } else {
+        ctx.drawImage(netLayer, 0, 0);
+      }
+
+      ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+      var moving = false;
+      var ring = cssVar('--ground');
+      var list = [];
+      vehicles.forEach(function (v) {
+        var t = reduceMotion ? 1 : Math.min(1, (now - v.t0) / GLIDE_MS);
+        if (t < 1) moving = true;
+        var k = ease(t);
+        var lat = v.from[0] + (v.to[0] - v.from[0]) * k;
+        var lon = v.from[1] + (v.to[1] - v.from[1]) * k;
+        var p = px(lat, lon);
+        if (p[0] < -10 || p[1] < -10 || p[0] > view.w + 10 || p[1] > view.h + 10) return;
+        v.x = p[0]; v.y = p[1];
+        list.push(v);
+      });
+      /* Autobusy pod tramwajami: tramwaje to szkielet tej mapy. */
+      list.sort(function (a, b) { return (isTram(a.type) ? 1 : 0) - (isTram(b.type) ? 1 : 0); });
+      var vehicleAlpha = reduceMotion ? 1 : Math.max(0, Math.min(1, (now - revealStart - REVEAL_MS * 0.6) / 500));
+      if (vehicleAlpha < 1) moving = true;
+      ctx.globalAlpha = vehicleAlpha;
+      list.forEach(function (v) {
+        var tram = isTram(v.type);
+        var radius = tram ? 4 : 3;
+        ctx.beginPath();
+        ctx.arc(v.x, v.y, radius + 1.6, 0, Math.PI * 2);
+        ctx.fillStyle = ring;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(v.x, v.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = colorFor(v.type);
+        ctx.fill();
+      });
+      if (hover && vehicles.get(hover.id) === hover) {
+        ctx.beginPath();
+        ctx.arc(hover.x, hover.y, 9, 0, Math.PI * 2);
+        ctx.strokeStyle = colorFor(hover.type);
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        tip.style.left = hover.x + 'px';
+        tip.style.top = hover.y + 'px';
+      }
+      ctx.globalAlpha = 1;
+
+      if (reveal < 1 || moving) schedule();
+    }
+
+    function updateFleet(locations, receivedAt) {
+      var seen = new Set();
+      var t0 = performance.now();
+      locations.forEach(function (l) {
+        if (!Number.isFinite(l.lat) || !Number.isFinite(l.lon) || !l.id) return;
+        seen.add(l.id);
+        var headsign = (l.trip && (l.trip.headsign || l.trip.towards)) || l.destination || '';
+        var existing = vehicles.get(l.id);
+        if (existing) {
+          /* Ruszamy od miejsca, w którym kropka jest teraz, nie od starej pozycji. */
+          var k = ease(Math.min(1, (t0 - existing.t0) / GLIDE_MS));
+          existing.from = [
+            existing.from[0] + (existing.to[0] - existing.from[0]) * k,
+            existing.from[1] + (existing.to[1] - existing.from[1]) * k
+          ];
+          existing.to = [l.lat, l.lon];
+          existing.t0 = t0;
+          existing.line = l.line; existing.type = l.type; existing.headsign = headsign;
+        } else {
+          vehicles.set(l.id, { id: l.id, line: l.line, type: l.type, headsign: headsign, from: [l.lat, l.lon], to: [l.lat, l.lon], t0: t0 });
+        }
+      });
+      vehicles.forEach(function (_, id) { if (!seen.has(id)) vehicles.delete(id); });
+      var n = vehicles.size;
+      countEl.textContent = n + ' ' + plural(n, 'pojazd', 'pojazdy', 'pojazdów') + ' w ruchu';
+      timeEl.innerHTML = '<span class="pulse"></span>stan z ' + clock(receivedAt, true);
+      legend.classList.remove('is-polling');
+      void legend.offsetWidth;
+      legend.classList.add('is-polling');
+      schedule();
+    }
+
+    var fleetTimer = 0;
+    function pollFleet() {
+      clearTimeout(fleetTimer);
+      if (document.hidden || !heroVisible) return;
+      getJson('/locations?format=map').then(function (res) {
+        var list = (res.body && Array.isArray(res.body.locations)) ? res.body.locations : null;
+        if (!list) throw new Error('payload');
+        updateFleet(list, new Date());
+        var next = Number(res.headers.get('X-Next-Update-In'));
+        fleetTimer = setTimeout(pollFleet, Number.isFinite(next) && next > 0 ? Math.min(Math.max(next * 1000 + 400, 3000), 15000) : 10000);
+      }).catch(function () {
+        if (vehicles.size === 0) countEl.textContent = 'Pozycje pojazdów chwilowo niedostępne';
+        fleetTimer = setTimeout(pollFleet, 15000);
+      });
+    }
+
+    function pick(evt) {
+      if (!view) return null;
+      var rect = canvas.getBoundingClientRect();
+      var x = evt.clientX - rect.left, y = evt.clientY - rect.top;
+      var best = null, bestD = evt.pointerType === 'touch' ? 22 : 12;
+      vehicles.forEach(function (v) {
+        if (v.x == null) return;
+        var d = Math.hypot(v.x - x, v.y - y);
+        if (d < bestD) { bestD = d; best = v; }
+      });
+      return best;
+    }
+    function showTip(v) {
+      hover = v;
+      if (!v) { tip.classList.remove('is-on'); schedule(); return; }
+      tip.innerHTML = '<b style="background:' + colorFor(v.type) + '">' + esc(v.line) + '</b><span>' + esc(v.headsign || (isTram(v.type) ? 'tramwaj' : 'autobus')) + '</span>';
+      tip.classList.add('is-on');
+      schedule();
+    }
+    /* Mapa leży pod tekstem, więc słucha na całym nagłówku, a nie na canvasie. */
+    hero.addEventListener('pointermove', function (e) {
+      if (e.pointerType !== 'mouse') return;
+      if (e.target.closest('a, button, h1, p')) { if (hover) showTip(null); return; }
+      var v = pick(e);
+      if (v !== hover) showTip(v);
+    });
+    hero.addEventListener('pointerleave', function () { showTip(null); });
+    hero.addEventListener('click', function (e) {
+      if (e.target.closest('a, button')) return;
+      showTip(pick(e));
+    });
+
+    fetch('data/network.json').then(function (r) { return r.json(); }).then(function (raw) {
+      var bounds = { minLat: 90, maxLat: -90, minLon: 180, maxLon: -180 };
+      network = { tram: [], bus: [] };
+      ['tram', 'bus'].forEach(function (kind) {
+        (raw[kind] || []).forEach(function (v) {
+          var pts = decode(v.path, raw.scale || 1e5);
+          network[kind].push(pts);
+          if (kind !== 'tram') return;
+          for (var i = 0; i < pts.length; i += 2) {
+            if (pts[i] < bounds.minLat) bounds.minLat = pts[i];
+            if (pts[i] > bounds.maxLat) bounds.maxLat = pts[i];
+            if (pts[i + 1] < bounds.minLon) bounds.minLon = pts[i + 1];
+            if (pts[i + 1] > bounds.maxLon) bounds.maxLon = pts[i + 1];
+          }
+        });
+      });
+      network.bounds = bounds;
+      revealStart = performance.now();
+      fit();
+    }).catch(function () { /* bez sieci zostaje czyste tło i sama legenda */ });
+
+    var resizeTimer = 0;
+    window.addEventListener('resize', function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () { if (network) fit(); }, 120);
+    });
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+      if (network) { drawNetwork(); schedule(); }
+    });
+    new IntersectionObserver(function (entries) {
+      heroVisible = entries[0].isIntersecting;
+      if (heroVisible) pollFleet();
+    }).observe(hero);
+
+    /* ============================================================
+     * Tablica odjazdów: wszystkie perony w pobliżu wybranego miejsca.
+     * Id peronów zmieniają się z rozkładem, więc szukamy ich po
+     * współrzędnych za każdym razem zamiast trzymać je tutaj.
+     * ============================================================ */
+    var rowsEl = document.getElementById('board-rows');
+    var boardEl = document.getElementById('board');
+    var stopEl = document.getElementById('board-stop');
+    var clockEl = document.getElementById('board-clock');
+    var footEl = document.getElementById('board-foot');
+    var noteEl = document.getElementById('places-note');
+    var placeButtons = Array.prototype.slice.call(document.querySelectorAll('#places button'));
+    var board = { name: 'Plac Grunwaldzki', lat: 51.11158, lon: 17.06177, rows: [], fetchedAt: 0, token: 0 };
+
+    function secondsOf(d) {
+      return Number.isFinite(d.predictedInSeconds) ? d.predictedInSeconds : d.inSeconds;
+    }
+
+    function loadBoard() {
+      var token = ++board.token;
+      boardEl.setAttribute('aria-busy', 'true');
+      return getJson('/stops/near?lat=' + board.lat + '&lon=' + board.lon + '&radius=200&limit=10').then(function (res) {
+        var stops = (res.body && res.body.stops || []).slice(0, 8);
+        if (!stops.length) throw new Error('nostops');
+        return Promise.all(stops.map(function (s) {
+          return getJson('/stop/' + encodeURIComponent(s.id) + '/departures?limit=8&within=120')
+            .then(function (r) { return (r.body && r.body.departures) || []; })
+            .catch(function () { return []; });
+        })).then(function (lists) { return { stops: stops, lists: lists }; });
+      }).then(function (data) {
+        if (token !== board.token) return;
+        var seen = new Set();
+        var all = [];
+        data.lists.forEach(function (list) {
+          list.forEach(function (d) {
+            var s = secondsOf(d);
+            if (!Number.isFinite(s) || s < -30) return;
+            var key = d.tripId || (d.line + '|' + d.departure);
+            if (seen.has(key)) return;
+            seen.add(key);
+            all.push(d);
+          });
+        });
+        all.sort(function (a, b) { return secondsOf(a) - secondsOf(b); });
+        board.rows = all.slice(0, 8);
+        board.fetchedAt = Date.now();
+        board.platforms = data.stops.length;
+        if (board.near) stopEl.textContent = data.stops[0].name;
+        renderBoard();
+        renderOutside();
+      }).catch(function () {
+        if (token !== board.token) return;
+        board.rows = [];
+        board.fetchedAt = 0;
+        rowsEl.innerHTML = '<li class="board__empty">Nie udało się pobrać odjazdów. Spróbuję ponownie za chwilę.</li>';
+      }).then(function () {
+        if (token === board.token) boardEl.setAttribute('aria-busy', 'false');
+      });
+    }
+
+    function whenText(s) {
+      var m = Math.round(s / 60);
+      return m < 1 ? 'teraz' : m + ' min';
+    }
+
+    function renderBoard() {
+      var elapsed = (Date.now() - board.fetchedAt) / 1000;
+      var now = new Date();
+      clockEl.textContent = clock(now);
+      var rows = board.rows.filter(function (d) { return secondsOf(d) - elapsed > -30; });
+      if (!rows.length) {
+        rowsEl.innerHTML = '<li class="board__empty">W ciągu dwóch godzin nic stąd nie odjeżdża.</li>';
+      } else {
+        rowsEl.innerHTML = rows.map(function (d) {
+          var s = secondsOf(d) - elapsed;
+          var at = new Date(Date.now() + s * 1000);
+          var live = Boolean(d.realtime);
+          return '<li>' +
+            '<span class="badge" style="background:' + colorFor(d.type) + '">' + esc(d.line) + '</span>' +
+            '<span class="dest">' + esc(d.headsign || '') +
+              '<small>' + clock(at) + (live ? ' · <span class="on">na żywo</span>' : ' · rozkład') + '</small></span>' +
+            '<span class="when' + (live ? ' is-live' : '') + '">' + whenText(s) + '</span>' +
+          '</li>';
+        }).join('');
+      }
+      footEl.textContent = board.platforms
+        ? 'Wszystkie perony w promieniu 200 m (' + board.platforms + '). Odświeżane co 30 sekund.'
+        : '';
+    }
+
+    placeButtons.forEach(function (button) {
+      button.addEventListener('click', function () {
+        if (button.hasAttribute('data-near')) {
+          if (!navigator.geolocation) { noteEl.textContent = 'Ta przeglądarka nie udostępnia lokalizacji.'; return; }
+          noteEl.textContent = 'Sprawdzam, gdzie jesteś…';
+          navigator.geolocation.getCurrentPosition(function (pos) {
+            var lat = pos.coords.latitude, lon = pos.coords.longitude;
+            if (Math.abs(lat - 51.11) > 0.25 || Math.abs(lon - 17.03) > 0.4) {
+              noteEl.textContent = 'Jesteś poza Wrocławiem — wybierz jedno z miejsc powyżej.';
+              return;
+            }
+            noteEl.textContent = 'Lokalizacja zostaje w przeglądarce; do serwera trafia tylko zapytanie o pobliskie przystanki.';
+            select(button, { name: 'Najbliższy przystanek', lat: lat.toFixed(4), lon: lon.toFixed(4), near: true });
+          }, function () {
+            noteEl.textContent = 'Bez zgody na lokalizację pokażę jedno z miejsc powyżej.';
+          }, { maximumAge: 60000, timeout: 10000 });
+          return;
+        }
+        noteEl.textContent = '';
+        select(button, { name: button.dataset.name, lat: button.dataset.lat, lon: button.dataset.lon, near: false });
+      });
+    });
+
+    function select(button, place) {
+      placeButtons.forEach(function (b) { b.setAttribute('aria-pressed', String(b === button)); });
+      board.name = place.name; board.lat = place.lat; board.lon = place.lon; board.near = place.near;
+      stopEl.textContent = place.name;
+      rowsEl.innerHTML = '';
+      loadBoard();
+    }
+
+    /* ============================================================
+     * Widżet, Live Activity i powiadomienie — z tych samych danych.
+     * ============================================================ */
+    var widgetRows = document.getElementById('widget-rows');
+    var widgetStop = document.getElementById('widget-stop');
+    var act = {
+      line: document.getElementById('act-line'), dest: document.getElementById('act-dest'),
+      stop: document.getElementById('act-stop'), eta: document.getElementById('act-eta'),
+      bar: document.getElementById('act-bar')
+    };
+
+    var WALK_SECONDS = 4 * 60;
+    function renderOutside() {
+      var elapsed = (Date.now() - board.fetchedAt) / 1000;
+      var rows = board.rows.filter(function (d) { return secondsOf(d) - elapsed > -30; });
+      widgetStop.textContent = stopEl.textContent;
+      widgetRows.innerHTML = rows.slice(0, 4).map(function (d) {
+        var reachable = secondsOf(d) - elapsed >= WALK_SECONDS + 30;
+        return '<div class="widget__row' + (reachable ? '' : ' is-dim') + '"><span class="badge" style="background:' + colorFor(d.type) + '">' + esc(d.line) + '</span>' +
+          '<span>' + esc(d.headsign || '') + '</span><b>' + whenText(secondsOf(d) - elapsed) + '</b></div>';
+      }).join('') || '<div class="widget__row"><span></span><span>Brak odjazdów</span><b></b></div>';
+
+      var next = rows.find(function (d) { return secondsOf(d) - elapsed > 60; }) || rows[0];
+      if (next) {
+        var s = Math.max(0, secondsOf(next) - elapsed);
+        act.line.textContent = next.line;
+        act.line.style.background = colorFor(next.type);
+        act.dest.textContent = next.headsign || '';
+        act.stop.textContent = 'na ' + stopEl.textContent;
+        act.eta.textContent = whenText(s);
+        act.bar.style.width = Math.max(6, Math.min(100, 100 - (s / 900) * 100)) + '%';
+      }
+    }
+
+    function tidy(text) {
+      return String(text || '')
+        .replace(/#\w+/g, '')
+        .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function ago(ms) {
+      var m = Math.round((Date.now() - ms) / 60000);
+      if (m < 1) return 'teraz';
+      if (m < 60) return m + ' min temu';
+      var h = Math.round(m / 60);
+      if (h < 24) return h + ' godz. temu';
+      var d = Math.round(h / 24);
+      return d + ' ' + plural(d, 'dzień', 'dni', 'dni') + ' temu';
+    }
+
+    function loadNotice() {
+      getJson('/incidents').then(function (res) {
+        var list = (res.body && Array.isArray(res.body.incidents)) ? res.body.incidents : [];
+        list = list.filter(function (i) { return Number.isFinite(i.firstSeenAt); })
+          .sort(function (a, b) {
+            var active = (b.status === 'active') - (a.status === 'active');
+            return active || b.firstSeenAt - a.firstSeenAt;
+          });
+        var i = list[0];
+        if (!i) throw new Error('none');
+        var affected = Array.isArray(i.affected) ? i.affected : [];
+        var lines = affected.slice(0, 4).join(', ');
+        /* Ta sama treść co prawdziwe powiadomienie (incidentAlert() na serwerze). */
+        var title = tidy(i.shortNotificationTitle) ||
+          (lines ? 'Utrudnienia: ' + (affected.length > 1 ? 'linie ' : 'linia ') + lines : 'Utrudnienia w komunikacji');
+        var body = tidy(i.shortNotificationBody) || tidy(i.title) || tidy(i.summary);
+        document.getElementById('notice-title').textContent = title;
+        document.getElementById('notice-body').textContent = body;
+        document.getElementById('notice-when').textContent = ago(i.firstSeenAt);
+      }).catch(function () {
+        document.getElementById('notice-title').textContent = 'Utrudnienia: linie 9, 17, 19';
+        document.getElementById('notice-body').textContent = 'Przykład: tak wygląda powiadomienie, gdy coś blokuje torowisko.';
+        document.getElementById('notice-when').textContent = 'przykład';
+      });
+    }
+
+    loadBoard();
+    loadNotice();
+    setInterval(function () {
+      if (document.hidden) return;
+      if (Date.now() - board.fetchedAt > 30000) loadBoard();
+      else { renderBoard(); renderOutside(); }
+    }, 5000);
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) { pollFleet(); if (Date.now() - board.fetchedAt > 30000) loadBoard(); }
+    });
+  })();
   </script>
 </body>
 </html>
