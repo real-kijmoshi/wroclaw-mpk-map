@@ -99,7 +99,7 @@
       "model": "deepseek/deepseek-v4-flash"
     },
     "tako": {
-      "baseUrl": "https://tako-server.kijmoshi.xyz/v1",
+      "baseUrl": "",
       "model": ""
     },
     "ollama": {

@@ -86,6 +86,7 @@ const openrouterModel = process.env.OPENROUTER_MODEL || DEFAULTS.aiAlerts.openro
 const cmdcApiKey = process.env.CMD_API_KEY || process.env.CMDC_API_KEY || '';
 const cmdcModel = process.env.CMDC_MODEL || DEFAULTS.aiAlerts.cmdc.model;
 const takoApiKey = process.env.TAKO_API_KEY || '';
+const takoBaseUrl = process.env.TAKO_BASE_URL || DEFAULTS.aiAlerts.tako.baseUrl;
 const takoModel = process.env.TAKO_MODEL || DEFAULTS.aiAlerts.tako.model;
 const ollamaModel = process.env.OLLAMA_MODEL || DEFAULTS.aiAlerts.ollama.model;
 
@@ -109,6 +110,9 @@ const resolveAiAlerts = () => {
       return { enabled: false, provider: 'off', reason: 'CMDC_MODEL is required' };
     }
   } else if (requestedAiProvider === 'tako') {
+    if (!takoBaseUrl) {
+      return { enabled: false, provider: 'off', reason: 'TAKO_BASE_URL is required' };
+    }
     if (!takoApiKey) {
       return { enabled: false, provider: 'off', reason: 'TAKO_API_KEY is required' };
     }
@@ -328,7 +332,7 @@ module.exports = {
     },
     tako: {
       apiKey: takoApiKey,
-      baseUrl: process.env.TAKO_BASE_URL || DEFAULTS.aiAlerts.tako.baseUrl,
+      baseUrl: takoBaseUrl,
       model: takoModel,
     },
     ollama: {

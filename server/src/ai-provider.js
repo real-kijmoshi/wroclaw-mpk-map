@@ -212,6 +212,7 @@ const validateConfig = (config) => {
     return { settings: config.cmdc };
   }
   if (config.provider === 'tako') {
+    if (!config.tako?.baseUrl) return { error: 'TAKO_BASE_URL is required' };
     if (!config.tako?.apiKey) return { error: 'TAKO_API_KEY is required' };
     if (!config.tako?.model) return { error: 'TAKO_MODEL is required' };
     return { settings: config.tako };
