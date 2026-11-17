@@ -211,6 +211,11 @@ const validateConfig = (config) => {
     if (!config.cmdc?.model) return { error: 'CMDC_MODEL is required' };
     return { settings: config.cmdc };
   }
+  if (config.provider === 'tako') {
+    if (!config.tako?.apiKey) return { error: 'TAKO_API_KEY is required' };
+    if (!config.tako?.model) return { error: 'TAKO_MODEL is required' };
+    return { settings: config.tako };
+  }
   if (config.provider === 'ollama') {
     if (!config.ollama?.model) return { error: 'OLLAMA_MODEL is required' };
     return { settings: config.ollama };

@@ -85,6 +85,8 @@ const openrouterApiKey = process.env.OPENROUTER_API_KEY || '';
 const openrouterModel = process.env.OPENROUTER_MODEL || DEFAULTS.aiAlerts.openrouter.model;
 const cmdcApiKey = process.env.CMD_API_KEY || process.env.CMDC_API_KEY || '';
 const cmdcModel = process.env.CMDC_MODEL || DEFAULTS.aiAlerts.cmdc.model;
+const takoApiKey = process.env.TAKO_API_KEY || '';
+const takoModel = process.env.TAKO_MODEL || DEFAULTS.aiAlerts.tako.model;
 const ollamaModel = process.env.OLLAMA_MODEL || DEFAULTS.aiAlerts.ollama.model;
 
 const resolveAiAlerts = () => {
@@ -105,6 +107,13 @@ const resolveAiAlerts = () => {
     }
     if (!cmdcModel) {
       return { enabled: false, provider: 'off', reason: 'CMDC_MODEL is required' };
+    }
+  } else if (requestedAiProvider === 'tako') {
+    if (!takoApiKey) {
+      return { enabled: false, provider: 'off', reason: 'TAKO_API_KEY is required' };
+    }
+    if (!takoModel) {
+      return { enabled: false, provider: 'off', reason: 'TAKO_MODEL is required' };
     }
   } else if (requestedAiProvider === 'ollama') {
     if (!ollamaModel) {
@@ -316,6 +325,11 @@ module.exports = {
       apiKey: cmdcApiKey,
       baseUrl: process.env.CMDC_BASE_URL || DEFAULTS.aiAlerts.cmdc.baseUrl,
       model: cmdcModel,
+    },
+    tako: {
+      apiKey: takoApiKey,
+      baseUrl: process.env.TAKO_BASE_URL || DEFAULTS.aiAlerts.tako.baseUrl,
+      model: takoModel,
     },
     ollama: {
       baseUrl: process.env.OLLAMA_BASE_URL || DEFAULTS.aiAlerts.ollama.baseUrl,

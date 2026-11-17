@@ -15,6 +15,8 @@ const aiEnvNames = [
   'AI_ALERTS_PROVIDER',
   'OPENROUTER_API_KEY',
   'OPENROUTER_MODEL',
+  'TAKO_API_KEY',
+  'TAKO_MODEL',
 ];
 const originalAiEnv = Object.fromEntries(aiEnvNames.map((name) => [name, process.env[name]]));
 
@@ -37,6 +39,11 @@ const baseConfig = (provider) => ({
   cmdc: {
     apiKey: 'test-cmd-key',
     baseUrl: 'https://cmdc.test/v1',
+    model: 'test-model',
+  },
+  tako: {
+    apiKey: 'test-tako-key',
+    baseUrl: 'https://tako.test/v1',
     model: 'test-model',
   },
   ollama: {
@@ -98,6 +105,39 @@ describe('createAiProvider', () => {
     assert.equal(config.provider, 'off');
     assert.equal(provider.enabled, false);
     assert.match(provider.status.reason, /OPENROUTER_API_KEY/);
+  });
+
+  it('selects tako from env and sends its key to its own router', async () => {
+    process.env.AI_ALERTS_ENABLED = 'true';
+    process.env.AI_ALERTS_PROVIDER = 'tako';
+    process.env.TAKO_API_KEY = 'tako-key';
+    process.env.TAKO_MODEL = 'a,b';
+    const config = loadConfig().aiAlerts;
+    assert.equal(config.enabled, true);
+    assert.equal(config.provider, 'tako');
+
+    let request;
+    global.fetch = async (url, init) => {
+      request = { url, init };
+      const body = JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] });
+      return { ok: true, status: 200, headers: new Map([['content-type', 'application/json']]), text: async () => body };
+    };
+    const provider = createAiProvider({ ...config, tako: { ...config.tako, baseUrl: 'https://tako.test/v1/' } });
+    assert.deepEqual(provider.models, ['a', 'b']);
+    assert.deepEqual(await provider.completeJson({ system: 's', user: 'u' }), { ok: true });
+    assert.equal(request.url, 'https://tako.test/v1/chat/completions');
+    assert.equal(request.init.headers.Authorization, 'Bearer tako-key');
+    assert.equal(JSON.parse(request.init.body).model, 'a');
+  });
+
+  it('disables tako when its key is missing', () => {
+    process.env.AI_ALERTS_ENABLED = 'true';
+    process.env.AI_ALERTS_PROVIDER = 'tako';
+    process.env.TAKO_API_KEY = '';
+    process.env.TAKO_MODEL = 'test-model';
+    const config = loadConfig().aiAlerts;
+    assert.equal(config.enabled, false);
+    assert.match(createAiProvider(config).status.reason, /TAKO_API_KEY/);
   });
 
   it('parses an OpenAI-compatible response', async () => {
