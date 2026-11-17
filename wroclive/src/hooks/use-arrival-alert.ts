@@ -17,23 +17,30 @@ const MISSING_GRACE_MS = 90_000;
  * getting off there. Asked, not guessed — a phone position a few metres from a
  * tram cannot tell "on board" from "standing at the kerb beside it".
  */
-function askKind(stopName: string): Promise<AlertKind | null> {
+type StopChoice = AlertKind | 'open';
+
+function askKind(stopName: string): Promise<StopChoice | null> {
   if (Platform.OS === 'ios') {
     return new Promise((resolve) =>
       ActionSheetIOS.showActionSheetWithOptions(
         {
           title: stopName,
-          options: ['Jadę tym pojazdem — wysiadam tutaj', 'Czekam tutaj na ten pojazd', 'Anuluj'],
-          cancelButtonIndex: 2,
+          options: [
+            'Jadę tym pojazdem — wysiadam tutaj',
+            'Czekam tutaj na ten pojazd',
+            'Pokaż odjazdy z tego przystanku',
+            'Anuluj',
+          ],
+          cancelButtonIndex: 3,
         },
-        (index) => resolve(index === 0 ? 'trip' : index === 1 ? 'arrival' : null),
+        (index) => resolve(index === 0 ? 'trip' : index === 1 ? 'arrival' : index === 2 ? 'open' : null),
       ),
     );
   }
   if (Platform.OS === 'android') {
     return new Promise((resolve) => {
       let settled = false;
-      const choose = (kind: AlertKind | null) => {
+      const choose = (kind: StopChoice | null) => {
         if (settled) return;
         settled = true;
         resolve(kind);
@@ -44,6 +51,7 @@ function askKind(stopName: string): Promise<AlertKind | null> {
         [
           { text: 'Jadę — wysiadam tutaj', onPress: () => choose('trip') },
           { text: 'Czekam na ten pojazd', onPress: () => choose('arrival') },
+          { text: 'Pokaż odjazdy', onPress: () => choose('open') },
           { text: 'Anuluj', style: 'cancel', onPress: () => choose(null) },
         ],
         { cancelable: true, onDismiss: () => choose(null) },
@@ -110,8 +118,12 @@ export function useArrivalAlertTracking(detail: PollState<VehicleDetail>, openVe
     if (alert?.vehicleId === openVehicleId) missing(detail.error);
   }, [alert?.vehicleId, detail.error, missing, openVehicleId]);
 
+  /**
+   * A tapped stop in the vehicle's list: clears the alert armed there, or asks
+   * what the rider wants — an alert, or that stop's own board (`onOpen`).
+   */
   const toggle = useCallback(
-    async (stop: { id: string; name: string }) => {
+    async <S extends { id: string; name: string }>(stop: S, onOpen?: (stop: S) => void) => {
       tapped();
       const current = arrivalAlertStore.getSnapshot();
       const data = detail.data;
@@ -122,6 +134,10 @@ export function useArrivalAlertTracking(detail: PollState<VehicleDetail>, openVe
       if (!data) return;
       const kind = await askKind(stop.name);
       if (!kind) return;
+      if (kind === 'open') {
+        onOpen?.(stop);
+        return;
+      }
       const result = await arrivalAlertStore.arm(
         {
           kind,

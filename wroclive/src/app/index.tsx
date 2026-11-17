@@ -24,7 +24,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { useArrivalAlertTracking } from '@/hooks/use-arrival-alert';
 import { useFavouriteBoards } from '@/hooks/use-favourite-boards';
 import { useQuickActions } from '@/hooks/use-quick-actions';
-import { ApiError, getAlerts, getDeparturesForStops, getIncidents, getLocations, getShape, getStopsNear, getVehicle, vehiclePollDelay, type Departure, type FleetVehicle, type LineType, type Stop } from '@/lib/api';
+import { ApiError, getAlerts, getDeparturesForStops, getIncidents, getLocations, getShape, getStopsNear, getVehicle, vehiclePollDelay, type Departure, type FleetVehicle, type LineType, type Stop, type TripStop } from '@/lib/api';
 import { REFRESH_MS } from '@/lib/config';
 import { directionsLabel, runningVehicle } from '@/lib/departures';
 import { plural } from '@/lib/format';
@@ -1003,7 +1003,18 @@ export default function MapScreen() {
             ageSeconds={detail.receivedAt === null ? 0 : (now - detail.receivedAt) / 1_000}
             loading={detail.loading}
             error={detail.error}
-            onStopPress={arrivalAlertsAvailable ? arrival.toggle : undefined}
+            onStopPress={(stop) => {
+              // "Pokaż odjazdy": the map goes to that stop and the sheet swaps
+              // to its board, the same path as a stop opened from search.
+              const open = (target: TripStop) => {
+                mapRef.current?.centerOn(target.lat, target.lon, 16);
+                setFocusedLine(null);
+                setPinnedVehicle(null);
+                handleStop({ id: target.id, name: target.name, lat: target.lat, lon: target.lon });
+              };
+              if (arrivalAlertsAvailable) void arrival.toggle(stop, open);
+              else open(stop);
+            }}
             alert={arrival.alert && arrival.alert.vehicleId === detail.data?.vehicle.id ? arrival.alert : null}
             onDisarm={() => void arrival.disarm()}
             onOpenRoute={() => {

@@ -5,9 +5,9 @@ import { LineBadge } from './line-badge';
 import { ThemedText } from './themed-text';
 import { Motion, Radius, Space } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
-import type { Vehicle, VehicleDetail, VehicleTripDetail } from '@/lib/api';
+import type { TripStop, Vehicle, VehicleDetail, VehicleTripDetail } from '@/lib/api';
 import type { ArrivalAlert } from '@/lib/arrival-alerts';
-import { AT_STOP_ETA, etaParts, formatDelay, formatScheduled, plural } from '@/lib/format';
+import { AT_STOP_ETA, countdownColor, countdownTone, etaParts, formatDelay, formatScheduled, plural } from '@/lib/format';
 import { colorFor } from '@/lib/lines';
 import { usePreferences } from '@/lib/preferences';
 import { tripProgress } from '@/lib/trip-progress';
@@ -33,8 +33,10 @@ export function VehicleSummary({
   const vehicle = detail?.vehicle ?? null;
   const trip = detail?.trip ?? null;
   const delay = formatDelay(trip?.delaySeconds);
-  const delayColor =
-    delay.tone === 'late' ? theme.danger : delay.tone === 'early' ? theme.success : theme.textSecondary;
+  // The same bands as the countdowns below: green on time, amber 2–10 min
+  // off either way, red beyond.
+  const tone = countdownTone(trip?.delaySeconds);
+  const delayColor = tone ? countdownColor(theme, tone) : theme.textSecondary;
   const stopsLeft =
     trip?.stopsAhead === null || trip?.stopsAhead === undefined
       ? null
@@ -102,11 +104,11 @@ export type VehicleDetailsProps = {
   /** Recentres the already-highlighted route without leaving the live view. */
   onOpenRoute: () => void;
   /**
-   * Arms (asking: waiting here, or getting off here) or clears the alert for a
-   * stop. Absent where local notifications are not available, and then the
-   * rows are not buttons.
+   * A tapped stop: asks whether to arm an alert there (waiting here, or
+   * getting off here) or to open that stop's board, or clears the alert armed
+   * there. Where local notifications are not available it opens the board.
    */
-  onStopPress?: (stop: { id: string; name: string }) => void;
+  onStopPress?: (stop: TripStop) => void;
   /** What is armed on *this* vehicle, if anything. */
   alert?: ArrivalAlert | null;
   onDisarm?: () => void;
@@ -160,11 +162,11 @@ export function VehicleDetails({
   const etaFor = (stop: { id: string; etaSeconds: number | null }) =>
     stop.id === standingAt ? AT_STOP_ETA : etaParts(agedEta(stop.etaSeconds, ageSeconds));
   const nextEta = nextStop ? etaFor(nextStop) : null;
-  // Every countdown here comes from the vehicle's live position, so the stop
-  // board's rule applies: a run matched to the timetable and within
-  // "Punktualnie" counts down green. An unmatched run (no delay) stays amber —
-  // no timetable is no evidence it is on time.
-  const countdownColor = formatDelay(trip?.delaySeconds).tone === 'onTime' ? theme.success : theme.amber;
+  // Every countdown here comes from the vehicle's live position, so it is
+  // coloured by the run's delay with the stop board's bands: green on time,
+  // amber 2–10 min off, red beyond. An unmatched run has no delay and stays
+  // amber — no timetable is no evidence it is on time.
+  const tint = countdownColor(theme, countdownTone(trip?.delaySeconds));
   const alertStopId = alert?.stopId ?? null;
   const riding = alert?.kind === 'trip' ? tripProgress(trip, alert.stopId) : null;
   const destinationIndex = riding ? stops.findIndex((stop) => stop.id === alertStopId) : -1;
@@ -190,11 +192,11 @@ export function VehicleDetails({
 
         {nextEta && (
           <View style={styles.nextEta}>
-            <ThemedText type="display" color={countdownColor} style={styles.nextEtaValue}>
+            <ThemedText type="display" color={tint} style={styles.nextEtaValue}>
               {nextEta.value}
             </ThemedText>
             {!!nextEta.unit && (
-              <ThemedText type="footnote" weight="semibold" color={countdownColor}>
+              <ThemedText type="footnote" weight="semibold" color={tint}>
                 {nextEta.unit}
               </ThemedText>
             )}
@@ -271,14 +273,14 @@ export function VehicleDetails({
               <Pressable
                 key={`${stop.id}-${stop.sequence}`}
                 disabled={!onStopPress}
-                onPress={() => onStopPress?.({ id: stop.id, name: stop.name })}
+                onPress={() => onStopPress?.(stop)}
                 accessibilityRole={onStopPress ? 'button' : undefined}
                 accessibilityState={onStopPress ? { selected: alerting } : undefined}
                 accessibilityHint={
                   onStopPress
                     ? alerting
                       ? 'Wyłącza powiadomienie'
-                      : 'Pozwala wybrać powiadomienie o przyjeździe albo o wysiadce'
+                      : 'Pozwala ustawić powiadomienie albo pokazać odjazdy z przystanku'
                     : undefined
                 }
                 style={({ pressed }) => [styles.stopRow, beyond && styles.beyond, pressed && styles.pressed]}>
@@ -331,11 +333,11 @@ export function VehicleDetails({
                 <View style={styles.eta}>
                   {/* The next stop's countdown leads — it is what the card
                       above the list used to be for. */}
-                  <ThemedText type={first ? 'title' : 'headline'} color={countdownColor} style={styles.etaValue}>
+                  <ThemedText type={first ? 'title' : 'headline'} color={tint} style={styles.etaValue}>
                     {eta.value}
                   </ThemedText>
                   {!!eta.unit && (
-                    <ThemedText type="footnote" weight={first ? 'semibold' : 'regular'} color={countdownColor}>
+                    <ThemedText type="footnote" weight={first ? 'semibold' : 'regular'} color={tint}>
                       {eta.unit}
                     </ThemedText>
                   )}
@@ -348,7 +350,7 @@ export function VehicleDetails({
             came for down the sheet. */}
         {!alert && onStopPress && (
           <ThemedText type="caption" themeColor="textTertiary" style={styles.hint}>
-            Dotknij przystanku, by dostać powiadomienie.
+            Dotknij przystanku, by dostać powiadomienie albo zobaczyć jego odjazdy.
           </ThemedText>
         )}
         </View>

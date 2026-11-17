@@ -240,27 +240,45 @@ describe('incident notifications', () => {
   });
 });
 
-describe('departure on time', () => {
-  const load = (t) => loadAppModule(t, 'departures.ts', ['departureOnTime']);
+describe('countdown colour', () => {
+  const loadDepartures = (t) => loadAppModule(t, 'departures.ts', ['departureDelaySeconds']);
+  const loadFormat = (t) => loadAppModule(t, 'format.ts', ['countdownTone', 'countdownColor']);
   const departure = (inSeconds, predictedInSeconds, realtime = true) => ({ inSeconds, predictedInSeconds, realtime });
+  const MIN = 60;
 
-  it('is on time within formatDelay\'s "Punktualnie" window', (t) => {
-    const mod = load(t);
+  it('is green under two minutes, amber to ten, red beyond — early or late', (t) => {
+    const mod = loadFormat(t);
     if (!mod) return;
-    assert.equal(mod.departureOnTime(departure(600, 600)), true);
-    assert.equal(mod.departureOnTime(departure(600, 600 + 89)), true);
-    assert.equal(mod.departureOnTime(departure(600, 600 - 89)), true);
+    assert.equal(mod.countdownTone(0), 'onTime');
+    assert.equal(mod.countdownTone(89), 'onTime');
+    assert.equal(mod.countdownTone(-89), 'onTime');
     // 90 s rounds to two minutes: "2 min spóźnienia", not on time.
-    assert.equal(mod.departureOnTime(departure(600, 600 + 90)), false);
-    assert.equal(mod.departureOnTime(departure(600, 600 - 150)), false);
+    assert.equal(mod.countdownTone(90), 'late');
+    assert.equal(mod.countdownTone(-150), 'late');
+    assert.equal(mod.countdownTone(10 * MIN), 'late');
+    assert.equal(mod.countdownTone(10 * MIN + 30), 'veryLate');
+    assert.equal(mod.countdownTone(-12 * MIN), 'veryLate');
+    const theme = { success: 'green', amber: 'amber', danger: 'red' };
+    assert.equal(mod.countdownColor(theme, 'onTime'), 'green');
+    assert.equal(mod.countdownColor(theme, 'late'), 'amber');
+    assert.equal(mod.countdownColor(theme, 'veryLate'), 'red');
   });
 
-  it('never calls a timetable-only departure on time', (t) => {
-    const mod = load(t);
+  it('keeps an unmatched run plain amber — no timetable is no evidence', (t) => {
+    const mod = loadFormat(t);
     if (!mod) return;
-    // No prediction is no evidence: the countdown stays amber.
-    assert.equal(mod.departureOnTime(departure(600, 600, false)), false);
-    assert.equal(mod.departureOnTime(departure(600, null)), false);
-    assert.equal(mod.departureOnTime(departure(600, undefined)), false);
+    assert.equal(mod.countdownTone(null), null);
+    assert.equal(mod.countdownTone(undefined), null);
+    assert.equal(mod.countdownColor({ success: 'green', amber: 'amber', danger: 'red' }, null), 'amber');
+  });
+
+  it('reads a board departure\'s delay only from a live prediction', (t) => {
+    const mod = loadDepartures(t);
+    if (!mod) return;
+    assert.equal(mod.departureDelaySeconds(departure(600, 600 + 300)), 300);
+    assert.equal(mod.departureDelaySeconds(departure(600, 600 - 120)), -120);
+    assert.equal(mod.departureDelaySeconds(departure(600, 600, false)), null);
+    assert.equal(mod.departureDelaySeconds(departure(600, null)), null);
+    assert.equal(mod.departureDelaySeconds(departure(600, undefined)), null);
   });
 });

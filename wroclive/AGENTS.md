@@ -322,11 +322,11 @@ their own copy of the same `Platform.select` shadow.
 - **Polish has three plural forms.** `plural()` in `src/lib/format.ts` picks
   between them; "1 pojazdów" reads as broken software.
 - **Amber is for countdowns.** `theme.amber` is the one loud colour in the app;
-  use weight or spacing elsewhere. On the stop board a live departure that is
-  on time (`departureOnTime()`) counts down green instead; timetable-only rows
-  stay amber. The vehicle sheet follows the same rule: its countdowns are live,
-  so a run `formatDelay()` calls "Punktualnie" counts down green, and a run with
-  no matched timetable stays amber.
+  use weight or spacing elsewhere. A *live* countdown is coloured by how far its
+  run is off the timetable (`countdownTone()` in `src/lib/format.ts`): under two
+  minutes either way green, two to ten amber, more than ten red. That applies on
+  the stop board and in the vehicle sheet alike. A timetable-only row, or a run
+  the server could not match, has no delay to judge and stays amber.
 - **Do not pass a computed height alongside an animated transform.** The web
   build drops the separate `{ height }` object, so the sheet grew to its content
   and hung off the top. `Sheet` sizes itself with a percentage — see the comment

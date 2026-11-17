@@ -8,8 +8,8 @@ import { CloseButton, HeaderButton } from './vehicle-details';
 import { Motion, Radius, Space } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
 import type { Departure, Departures, Stop } from '@/lib/api';
-import { boardLines, departureOnTime, departureSeconds, groupByRoute } from '@/lib/departures';
-import { etaParts, formatDistance, formatScheduled } from '@/lib/format';
+import { boardLines, departureSeconds, departureTone, groupByRoute } from '@/lib/departures';
+import { type CountdownTone, countdownColor, etaParts, formatDistance, formatScheduled } from '@/lib/format';
 import { tapped } from '@/lib/haptics';
 import { preferencesStore, usePreferences, type BoardView } from '@/lib/preferences';
 import { distanceMeters } from '@/lib/stops-api';
@@ -313,7 +313,7 @@ export function StopDetails({
                   headsign={route.headsign}
                   seconds={route.departures.slice(0, ROUTE_DEPARTURES).map(secondsTo)}
                   live={Boolean(route.departures[0]?.realtime)}
-                  onTime={Boolean(route.departures[0] && departureOnTime(route.departures[0]))}
+                  tone={route.departures[0] ? departureTone(route.departures[0]) : null}
                   walk={walk}
                   onOpen={
                     onOpenVehicle && route.departures[0] && canOpenVehicle?.(route.departures[0])
@@ -331,7 +331,7 @@ export function StopDetails({
                 const scheduled = formatScheduled(departure.departure);
                 const leave = walk === null ? null : leaveLabel(leaveInSeconds(seconds, walk));
                 const openable = Boolean(onOpenVehicle && canOpenVehicle?.(departure));
-                const countdown = departureOnTime(departure) ? theme.success : theme.amber;
+                const countdown = countdownColor(theme, departureTone(departure));
 
                 return (
                   <Pressable
@@ -407,7 +407,7 @@ function RouteRow({
   headsign,
   seconds,
   live,
-  onTime,
+  tone,
   walk,
   onOpen,
 }: {
@@ -418,7 +418,7 @@ function RouteRow({
   seconds: number[];
   live: boolean;
   /** The next departure is live and running to the timetable. */
-  onTime: boolean;
+  tone: CountdownTone | null;
   walk: number | null;
   /** Present when the next departure's vehicle is on the road. */
   onOpen?: () => void;
@@ -466,11 +466,11 @@ function RouteRow({
         )}
       </View>
       <View style={styles.eta}>
-        <ThemedText type="title" color={onTime ? theme.success : theme.amber} style={styles.etaValue}>
+        <ThemedText type="title" color={countdownColor(theme, tone)} style={styles.etaValue}>
           {eta.value}
         </ThemedText>
         {!!eta.unit && (
-          <ThemedText type="footnote" weight="semibold" color={onTime ? theme.success : theme.amber}>
+          <ThemedText type="footnote" weight="semibold" color={countdownColor(theme, tone)}>
             {eta.unit}
           </ThemedText>
         )}

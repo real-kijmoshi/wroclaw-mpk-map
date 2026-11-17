@@ -128,10 +128,12 @@ a server deploy. The current app (`wroclive`) requests the compact form.
 `theme.amber` in `wroclive/src/constants/theme.ts` is reserved for departure
 minutes. It is the one loud colour in the app and it works because nothing else
 competes for it. If you need emphasis elsewhere, use weight or spacing. The one
-exception is on the stop board: a *live* departure running to the timetable
-(`departureOnTime()` in `wroclive/src/lib/departures.ts`, the same window as
-`formatDelay()`'s "Punktualnie") counts down in `theme.success`. A
-timetable-only row stays amber — no prediction is no evidence it is on time.
+exception is a *live* countdown, on the stop board and in the vehicle sheet:
+it is coloured by how far the run is off its timetable (`countdownTone()` in
+`wroclive/src/lib/format.ts`) — under two minutes either way (`formatDelay()`'s
+"Punktualnie") in `theme.success`, two to ten minutes amber, more than ten in
+`theme.danger`. A timetable-only row, or a run the server could not match,
+stays amber — no prediction is no evidence it is on time.
 
 **11. Line colours must clear 4.5:1 on white.**
 The original palette put white text on `#F8E71C` at roughly 1.4:1 — illegible in

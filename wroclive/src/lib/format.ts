@@ -39,6 +39,34 @@ export function formatDelay(seconds: number | null | undefined): {
   return { text: 'Punktualnie', tone: 'onTime' };
 }
 
+/**
+ * How a live countdown is coloured, from how far the run is off its timetable.
+ *
+ * Under two minutes either side (`formatDelay()`'s "Punktualnie") is green,
+ * two to ten minutes is amber, more than ten is red. Early counts the same as
+ * late: a tram five minutes early is as likely to be missed as one five
+ * minutes late is to be waited for. `null` — no matched run, or a timetable-
+ * only row — is no evidence either way and keeps the plain amber countdown.
+ */
+export type CountdownTone = 'onTime' | 'late' | 'veryLate';
+export const VERY_LATE_MINUTES = 10;
+
+export function countdownTone(delaySeconds: number | null | undefined): CountdownTone | null {
+  if (delaySeconds === null || delaySeconds === undefined || !Number.isFinite(delaySeconds)) return null;
+  const minutes = Math.abs(Math.round(delaySeconds / 60));
+  if (minutes < 2) return 'onTime';
+  if (minutes <= VERY_LATE_MINUTES) return 'late';
+  return 'veryLate';
+}
+
+/** The colour for a countdown tone; amber when there is no tone. */
+export function countdownColor(
+  theme: { amber: string; success: string; danger: string },
+  tone: CountdownTone | null,
+): string {
+  return tone === 'onTime' ? theme.success : tone === 'veryLate' ? theme.danger : theme.amber;
+}
+
 /** "23:11:00" from the timetable → "23:11" for a person. */
 export const formatScheduled = (value: string | null | undefined): string | null => {
   if (!value) return null;

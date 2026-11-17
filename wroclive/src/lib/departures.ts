@@ -1,4 +1,5 @@
 import type { Departure, LineType } from '@/lib/api';
+import { countdownTone } from '@/lib/format';
 import { compareLines } from '@/lib/lines';
 
 /**
@@ -13,19 +14,20 @@ export const departureSeconds = (departure: Departure) =>
   departure.realtime && departure.predictedInSeconds != null ? departure.predictedInSeconds : departure.inSeconds;
 
 /**
- * A live departure running to the timetable — what the board paints green.
+ * How far a departure is off its timetable, in seconds — or null.
  *
- * Only a live prediction can say so: a timetable-only row has no evidence
- * either way and keeps the countdown amber. The threshold is `formatDelay()`'s
- * "Punktualnie" — under two minutes either side, rounded — so the board and
- * the vehicle sheet never disagree about the same tram.
+ * Only a live prediction can say: a timetable-only row has no evidence either
+ * way, and its countdown stays plain amber. Feed it to `countdownTone()`, the
+ * same bands the vehicle sheet uses, so the two never disagree about one tram.
  */
-export const departureOnTime = (departure: Departure) => {
-  if (!departure.realtime || departure.predictedInSeconds == null) return false;
+export const departureDelaySeconds = (departure: Departure): number | null => {
+  if (!departure.realtime || departure.predictedInSeconds == null) return null;
   const delay = departure.predictedInSeconds - departure.inSeconds;
-  if (!Number.isFinite(delay)) return false;
-  return Math.abs(Math.round(delay / 60)) < 2;
+  return Number.isFinite(delay) ? delay : null;
 };
+
+/** The countdown tone for a departure on the board; see `countdownTone()`. */
+export const departureTone = (departure: Departure) => countdownTone(departureDelaySeconds(departure));
 
 /**
  * Where vehicles from this platform go, busiest first.
