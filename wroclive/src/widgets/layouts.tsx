@@ -54,12 +54,17 @@ export type DeparturesWidgetRow = {
   headsign: string;
   /** Epoch ms the departure leaves. */
   at: number;
-  /** `at` as the rider's wall clock, "22:41" — what the last entry shows. */
-  clock: string;
+  /**
+   * `at` as the rider's wall clock, "22:41". No longer written — the layout
+   * formats `at` itself, which saves a day-long timeline a string per row —
+   * but present on timelines written before that.
+   */
+  clock?: string;
   /** A live prediction rather than the timetable. */
   live: boolean;
   /** Saved trips only: when this departure reaches the destination. */
   arriveAt?: number | null;
+  /** `arriveAt` as a clock; no longer written, see `clock`. */
   arriveClock?: string | null;
 };
 
@@ -202,19 +207,28 @@ const DeparturesWidget = (
   // walk cannot reach stays listed — it is on the board at the stop too — but
   // steps back. The last entry is never redrawn, so it trades countdowns
   // (which would freeze) for clock times, which stay true.
+  // Clock times are formatted here, not stored per row: a day of entries
+  // repeats every row many times over.
+  const hhmm = (at: number) => {
+    const date = new Date(at);
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  };
+  const clockOf = (row: DeparturesWidgetRow) => row.clock || hhmm(row.at);
+  const arriveClockOf = (row: DeparturesWidgetRow) =>
+    row.arriveClock || (row.arriveAt != null ? hhmm(row.arriveAt) : null);
   const final = Boolean(props?.final);
   const expired = Boolean(props?.expired);
   const upcoming = stop.rows.filter((row) => row.at >= now - 30_000);
   const minutesTo = (row: DeparturesWidgetRow) => Math.max(0, Math.round((row.at - now) / 60_000));
   const when = (row: DeparturesWidgetRow) =>
-    final ? row.clock : minutesTo(row) < 1 ? 'teraz' : `${minutesTo(row)} min`;
+    final ? clockOf(row) : minutesTo(row) < 1 ? 'teraz' : `${minutesTo(row)} min`;
   const reachable = (row: DeparturesWidgetRow) => stop.walk == null || row.at - now >= (stop.walk + 30) * 1_000;
   const trip = stop.kind === 'trip';
   const title = stop.label || stop.name;
   const subtitle = trip ? (stop.label ? stop.detail : '') : stop.label ? stop.name : stop.detail;
   // A trip's rows are read "leaves in 3 min, there at 7:54": the arrival
   // takes the place a board gives the headsign.
-  const arriving = (row: DeparturesWidgetRow) => (row.arriveClock ? `na miejscu ${row.arriveClock}` : row.headsign);
+  const arriving = (row: DeparturesWidgetRow) => (arriveClockOf(row) ? `na miejscu ${arriveClockOf(row)}` : row.headsign);
   const rowText = (row: DeparturesWidgetRow) => (trip ? arriving(row) : row.headsign);
   const walkMinutes = stop.walk == null ? null : Math.max(1, Math.round(stop.walk / 60));
   const updated = new Date(props?.updatedAt ?? now);
@@ -247,7 +261,7 @@ const DeparturesWidget = (
       <Text modifiers={[widgetURL(stop.url)]}>
         {next
           ? trip
-            ? `${next.line} ${final ? next.clock : `za ${when(next)}`} · ${arriving(next)}`
+            ? `${next.line} ${final ? clockOf(next) : `za ${when(next)}`} · ${arriving(next)}`
             : `${next.line} ${next.headsign} · ${when(next)}`
           : title}
       </Text>
@@ -264,7 +278,7 @@ const DeparturesWidget = (
             {next ? next.line : '—'}
           </Text>
           <Text modifiers={[font({ size: 12, weight: 'semibold' }), monospacedDigit(), minimumScaleFactor(0.6), lineLimit(1)]}>
-            {next ? (final ? next.clock : minutesTo(next) < 1 ? 'teraz' : `${minutesTo(next)}'`) : ''}
+            {next ? (final ? clockOf(next) : minutesTo(next) < 1 ? 'teraz' : `${minutesTo(next)}'`) : ''}
           </Text>
         </VStack>
       </ZStack>
@@ -288,7 +302,7 @@ const DeparturesWidget = (
             <HStack key={`${row.line}-${row.at}`} spacing={4}>
               <Text modifiers={[font({ textStyle: 'caption', weight: 'bold' }), monospacedDigit()]}>{row.line}</Text>
               <Text modifiers={[font({ textStyle: 'caption' }), lineLimit(1)]}>
-                {trip && row.arriveClock ? `→ ${row.arriveClock}` : row.headsign}
+                {trip && arriveClockOf(row) ? `→ ${arriveClockOf(row)}` : row.headsign}
               </Text>
               <Spacer />
               <Text modifiers={[font({ textStyle: 'caption', weight: 'semibold' }), monospacedDigit()]}>{when(row)}</Text>
@@ -328,7 +342,7 @@ const DeparturesWidget = (
     : [];
   const anyLive = !final && upcoming.some((row) => row.live);
   const ageMinutes = Math.max(0, Math.round((now - updated.getTime()) / 60_000));
-  const until = stop.until ?? (upcoming.length ? upcoming[upcoming.length - 1].clock : null);
+  const until = stop.until ?? (upcoming.length ? clockOf(upcoming[upcoming.length - 1]) : null);
 
   // How fresh this is, said plainly: the clock it was fetched at, and either
   // that it is live or how far the timetable it is reading from reaches.
@@ -511,7 +525,7 @@ const DeparturesWidget = (
                 <VStack alignment="leading" spacing={0}>
                   {headsignText(row, 14)}
                   <Text modifiers={[font({ size: 11 }), foregroundStyle(dim), monospacedDigit(), lineLimit(1)]}>
-                    {trip ? `odjazd ${row.clock} · ${row.headsign}` : row.live && !final ? `${row.clock} · na żywo` : `${row.clock} · rozkład`}
+                    {trip ? `odjazd ${clockOf(row)} · ${row.headsign}` : row.live && !final ? `${clockOf(row)} · na żywo` : `${clockOf(row)} · rozkład`}
                   </Text>
                 </VStack>
               ) : (

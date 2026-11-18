@@ -23,7 +23,7 @@
  * day at best and never after the app is swiped away), so the timeline has to
  * last until the app next runs. With half an hour of board behind it, the widget read
  * "Odjazdy wymagają odświeżenia" at 19:06 after a 16:25 refresh, and again at
- * 08:33 after 23:10. The boards are now fetched twelve hours ahead
+ * 08:33 after 23:10. The boards are now fetched a day ahead
  * (`WIDGET_HORIZON` in `api.ts`) and the timeline runs as far as they reach,
  * bounded by entry count and by `TIMELINE_BYTE_BUDGET` — the timeline is
  * stored in the app group's UserDefaults, which refuses anything over 4 MB,
@@ -35,9 +35,14 @@
 /** One entry a minute, counting down, for this long after a write. */
 export const COUNTDOWN_MINUTES = 30;
 /** Total entries, so a dozen starred stops cannot grow the timeline without bound. */
-export const MAX_TIMELINE_ENTRIES = 480;
-/** Serialized size the whole timeline may take; see `withinBudget()`. */
-export const TIMELINE_BYTE_BUDGET = 1_500_000;
+export const MAX_TIMELINE_ENTRIES = 1000;
+/**
+ * Serialized (JSON) size the whole timeline may take; see `withinBudget()`.
+ * The plist UserDefaults stores is smaller than the JSON (a binary plist keeps
+ * one copy of each repeated string), so this stays well clear of the 4 MB
+ * UserDefaults refuses while holding a night of three busy stops.
+ */
+export const TIMELINE_BYTE_BUDGET = 2_500_000;
 /** A row stays listed while its departure is less than this far in the past. */
 export const DEPARTED_GRACE_MS = 30_000;
 

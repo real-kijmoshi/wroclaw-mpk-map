@@ -969,10 +969,12 @@ const BOARD_HORIZON: BoardHorizon = { limit: BOARD_LIMIT, withinMinutes: 1440 };
  * "Odjazdy wymagają odświeżenia" by lunchtime. Twelve hours of timetable keeps
  * it listing real (timetable) departures until the app runs again; the
  * timeline's size budget (`widget-timeline.ts`) decides how much of that fits.
- * The server caps `limit` (100 before it was raised to 200), and every reader
- * here slices what it shows, so a longer board costs nothing on screen.
+ * A day, not a night: twelve hours from a 22:00 refresh ended before a 10:00
+ * wake-up, so the morning's trams were not on the widget at all. The server
+ * caps `limit` (100, then 200, now 300), and every reader here slices what it
+ * shows, so a longer board costs nothing on screen.
  */
-export const WIDGET_HORIZON: BoardHorizon = { limit: 160, withinMinutes: 720 };
+export const WIDGET_HORIZON: BoardHorizon = { limit: 300, withinMinutes: 1440 };
 
 export const getDepartures = async (stopId: string, options?: GetOptions, horizon: BoardHorizon = BOARD_HORIZON) =>
   normaliseDepartures(

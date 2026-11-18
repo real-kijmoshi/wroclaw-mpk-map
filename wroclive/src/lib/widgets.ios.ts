@@ -44,8 +44,8 @@ export const widgetsAvailable = requireOptionalNativeModule('ExpoWidgets') !== n
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const layouts: typeof import('@/widgets/layouts') | null = widgetsAvailable ? require('@/widgets/layouts') : null;
 
-/** Rows kept per stop per entry: the large widget draws eight. */
-const ROWS_PER_STOP = 8;
+/** Rows kept per stop per entry: the large widget draws seven. */
+const ROWS_PER_STOP = 7;
 
 /** How often a running app re-sends its activity's token (see `registerPush`). */
 const REREGISTER_MS = 60_000;
@@ -68,10 +68,8 @@ function widgetRows(departures: WidgetBoard['departures'], now: number) {
       tram: departure.type.startsWith('tram'),
       headsign: departure.headsign ?? '',
       at,
-      clock: clock(at),
       live: Boolean(departure.realtime),
       arriveAt,
-      arriveClock: arriveAt === null ? null : clock(arriveAt),
     };
   });
 }
@@ -168,7 +166,7 @@ export async function syncDeparturesWidget(
     ]
       .map((stop) => (carried.has(stop.id) ? { ...stop, rows: carried.get(stop.id) ?? [] } : stop))
       // How far the board reaches, before each entry trims it to its next rows.
-      .map((stop) => ({ ...stop, until: stop.rows.length ? stop.rows[stop.rows.length - 1].clock : null }));
+      .map((stop) => ({ ...stop, until: stop.rows.length ? clock(stop.rows[stop.rows.length - 1].at) : null }));
     const base: DeparturesWidgetProps = {
       ...amber,
       stops,
@@ -195,9 +193,14 @@ export async function syncDeparturesWidget(
       return;
     }
     // UserDefaults refuses the whole timeline over a single null.
+    // The stop picker reads `favourites` from the first entry only
+    // (`plugins/with-widget-stop-picker.js`), so the rest leave it out: across
+    // a day's entries it is a good share of the size budget.
+    const firstDate = Math.floor(now / 60_000) * 60_000;
     const propsAt = ({ date, final, expired }: TimelineSlot) =>
       toPropertyList({
         ...base,
+        favourites: date <= firstDate ? base.favourites : [],
         final,
         expired,
         // Each entry carries only what has not left by its own date, so a
