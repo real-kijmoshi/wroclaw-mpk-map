@@ -441,9 +441,13 @@ Activity push, and it is optional.
   08:08 trams at 18:33, the catchable-looking ones still amber. How long the
   clock-time part lasts is set by how far ahead the starred boards reach:
   `WIDGET_HORIZON` in `src/lib/api.ts` fetches twelve hours of timetable,
-  because the background refresh is a BGProcessing task that iOS runs mostly
-  overnight on the charger — with half an hour of board the widget asked to be
-  opened by every evening. `withinBudget()` caps the stored timeline at
+  because the background refresh runs only when iOS chooses — with half an hour
+  of board the widget asked to be opened by every evening. That refresh is an
+  app refresh task: `expo-background-task` ships a BGProcessing task, which iOS
+  ran mostly overnight on the charger, so `patches/expo-background-task+57.0.22.patch`
+  submits a `BGAppRefreshTaskRequest` instead and `plugins/with-app-refresh.js`
+  declares `fetch` rather than `processing`. Upgrading the package means
+  re-making that patch; `npm install` fails loudly if it no longer applies. `withinBudget()` caps the stored timeline at
   `TIMELINE_BYTE_BUDGET` (it lives in the app group's UserDefaults, which
   refuses 4 MB). The walk from the
   rider's last known position (`rememberPosition()`, device only) dims a

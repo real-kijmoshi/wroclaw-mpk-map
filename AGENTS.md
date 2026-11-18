@@ -183,8 +183,8 @@ shipped builds and not just to the preview.
 string and no code behind it. An unused permission is an App Review question you
 cannot answer. Still true today: every permission in `wroclive/app.json` maps to
 real code (`expo-location` for the locate button and nearby stops, local
-notifications for the arrival alert, background processing for the widget
-refresh). The rule reaches entitlements too. The push entitlement is used, and
+notifications for the arrival alert, background app refresh (`fetch`) for the
+widget refresh). The rule reaches entitlements too. The push entitlement is used, and
 by exactly two things, both sent by the server over one APNs connection:
 Live Activity updates (`server/src/live-activities.js`) and disruption alerts
 for riders who switched them on (`server/src/incident-push.js`, registered by

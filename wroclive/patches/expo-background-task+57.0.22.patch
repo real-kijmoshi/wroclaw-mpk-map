@@ -1,0 +1,52 @@
+diff --git a/node_modules/expo-background-task/ios/BackgroundTaskScheduler.swift b/node_modules/expo-background-task/ios/BackgroundTaskScheduler.swift
+index 906678b..7131532 100644
+--- a/node_modules/expo-background-task/ios/BackgroundTaskScheduler.swift
++++ b/node_modules/expo-background-task/ios/BackgroundTaskScheduler.swift
+@@ -4,7 +4,7 @@ import Foundation
+ 
+ protocol BackgroundTaskScheduling: Sendable {
+   func cancel(taskRequestWithIdentifier identifier: String)
+-  func submit(_ request: BGProcessingTaskRequest) throws
++  func submit(_ request: BGTaskRequest) throws
+   func pendingTaskRequests() async -> [BGTaskRequest]
+ }
+ 
+@@ -13,7 +13,7 @@ private struct SystemBackgroundTaskScheduler: BackgroundTaskScheduling {
+     BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier)
+   }
+ 
+-  func submit(_ request: BGProcessingTaskRequest) throws {
++  func submit(_ request: BGTaskRequest) throws {
+     try BGTaskScheduler.shared.submit(request)
+   }
+ 
+@@ -89,9 +89,10 @@ public class BackgroundTaskScheduler {
+ 
+       stopWorkerOnce()
+ 
+-      let request = BGProcessingTaskRequest(identifier: BackgroundTaskConstants.BackgroundWorkerIdentifier)
+-      request.requiresNetworkConnectivity = true
+-      request.requiresExternalPower = false
++      // Wroclive: an app refresh task, not a processing one. iOS runs
++      // processing tasks mostly overnight on the charger; app refresh runs
++      // through the day, as often as the rider tends to open the app.
++      let request = BGAppRefreshTaskRequest(identifier: BackgroundTaskConstants.BackgroundWorkerIdentifier)
+       request.earliestBeginDate = Date().addingTimeInterval(intervalSeconds)
+ 
+       do {
+diff --git a/node_modules/expo-background-task/plugin/build/withBackgroundTask.js b/node_modules/expo-background-task/plugin/build/withBackgroundTask.js
+index 28063e4..d716824 100644
+--- a/node_modules/expo-background-task/plugin/build/withBackgroundTask.js
++++ b/node_modules/expo-background-task/plugin/build/withBackgroundTask.js
+@@ -8,8 +8,9 @@ const withBackgroundTask = (config) => {
+         if (!Array.isArray(config.modResults.UIBackgroundModes)) {
+             config.modResults.UIBackgroundModes = [];
+         }
+-        if (!config.modResults.UIBackgroundModes.includes('processing')) {
+-            config.modResults.UIBackgroundModes.push('processing');
++        // Wroclive: the worker is an app refresh task, which needs `fetch`.
++        if (!config.modResults.UIBackgroundModes.includes('fetch')) {
++            config.modResults.UIBackgroundModes.push('fetch');
+         }
+         // With the new background task module we need to install the identifier in the Info.plist:
+         // BGTaskSchedulerPermittedIdentifiers should be an array of strings - we need to

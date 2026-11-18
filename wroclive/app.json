@@ -93,7 +93,7 @@
       "./plugins/with-widget-stop-picker",
       "expo-web-browser",
       "expo-background-task",
-      "./plugins/without-background-fetch"
+      "./plugins/with-app-refresh"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -12,13 +12,21 @@ import { widgetsAvailable } from '@/lib/widgets';
 /**
  * Keeps the home-screen widget going while the app is closed.
  *
- * The widget's own timeline covers half an hour; after that it can only say
- * "open the app". iOS will wake the app now and then (BGTaskScheduler, via
- * `expo-background-task`) — how often is the system's call, typically when
- * the phone is idle and charged, never on a schedule — and each wake fetches
- * the starred stops' boards and hands the widget a new timeline. So this makes
+ * The widget's own timeline runs as far as the last fetched boards reach;
+ * after that it can only say "open the app". iOS wakes the app now and then
+ * (BGTaskScheduler, via `expo-background-task`) and each wake fetches the
+ * starred stops' boards and hands the widget a new timeline. So this makes
  * the widget fresh more often; it cannot make it live, and nothing here may
  * assume it ran.
+ *
+ * It is an *app refresh* task, not the processing task the package ships:
+ * iOS ran that mostly overnight on the charger, so through the day the widget
+ * was as old as the last time the app was opened. App refresh runs through the
+ * day, as often as iOS judges the rider uses the app — opened daily, a few
+ * times a day; never after the app is swiped away in the switcher, nor with
+ * Background App Refresh off. `patches/expo-background-task+57.0.22.patch`
+ * swaps the request type and `plugins/with-app-refresh.js` the background
+ * mode (`fetch` for `processing`); both are native, so a store build.
  *
  * Neither module is in Expo Go, and both resolve their native module at
  * module scope, so they are required only once present — the same guard as
@@ -28,7 +36,7 @@ import { widgetsAvailable } from '@/lib/widgets';
 
 const TASK = 'wroclive.refresh-widget';
 /** Minutes. iOS treats it as a floor, and usually waits longer. */
-const MINIMUM_INTERVAL = 30;
+const MINIMUM_INTERVAL = 15;
 
 const available =
   widgetsAvailable &&
@@ -68,7 +76,12 @@ if (TaskManager && BackgroundTask) {
 export async function registerBackgroundRefresh() {
   if (!TaskManager || !BackgroundTask) return;
   try {
-    if (!(await TaskManager.isTaskRegisteredAsync(TASK))) {
+    // Registered options persist across launches and builds, so a phone that
+    // registered under an older interval keeps it unless it is re-registered.
+    const registered = (await TaskManager.getRegisteredTasksAsync()).find((task) => task.taskName === TASK);
+    const interval = (registered?.options as { minimumInterval?: number } | undefined)?.minimumInterval;
+    if (registered && interval !== MINIMUM_INTERVAL) await BackgroundTask.unregisterTaskAsync(TASK);
+    if (!registered || interval !== MINIMUM_INTERVAL) {
       await BackgroundTask.registerTaskAsync(TASK, { minimumInterval: MINIMUM_INTERVAL });
     }
   } catch {

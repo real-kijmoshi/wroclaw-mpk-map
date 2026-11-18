@@ -19,9 +19,9 @@
  *   departures need refreshing, which stays true however long it is up.
  *
  * How long the middle part lasts is the whole user-facing question. iOS runs
- * the background refresh rarely (it is a BGProcessing task, which in practice
- * means overnight on the charger), so the timeline has to last until the app
- * is next opened. With half an hour of board behind it, the widget read
+ * the background refresh when it chooses (an app refresh task, a few times a
+ * day at best and never after the app is swiped away), so the timeline has to
+ * last until the app next runs. With half an hour of board behind it, the widget read
  * "Odjazdy wymagają odświeżenia" at 19:06 after a 16:25 refresh, and again at
  * 08:33 after 23:10. The boards are now fetched twelve hours ahead
  * (`WIDGET_HORIZON` in `api.ts`) and the timeline runs as far as they reach,
