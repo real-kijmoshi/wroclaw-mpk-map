@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
 
-import { getDeparturesForStops, getJourneyDepartures } from '@/lib/api';
+import { getDeparturesForStops, getJourneyDepartures, WIDGET_HORIZON } from '@/lib/api';
 import type { FavouriteStop } from '@/lib/favourite-stops';
 import type { FavouriteTrip } from '@/lib/favourite-trips';
 import { syncDeparturesWidget, type TripBoard, type WidgetBoard } from '@/lib/widgets';
@@ -86,11 +86,11 @@ export async function fetchFavouriteBoards(
     Promise.allSettled(
       favourites.map(async (stop) => ({
         stop,
-        departures: (await getDeparturesForStops(stop, options)).departures,
+        departures: (await getDeparturesForStops(stop, options, WIDGET_HORIZON)).departures,
       })),
     ),
     Promise.allSettled(
-      trips.map(async (trip) => ({ trip, ...(await getJourneyDepartures(trip.from.ids, trip.to.ids, options)) })),
+      trips.map(async (trip) => ({ trip, ...(await getJourneyDepartures(trip.from.ids, trip.to.ids, options, WIDGET_HORIZON)) })),
     ),
   ]);
   const settled = <T,>(results: PromiseSettledResult<T>[]) =>

@@ -438,7 +438,14 @@ Activity push, and it is optional.
   no rows that asks for the app to be opened. WidgetKit gives a layout the
   *entry's* date as "now", so the last entry is up for as long as nothing
   replaces it — when it was a list of clock times, the widget showed the
-  08:08 trams at 18:33, the catchable-looking ones still amber. The walk from the
+  08:08 trams at 18:33, the catchable-looking ones still amber. How long the
+  clock-time part lasts is set by how far ahead the starred boards reach:
+  `WIDGET_HORIZON` in `src/lib/api.ts` fetches twelve hours of timetable,
+  because the background refresh is a BGProcessing task that iOS runs mostly
+  overnight on the charger — with half an hour of board the widget asked to be
+  opened by every evening. `withinBudget()` caps the stored timeline at
+  `TIMELINE_BYTE_BUDGET` (it lives in the app group's UserDefaults, which
+  refuses 4 MB). The walk from the
   rider's last known position (`rememberPosition()`, device only) dims a
   departure the walk cannot reach. Layouts are strings run in the extension:
   no Babel helpers either — `const [a, ...rest] =` compiles to `_toArray`,

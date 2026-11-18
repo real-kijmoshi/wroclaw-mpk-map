@@ -18,13 +18,26 @@
  *   so it must not claim anything that time can make false: it says the
  *   departures need refreshing, which stays true however long it is up.
  *
+ * How long the middle part lasts is the whole user-facing question. iOS runs
+ * the background refresh rarely (it is a BGProcessing task, which in practice
+ * means overnight on the charger), so the timeline has to last until the app
+ * is next opened. With half an hour of board behind it, the widget read
+ * "Odjazdy wymagają odświeżenia" at 19:06 after a 16:25 refresh, and again at
+ * 08:33 after 23:10. The boards are now fetched twelve hours ahead
+ * (`WIDGET_HORIZON` in `api.ts`) and the timeline runs as far as they reach,
+ * bounded by entry count and by `TIMELINE_BYTE_BUDGET` — the timeline is
+ * stored in the app group's UserDefaults, which refuses anything over 4 MB,
+ * and the other widgets and activities share it.
+ *
  * Import-free on purpose: `server/test/widget-timeline.test.js` runs it.
  */
 
 /** One entry a minute, counting down, for this long after a write. */
 export const COUNTDOWN_MINUTES = 30;
 /** Total entries, so a dozen starred stops cannot grow the timeline without bound. */
-export const MAX_TIMELINE_ENTRIES = 90;
+export const MAX_TIMELINE_ENTRIES = 480;
+/** Serialized size the whole timeline may take; see `withinBudget()`. */
+export const TIMELINE_BYTE_BUDGET = 1_500_000;
 /** A row stays listed while its departure is less than this far in the past. */
 export const DEPARTED_GRACE_MS = 30_000;
 
@@ -73,6 +86,29 @@ export function timelineSlots(now: number, departures: number[]): TimelineSlot[]
   } else {
     // Every known departure has left by the last entry (or by minute 30).
     slots[slots.length - 1].expired = true;
+  }
+  return slots;
+}
+
+/**
+ * Cut a timeline to `budget` bytes, ending it on an expired entry.
+ *
+ * `sizeOf` is what an entry costs serialized. Entries are kept in order until
+ * the next would cross the budget; that one becomes the expired entry, so the
+ * timeline still ends saying "open the app" at exactly the moment the last
+ * kept entry stops being true. The countdown half hour is always kept.
+ */
+export function withinBudget(
+  slots: TimelineSlot[],
+  sizeOf: (slot: TimelineSlot) => number,
+  budget = TIMELINE_BYTE_BUDGET,
+): TimelineSlot[] {
+  let used = 0;
+  for (let index = 0; index < slots.length; index += 1) {
+    used += sizeOf(slots[index]);
+    if (used > budget && index > COUNTDOWN_MINUTES) {
+      return [...slots.slice(0, index), { ...slots[index], expired: true }];
+    }
   }
   return slots;
 }

@@ -8,7 +8,7 @@ import type { FavouriteStop } from '@/lib/favourite-stops';
 import { colorFor } from '@/lib/lines';
 import { toPropertyList } from '@/lib/property-list';
 import { carryOverRows } from '@/lib/widget-carry-over';
-import { listedAt, timelineSlots } from '@/lib/widget-timeline';
+import { listedAt, timelineSlots, withinBudget, type TimelineSlot } from '@/lib/widget-timeline';
 import { activityStaleAt } from '@/lib/trip-progress';
 import { walkSeconds } from '@/lib/walking';
 import type { FavouriteTrip } from '@/lib/favourite-trips';
@@ -191,28 +191,30 @@ export async function syncDeparturesWidget(
       layouts.departuresWidget.updateSnapshot(toPropertyList(base) as DeparturesWidgetProps);
       return;
     }
-    const slots = timelineSlots(
-      now,
-      stops.flatMap((stop) => stop.rows.map((row) => row.at)),
+    // UserDefaults refuses the whole timeline over a single null.
+    const propsAt = ({ date, final, expired }: TimelineSlot) =>
+      toPropertyList({
+        ...base,
+        final,
+        expired,
+        // Each entry carries only what has not left by its own date, so a
+        // small widget's three rows are three departures still to come. The
+        // last entry carries none: nothing redraws it, so it only says
+        // "open the app" (see `widget-timeline.ts`).
+        stops: stops.map((stop) => ({
+          ...stop,
+          rows: expired ? [] : stop.rows.filter((row) => listedAt(row.at, date)).slice(0, ROWS_PER_STOP),
+        })),
+      }) as DeparturesWidgetProps;
+    const slots = withinBudget(
+      timelineSlots(
+        now,
+        stops.flatMap((stop) => stop.rows.map((row) => row.at)),
+      ),
+      (slot) => JSON.stringify(propsAt(slot)).length,
     );
     layouts.departuresWidget.updateTimeline(
-      slots.map(({ date, final, expired }) => ({
-        date: new Date(date),
-        // UserDefaults refuses the whole timeline over a single null.
-        props: toPropertyList({
-          ...base,
-          final,
-          expired,
-          // Each entry carries only what has not left by its own date, so a
-          // small widget's three rows are three departures still to come. The
-          // last entry carries none: nothing redraws it, so it only says
-          // "open the app" (see `widget-timeline.ts`).
-          stops: stops.map((stop) => ({
-            ...stop,
-            rows: expired ? [] : stop.rows.filter((row) => listedAt(row.at, date)).slice(0, ROWS_PER_STOP),
-          })),
-        }) as DeparturesWidgetProps,
-      })),
+      slots.map((slot) => ({ date: new Date(slot.date), props: propsAt(slot) })),
     );
   } catch {
     // A widget that fails to refresh keeps its last timeline; never the app's problem.

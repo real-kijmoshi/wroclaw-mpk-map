@@ -21,7 +21,7 @@ function load(t) {
     return null;
   }
   const source = stripTypeScriptTypes(fs.readFileSync(APP_TIMELINE, 'utf8')).replace(/^export /gm, '');
-  return new Function(`${source}; return { timelineSlots, listedAt, departedAt, COUNTDOWN_MINUTES, MAX_TIMELINE_ENTRIES };`)();
+  return new Function(`${source}; return { timelineSlots, listedAt, departedAt, withinBudget, COUNTDOWN_MINUTES, MAX_TIMELINE_ENTRIES };`)();
 }
 
 const MINUTE = 60_000;
@@ -112,5 +112,35 @@ describe('widget timeline', () => {
       assert.equal(slots.at(-1).date, START + mod.COUNTDOWN_MINUTES * MINUTE);
       assert.equal(slots.at(-1).expired, true);
     }
+  });
+
+  it('lasts the evening on a long board — the 19:06 widget that said "odśwież"', (t) => {
+    const mod = load(t);
+    if (!mod) return;
+    // 16:25, a tram every four minutes for the next twelve hours.
+    const departures = Array.from({ length: 160 }, (_, index) => NOW + (index * 4 + 2) * MINUTE);
+    const slots = mod.timelineSlots(NOW, departures);
+    const lastListing = slots.filter((slot) => !slot.expired).at(-1);
+    // Still listing departures two and a half hours on, not "odśwież".
+    assert.ok(lastListing.date >= NOW + 150 * MINUTE);
+    assert.equal(slots.at(-1).expired, true);
+  });
+
+  it('cuts to its byte budget and still ends on an expired entry', (t) => {
+    const mod = load(t);
+    if (!mod) return;
+    const departures = Array.from({ length: 300 }, (_, index) => NOW + (31 + index) * MINUTE);
+    const slots = mod.timelineSlots(NOW, departures);
+    const cut = mod.withinBudget(slots, () => 1_000, 50_000);
+    // Fifty entries fit; the fifty-first is the one that says "odśwież".
+    assert.equal(cut.length, 51);
+    assert.equal(cut.at(-1).expired, true);
+    assert.equal(cut.filter((slot) => slot.expired).length, 1);
+    // The cut entry takes over exactly where the kept ones stop being true.
+    assert.equal(cut.at(-1).date, slots[50].date);
+    // Under budget, nothing changes.
+    assert.deepEqual(mod.withinBudget(slots, () => 1, 1e9), slots);
+    // The countdown half hour survives any budget.
+    assert.ok(mod.withinBudget(slots, () => 1_000, 1).length > mod.COUNTDOWN_MINUTES);
   });
 });

@@ -953,9 +953,33 @@ export const getShape = async (
  */
 const BOARD_LIMIT = 30;
 
-export const getDepartures = async (stopId: string, options?: GetOptions) =>
+/**
+ * How far ahead a board reaches: `limit` departures, none further than
+ * `withinMinutes`. The default is the stop sheet's.
+ */
+export type BoardHorizon = { limit: number; withinMinutes: number };
+const BOARD_HORIZON: BoardHorizon = { limit: BOARD_LIMIT, withinMinutes: 1440 };
+
+/**
+ * The starred stops' boards, which also feed the home-screen widget.
+ *
+ * The widget cannot fetch, and iOS runs the background refresh only now and
+ * then (in practice mostly overnight on the charger), so whatever the app
+ * last fetched has to last the widget hours. Half an hour of departures meant
+ * "Odjazdy wymagają odświeżenia" by lunchtime. Twelve hours of timetable keeps
+ * it listing real (timetable) departures until the app runs again; the
+ * timeline's size budget (`widget-timeline.ts`) decides how much of that fits.
+ * The server caps `limit` (100 before it was raised to 200), and every reader
+ * here slices what it shows, so a longer board costs nothing on screen.
+ */
+export const WIDGET_HORIZON: BoardHorizon = { limit: 160, withinMinutes: 720 };
+
+export const getDepartures = async (stopId: string, options?: GetOptions, horizon: BoardHorizon = BOARD_HORIZON) =>
   normaliseDepartures(
-    await apiGet<unknown>(`/stop/${encodeURIComponent(stopId)}/departures?limit=${BOARD_LIMIT}&within=1440`, options),
+    await apiGet<unknown>(
+      `/stop/${encodeURIComponent(stopId)}/departures?limit=${horizon.limit}&within=${horizon.withinMinutes}`,
+      options,
+    ),
   );
 
 /**
@@ -978,9 +1002,13 @@ async function eachPlatform<T>(ids: string[], load: (id: string) => Promise<T>):
 }
 
 /** Merge only GTFS records that search identified as one physical platform. */
-export const getDeparturesForStops = async (stop: Stop, options?: GetOptions): Promise<Departures> => {
+export const getDeparturesForStops = async (
+  stop: Stop,
+  options?: GetOptions,
+  horizon: BoardHorizon = BOARD_HORIZON,
+): Promise<Departures> => {
   const ids = [...new Set([stop.id, ...(stop.ids ?? [])])];
-  const boards = await eachPlatform(ids, (id) => getDepartures(id, options));
+  const boards = await eachPlatform(ids, (id) => getDepartures(id, options, horizon));
   const seen = new Set<string>();
   const departures = boards
     .flatMap((board) => board.departures)
@@ -991,7 +1019,7 @@ export const getDeparturesForStops = async (stop: Stop, options?: GetOptions): P
       return true;
     })
     .sort((a, b) => a.inSeconds - b.inSeconds)
-    .slice(0, BOARD_LIMIT);
+    .slice(0, horizon.limit);
   return { stop: boards[0]?.stop ?? stop, departures };
 };
 
@@ -1014,12 +1042,13 @@ export const getJourneyDepartures = async (
   fromIds: string[],
   toIds: string[],
   options?: GetOptions,
+  horizon: BoardHorizon = { limit: 20, withinMinutes: JOURNEY_WITHIN_MINUTES },
 ): Promise<JourneyBoard> => {
   const to = toIds.slice(0, 20).map(encodeURIComponent).join(',');
   const boards = await eachPlatform([...new Set(fromIds)], async (id) =>
     normaliseDepartures(
       await apiGet<unknown>(
-        `/stop/${encodeURIComponent(id)}/departures?limit=20&within=${JOURNEY_WITHIN_MINUTES}&to=${to}`,
+        `/stop/${encodeURIComponent(id)}/departures?limit=${horizon.limit}&within=${horizon.withinMinutes}&to=${to}`,
         options,
       ),
     ),
@@ -1035,7 +1064,7 @@ export const getJourneyDepartures = async (
       return true;
     })
     .sort((a, b) => a.inSeconds - b.inSeconds)
-    .slice(0, 12);
+    .slice(0, horizon.limit);
   return { departures, supported: all.length === 0 || departures.length > 0 };
 };
 

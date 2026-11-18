@@ -617,7 +617,10 @@ const createRouter = ({
     const stop = gtfs.getStop(req.params.id);
     if (!stop) return res.status(404).json({ error: 'Stop not found', id: req.params.id });
 
-    const limit = Math.min(Number.parseInt(req.query.limit, 10) || 20, 100);
+    // 200, not 100: the app's starred boards feed its home-screen widget,
+    // which cannot fetch and has to last hours between refreshes, so they
+    // ask for twelve hours of a busy interchange (see WIDGET_HORIZON).
+    const limit = Math.min(Number.parseInt(req.query.limit, 10) || 20, 200);
     const withinMinutes = Math.min(Number.parseInt(req.query.within, 10) || 1440, 1440);
     // ?to=a,b — only trips that go on to one of these stops, with their
     // arrival there. Absent, the board is exactly what it always was.
