@@ -165,7 +165,10 @@ export async function syncDeparturesWidget(
           now,
         ),
       ),
-    ].map((stop) => (carried.has(stop.id) ? { ...stop, rows: carried.get(stop.id) ?? [] } : stop));
+    ]
+      .map((stop) => (carried.has(stop.id) ? { ...stop, rows: carried.get(stop.id) ?? [] } : stop))
+      // How far the board reaches, before each entry trims it to its next rows.
+      .map((stop) => ({ ...stop, until: stop.rows.length ? stop.rows[stop.rows.length - 1].clock : null }));
     const base: DeparturesWidgetProps = {
       ...amber,
       stops,
