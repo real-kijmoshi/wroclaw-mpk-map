@@ -17,7 +17,8 @@ const { withFinalizedMod } = require('expo/config-plugins');
  *
  * - the parameter becomes a `DeparturesStopEntity?`,
  * - the environment hands the layout its `id`, and
- * - the timeline's reload policy becomes `.never` (see `POLICY_BEFORE`),
+ * - the timeline provider fetches the configured stop's board itself (see
+ *   `POLICY_AFTER` and `liveFetchSource()`),
  *
  * and appends the entity and its query. The query reads the starred stops out
  * of the widget's own timeline (`props.favourites`, written by
@@ -52,8 +53,22 @@ const TITLE_BEFORE = '"Przystanek Configuration"';
  * already reloads the widget (`updateTimeline` calls `reloadTimelines`), so
  * WidgetKit never needs to ask on its own.
  */
-const POLICY_BEFORE = 'Timeline<DeparturesTimelineEntry>(entries: entries, policy: .atEnd)';
-const POLICY_AFTER = 'Timeline<DeparturesTimelineEntry>(entries: entries, policy: .never)';
+const POLICY_BEFORE =
+  'let entries = self.parseTimeline(configuration: configuration)\n    let timeline = Timeline<DeparturesTimelineEntry>(entries: entries, policy: .atEnd)';
+/**
+ * …which was right while the provider could only re-read. It now fetches
+ * (`DeparturesLiveFetch` below): each reload asks the API for the configured
+ * stop's board and builds the entries itself, then asks to come back in
+ * `refreshInterval`. WidgetKit spaces those to its own budget, so this is
+ * "every quarter hour at best", not a promise. A fetch that fails, or a
+ * timeline the app wrote minutes ago, falls back to what the app stored.
+ */
+const POLICY_AFTER = `let reloadAt = Date().addingTimeInterval(DeparturesLiveFetch.refreshInterval)
+    if let fresh = await DeparturesLiveFetch.entries(chosen: configuration.stop?.id ?? "", configuration: configuration) {
+      return Timeline<DeparturesTimelineEntry>(entries: fresh, policy: .after(reloadAt))
+    }
+    let entries = self.parseTimeline(configuration: configuration)
+    let timeline = Timeline<DeparturesTimelineEntry>(entries: entries, policy: .after(reloadAt))`;
 const TITLE_AFTER = '"Przystanek"';
 
 const ENTITY = `
@@ -110,7 +125,201 @@ struct DeparturesStopQuery: EntityQuery {
 }
 `;
 
-function patchWidgetSource(source) {
+/**
+ * The line colours, read out of `src/lib/lines.ts` at prebuild so the Swift
+ * copy cannot drift from the app's (invariant 11). Fails the prebuild if the
+ * table moves rather than drawing every badge grey.
+ */
+function lineColors(projectRoot) {
+  const source = fs.readFileSync(path.join(projectRoot, 'src', 'lib', 'lines.ts'), 'utf8');
+  const block = /export const LINE_COLOR[^=]*=\s*\{([\s\S]*?)\n\};/.exec(source);
+  const pairs = block ? [...block[1].matchAll(/(\w+):\s*'(#[0-9A-Fa-f]{6})'/g)] : [];
+  if (!pairs.some(([, type]) => type === 'unknown')) {
+    throw new Error('with-widget-stop-picker: could not read LINE_COLOR from src/lib/lines.ts');
+  }
+  return Object.fromEntries(pairs.map(([, type, color]) => [type, color]));
+}
+
+/**
+ * The widget fetching its own board, so it moves on with the app closed.
+ *
+ * The app leaves, in the timeline's first entry, the API address and each
+ * stop's platform ids (`fetch`, written by `syncDeparturesWidget()`); this
+ * fetches the configured one's departures exactly as `getDeparturesForStops()`
+ * and `getJourneyDepartures()` do, turns them into the rows `widgetRows()`
+ * makes, and lays them out the way `timelineSlots()` does — one stop, so no
+ * byte budget. Every entry carries only that stop; the picker reads the
+ * stored timeline, not these.
+ */
+function liveFetchSource(colors) {
+  const table = Object.entries(colors)
+    .map(([type, color]) => `    ${JSON.stringify(type)}: ${JSON.stringify(color)},`)
+    .join('\n');
+  return `
+// Added by plugins/with-widget-stop-picker.js — the widget fetching its own
+// departures between the app's writes. Mirrors widgets.ios.ts and
+// widget-timeline.ts; keep them in step.
+enum DeparturesLiveFetch {
+  static let refreshInterval: TimeInterval = 15 * 60
+  /** A timeline the app wrote this recently is used as it is. */
+  static let freshFor: Double = 5 * 60_000
+  static let countdownMinutes = 30
+  static let maxEntries = 400
+  static let rowsPerEntry = 7
+  static let departedGrace: Double = 30_000
+  static let limit = 300
+  static let minute: Double = 60_000
+  static let lineColors: [String: String] = [
+${table}
+  ]
+
+  static func entries(chosen: String, configuration: DeparturesConfigurationAppIntent) async -> [DeparturesTimelineEntry]? {
+    guard
+      let timeline = WidgetsStorage.getArray(forKey: "__expo_widgets_${WIDGET}_timeline"),
+      let first = timeline.first as? [String: Any],
+      let props = first["props"] as? [String: Any],
+      let fetch = props["fetch"] as? [String: Any],
+      let api = fetch["api"] as? String,
+      let sources = fetch["sources"] as? [String: Any],
+      let stops = props["stops"] as? [[String: Any]]
+    else { return nil }
+    let nowMs = Date().timeIntervalSince1970 * 1000
+    if let updated = (props["updatedAt"] as? NSNumber)?.doubleValue, nowMs - updated < freshFor { return nil }
+    guard
+      var stop = chosen.isEmpty ? stops.first : stops.first(where: { ($0["id"] as? String) == chosen }),
+      let id = stop["id"] as? String,
+      let source = sources[id] as? [String: Any],
+      let ids = source["ids"] as? [String], !ids.isEmpty,
+      let departures = await board(api: api, ids: ids, to: source["to"] as? [String])
+    else { return nil }
+
+    let rows = departures.map { row($0, nowMs: nowMs) }
+    let times = rows.compactMap { ($0["at"] as? Double) }
+    if let last = times.last { stop["until"] = clock(last) } else { stop.removeValue(forKey: "until") }
+    var base = props
+    base.removeValue(forKey: "fetch")
+    base["favourites"] = [[String: Any]]()
+    base["updatedAt"] = nowMs
+    return slots(nowMs: nowMs, departures: times).map { slot in
+      let listed: [[String: Any]] = slot.expired
+        ? []
+        : Array(rows.filter { (($0["at"] as? Double) ?? 0) >= slot.date - departedGrace }.prefix(rowsPerEntry))
+      var entryStop = stop
+      entryStop["rows"] = listed
+      var entryProps = base
+      entryProps["final"] = slot.final
+      entryProps["expired"] = slot.expired
+      entryProps["stops"] = [entryStop]
+      return DeparturesTimelineEntry(
+        date: Date(timeIntervalSince1970: slot.date / 1000),
+        name: "${WIDGET}",
+        props: entryProps,
+        entryIndex: nil,
+        configuration: configuration
+      )
+    }
+  }
+
+  /** Every platform's board, merged; nil when none answered. */
+  static func board(api: String, ids: [String], to: [String]?) async -> [[String: Any]]? {
+    var query = "limit=\\(limit)&within=1440"
+    if let to, !to.isEmpty { query += "&to=" + to.prefix(20).map(escape).joined(separator: ",") }
+    // Bodies cross the task boundary as Data, which is Sendable; parsed after.
+    let bodies = await withTaskGroup(of: Data?.self) { group -> [Data] in
+      for id in Set(ids) {
+        group.addTask { await load("\\(api)/stop/\\(escape(id))/departures?\\(query)") }
+      }
+      var answered: [Data] = []
+      for await body in group { if let body { answered.append(body) } }
+      return answered
+    }
+    let boards = bodies.compactMap { body -> [[String: Any]]? in
+      guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return nil }
+      return json["departures"] as? [[String: Any]]
+    }
+    if boards.isEmpty { return nil }
+    let trip = to != nil
+    var seen = Set<String>()
+    let merged = boards.joined().filter { departure in
+      // A trip keeps only what reaches the destination; an older server
+      // that ignored ?to= leaves no arrivals, so nothing — as in the app.
+      if trip && departure["arrivalInSeconds"] == nil { return false }
+      let key = trip
+        ? "\\(departure["tripId"] ?? "")|\\(departure["departure"] ?? "")"
+        : "\\(departure["tripId"] ?? "")|\\(departure["line"] ?? "")|\\(departure["departure"] ?? "")"
+      return seen.insert(key).inserted
+    }
+    return Array(merged.sorted { number($0["inSeconds"]) < number($1["inSeconds"]) }.prefix(limit))
+  }
+
+  static func load(_ url: String) async -> Data? {
+    guard let url = URL(string: url) else { return nil }
+    var request = URLRequest(url: url, timeoutInterval: 12)
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    guard
+      let result = try? await URLSession.shared.data(for: request),
+      (result.1 as? HTTPURLResponse)?.statusCode == 200
+    else { return nil }
+    return result.0
+  }
+
+  /** \`widgetRows()\` for one departure: \`departureSeconds()\` and \`arrivalSeconds()\`. */
+  static func row(_ departure: [String: Any], nowMs: Double) -> [String: Any] {
+    let scheduled = number(departure["inSeconds"])
+    let live = (departure["realtime"] as? Bool) == true && departure["predictedInSeconds"] is NSNumber
+    let seconds = live ? number(departure["predictedInSeconds"]) : scheduled
+    let type = departure["type"] as? String ?? "unknown"
+    var row: [String: Any] = [
+      "line": departure["line"] as? String ?? "",
+      "color": lineColors[type] ?? lineColors["unknown"] ?? "#475569",
+      "tram": type.hasPrefix("tram"),
+      "headsign": departure["headsign"] as? String ?? "",
+      "at": nowMs + seconds * 1000,
+      "live": live,
+    ]
+    if departure["arrivalInSeconds"] is NSNumber {
+      row["arriveAt"] = nowMs + (number(departure["arrivalInSeconds"]) + seconds - scheduled) * 1000
+    }
+    return row
+  }
+
+  /** \`timelineSlots()\`: a countdown a minute for half an hour, then one entry per departure leaving. */
+  static func slots(nowMs: Double, departures: [Double]) -> [(date: Double, final: Bool, expired: Bool)] {
+    let start = (nowMs / minute).rounded(.down) * minute
+    let countdownEnd = start + Double(countdownMinutes) * minute
+    var out: [(date: Double, final: Bool, expired: Bool)] = (0..<countdownMinutes).map {
+      (date: start + Double($0) * minute, final: false, expired: false)
+    }
+    let changes = Set(departures.map { (($0 + departedGrace) / minute).rounded(.down) * minute + minute })
+      .filter { $0 > countdownEnd }
+      .sorted()
+    let room = maxEntries - countdownMinutes - 2
+    out.append((date: countdownEnd, final: true, expired: false))
+    for date in changes.prefix(room) { out.append((date: date, final: true, expired: false)) }
+    if changes.count > room {
+      out.append((date: changes[room], final: true, expired: true))
+    } else {
+      out[out.count - 1].expired = true
+    }
+    return out
+  }
+
+  static func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }
+
+  static func escape(_ value: String) -> String {
+    value.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? value
+  }
+
+  static func clock(_ ms: Double) -> String {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "HH:mm"
+    return formatter.string(from: Date(timeIntervalSince1970: ms / 1000))
+  }
+}
+`;
+}
+
+function patchWidgetSource(source, colors = { unknown: '#475569' }) {
   if (source.includes('struct DeparturesStopEntity')) return source;
   for (const [label, anchor] of [
     ['parameter', PARAMETER_BEFORE],
@@ -129,7 +338,9 @@ function patchWidgetSource(source) {
       .replace(PARAMETER_BEFORE, PARAMETER_AFTER)
       .replace(ENVIRONMENT_BEFORE, ENVIRONMENT_AFTER)
       .replace(POLICY_BEFORE, POLICY_AFTER)
-      .replace(TITLE_BEFORE, TITLE_AFTER) + ENTITY
+      .replace(TITLE_BEFORE, TITLE_AFTER) +
+    ENTITY +
+    liveFetchSource(colors)
   );
 }
 
@@ -153,7 +364,8 @@ function withWidgetStopPicker(config) {
           `with-widget-stop-picker: no ${WIDGET}.swift under ios/ — is expo-widgets still configured with it?`,
         );
       }
-      fs.writeFileSync(file, patchWidgetSource(fs.readFileSync(file, 'utf8')));
+      const colors = lineColors(mod.modRequest.projectRoot);
+      fs.writeFileSync(file, patchWidgetSource(fs.readFileSync(file, 'utf8'), colors));
       return mod;
     },
   ]);
@@ -161,3 +373,4 @@ function withWidgetStopPicker(config) {
 
 module.exports = withWidgetStopPicker;
 module.exports.patchWidgetSource = patchWidgetSource;
+module.exports.lineColors = lineColors;

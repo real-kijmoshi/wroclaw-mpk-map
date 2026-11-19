@@ -61,13 +61,35 @@ describe('widget stop picker plugin', () => {
     assert.match(patched, /struct DeparturesStopQuery: EntityQuery/);
   });
 
-  it('never asks WidgetKit to come back for a timeline only the app can refresh', () => {
+  it('fetches the board itself and comes back on a schedule', () => {
     const { patchWidgetSource } = loadPlugin();
-    // `.atEnd` re-read the same, all-past timeline every few minutes after
-    // the app last ran and spent the reload budget the background refresh needs.
+    // `.never` was right while the provider could only re-read what the app
+    // wrote; the widget then sat on that until iOS ran the app again.
     const patched = patchWidgetSource(GENERATED);
-    assert.match(patched, /policy: \.never\)/);
+    assert.match(patched, /DeparturesLiveFetch\.entries\(chosen: configuration\.stop\?\.id/);
+    assert.match(patched, /policy: \.after\(reloadAt\)/);
     assert.doesNotMatch(patched, /policy: \.atEnd/);
+    assert.match(patched, /enum DeparturesLiveFetch/);
+  });
+
+  it("draws the app's line colours, read from lines.ts", () => {
+    const { patchWidgetSource, lineColors } = loadPlugin();
+    const colors = lineColors(path.join(__dirname, '..', '..', 'wroclive'));
+    assert.equal(colors.tram, '#0B5FBF');
+    assert.equal(colors.bus, '#B91C1C');
+    assert.ok(colors.unknown);
+    const patched = patchWidgetSource(GENERATED, colors);
+    for (const [type, color] of Object.entries(colors)) assert.ok(patched.includes(`"${type}": "${color}"`), type);
+  });
+
+  it('mirrors the timeline constants of widget-timeline.ts', () => {
+    const { patchWidgetSource } = loadPlugin();
+    const patched = patchWidgetSource(GENERATED);
+    const fs = require('node:fs');
+    const timeline = fs.readFileSync(path.join(__dirname, '..', '..', 'wroclive', 'src', 'lib', 'widget-timeline.ts'), 'utf8');
+    const ts = (name) => Number(new RegExp(`${name} = ([\\d_]+)`).exec(timeline)[1].replace(/_/g, ''));
+    assert.match(patched, new RegExp(`countdownMinutes = ${ts('COUNTDOWN_MINUTES')}\\n`));
+    assert.match(patched, new RegExp(`departedGrace: Double = ${ts('DEPARTED_GRACE_MS').toLocaleString('en').replace(/,/g, '_')}\\n`));
   });
 
   it('is idempotent and fails loudly when the generated text moves', () => {

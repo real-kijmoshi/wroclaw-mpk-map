@@ -106,6 +106,11 @@ export type DeparturesWidgetProps = {
   favourites: { id: string; name: string; detail: string }[];
   /** When the boards were fetched. */
   updatedAt: number;
+  /**
+   * First entry only: what the widget extension fetches itself between the
+   * app's writes — the API and each stop's (or trip's) platforms.
+   */
+  fetch?: { api: string; sources: Record<string, { ids: string[]; to?: string[] }> };
   /** Past the first half hour no entry redraws this one a minute later, so it shows clock times, not countdowns. */
   final: boolean;
   /**

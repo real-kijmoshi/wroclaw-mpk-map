@@ -1,6 +1,7 @@
 import { requireOptionalNativeModule } from 'expo';
 
 import { apiSend } from '@/lib/api';
+import { API_URL } from '@/lib/config';
 import { Colors } from '@/constants/theme';
 import { arrivalSeconds, departureSeconds, directionsLabel } from '@/lib/departures';
 import { stopAppUrl, vehicleAppUrl } from '@/lib/links';
@@ -167,6 +168,20 @@ export async function syncDeparturesWidget(
       .map((stop) => (carried.has(stop.id) ? { ...stop, rows: carried.get(stop.id) ?? [] } : stop))
       // How far the board reaches, before each entry trims it to its next rows.
       .map((stop) => ({ ...stop, until: stop.rows.length ? clock(stop.rows[stop.rows.length - 1].at) : null }));
+    // What the widget extension fetches between the app's writes
+    // (`DeparturesLiveFetch` in plugins/with-widget-stop-picker.js): the same
+    // requests `fetchFavouriteBoards()` makes. Trips take the widened places
+    // their board was fetched with (`completeTrips()`).
+    const liveFetch: NonNullable<DeparturesWidgetProps['fetch']> = {
+      api: API_URL,
+      sources: Object.fromEntries([
+        ...favourites.map((stop) => [stop.id, { ids: [...new Set([stop.id, ...(stop.ids ?? [])])] }]),
+        ...trips.map((saved) => {
+          const trip = tripBoards.find((board) => board.trip.id === saved.id)?.trip ?? saved;
+          return [`trip:${saved.id}`, { ids: [...new Set(trip.from.ids)], to: trip.to.ids.slice(0, 20) }];
+        }),
+      ]),
+    };
     const base: DeparturesWidgetProps = {
       ...amber,
       stops,
@@ -201,6 +216,8 @@ export async function syncDeparturesWidget(
       toPropertyList({
         ...base,
         favourites: date <= firstDate ? base.favourites : [],
+        // Read from the first entry only, like `favourites`.
+        fetch: date <= firstDate ? liveFetch : undefined,
         final,
         expired,
         // Each entry carries only what has not left by its own date, so a

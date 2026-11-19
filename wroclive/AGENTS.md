@@ -425,13 +425,21 @@ Activity push, and it is optional.
   `expo-widgets` wrote the file — and it fails the prebuild if the generated
   text moves. The old "first / second / third" enum made riders remember the
   order they had starred things in. Every starred stop is in the timeline for
-  that reason. The same plugin sets the timeline's reload policy to `.never`:
-  the provider only re-reads what the app wrote, so `.atEnd` asked WidgetKit
-  for the same all-past timeline every few minutes after the app last ran and
-  spent the reload budget the background refresh needs. A rider adds one widget per stop — a "next stop" button would
+  that reason. The same plugin makes the provider **fetch its own board**
+  (`DeparturesLiveFetch`): the app leaves the API address and each stop's
+  platforms in the first entry (`fetch`), and on every reload the extension
+  asks the API for the configured stop, builds the entries the way
+  `widgetRows()`/`timelineSlots()` do, and asks to come back in 15 minutes
+  (`.after`) — WidgetKit spaces that to its budget. Before it, the provider
+  only re-read what the app wrote, so the widget moved on only when iOS chose
+  to run the app's background refresh, and in practice only when the rider
+  opened the app. A timeline the app wrote under five minutes ago, or a failed
+  fetch, falls back to the stored one. Line colours are read from `lines.ts`
+  at prebuild; the Swift copies of the timeline constants are compared with
+  `widget-timeline.ts` by `server/test/widget-stop-picker.test.js`. A rider adds one widget per stop — a "next stop" button would
   not work: a button press only rewrites the current timeline entry, and the
   next minute's entry puts the old stop back. That configuration makes it an
-  iOS 17+ widget; the app itself targets 16.4. WidgetKit cannot fetch, so the
+  iOS 17+ widget; the app itself targets 16.4. Between fetches the
   app hands it a *timeline* (`timelineSlots()` in
   `src/lib/widget-timeline.ts`): a countdown once a minute for half an hour,
   then clock times in one entry per departure leaving, then a last entry with

@@ -1,8 +1,10 @@
 /**
  * When the departures widget's timeline entries fall, and what each one is.
  *
- * WidgetKit cannot fetch, and it hands a layout the *entry's* date as "now",
- * not the wall clock. So the timeline used to stop at a single entry half an
+ * WidgetKit hands a layout the *entry's* date as "now", not the wall clock,
+ * and a reload comes a quarter of an hour apart at best (the extension
+ * fetches on each — `DeparturesLiveFetch` in plugins/with-widget-stop-picker.js
+ * mirrors this file). So the timeline used to stop at a single entry half an
  * hour after the app last wrote it, and that entry stayed on screen for as long
  * as nothing replaced it — at 18:33 the widget was still listing the 08:08,
  * 08:09, 08:11 and 08:14 trams, the last two in amber as if they were catchable,
