@@ -440,7 +440,7 @@ Activity push, and it is optional.
   replaces it — when it was a list of clock times, the widget showed the
   08:08 trams at 18:33, the catchable-looking ones still amber. How long the
   clock-time part lasts is set by how far ahead the starred boards reach:
-  `WIDGET_HORIZON` in `src/lib/api.ts` fetches twelve hours of timetable,
+  `WIDGET_HORIZON` in `src/lib/api.ts` fetches a day of timetable,
   because the background refresh runs only when iOS chooses — with half an hour
   of board the widget asked to be opened by every evening. That refresh is an
   app refresh task: `expo-background-task` ships a BGProcessing task, which iOS
@@ -462,7 +462,14 @@ Activity push, and it is optional.
   "Szkoła" is Biskupin → Reja: both ends are *places*, every platform
   included, and `/stop/:id/departures?to=<ids>` keeps only the trips that go
   on to the destination, each with its arrival — so the server, not the
-  rider, picks the side of the street. Arrival is the timetable's, moved by
+  rider, picks the side of the street — which only works if every side is
+  in the request. The picker offers starred stops as one-tap places, and a
+  starred stop is only the platforms that were starred: a Biskupin → Reja trip
+  built from the bus loop never saw the trams leaving 46 m away, and the
+  widget's next departure at 09:53 was 18:22. `withAllPlatforms()`
+  (`src/lib/place-platforms.ts`) widens each end to every same-named platform
+  nearby, at pick time and once a session for trips already saved
+  (`completeTrips()`, ahead of the boards fetch). Arrival is the timetable's, moved by
   the delay at the origin (`arrivalSeconds()` in `src/lib/departures.ts`).
   Direct services only; there is no transfer planning. An older server
   ignores `?to=` and serves the whole board without arrivals, which

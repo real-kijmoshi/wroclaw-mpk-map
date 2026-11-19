@@ -74,6 +74,14 @@ export const favouriteTripsStore = {
     emit();
   },
 
+  /** Same trip, wider ends (`completeTrips()`); a trip removed meanwhile stays removed. */
+  setPlaces(id: string, from: TripPlace, to: TripPlace) {
+    if (!list.some((trip) => trip.id === id)) return;
+    list = list.map((trip) => (trip.id === id ? { ...trip, from, to } : trip));
+    persist();
+    emit();
+  },
+
   rename(id: string, label: string) {
     const trimmed = label.trim().slice(0, MAX_TRIP_LABEL_LENGTH);
     list = list.map((trip) => (trip.id === id ? { ...trip, label: trimmed } : trip));

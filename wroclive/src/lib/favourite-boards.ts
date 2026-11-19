@@ -4,6 +4,7 @@ import { useSyncExternalStore } from 'react';
 import { getDeparturesForStops, getJourneyDepartures, WIDGET_HORIZON } from '@/lib/api';
 import type { FavouriteStop } from '@/lib/favourite-stops';
 import type { FavouriteTrip } from '@/lib/favourite-trips';
+import { completeTrips } from '@/lib/trip-places';
 import { syncDeparturesWidget, type TripBoard, type WidgetBoard } from '@/lib/widgets';
 
 export type { TripBoard, WidgetBoard as FavouriteBoard } from '@/lib/widgets';
@@ -89,8 +90,14 @@ export async function fetchFavouriteBoards(
         departures: (await getDeparturesForStops(stop, options, WIDGET_HORIZON)).departures,
       })),
     ),
-    Promise.allSettled(
-      trips.map(async (trip) => ({ trip, ...(await getJourneyDepartures(trip.from.ids, trip.to.ids, options, WIDGET_HORIZON)) })),
+    // Trips saved from a starred stop may lack platforms; widened once a session.
+    completeTrips(trips, signal).then((complete) =>
+      Promise.allSettled(
+        complete.map(async (trip) => ({
+          trip,
+          ...(await getJourneyDepartures(trip.from.ids, trip.to.ids, options, WIDGET_HORIZON)),
+        })),
+      ),
     ),
   ]);
   const settled = <T,>(results: PromiseSettledResult<T>[]) =>

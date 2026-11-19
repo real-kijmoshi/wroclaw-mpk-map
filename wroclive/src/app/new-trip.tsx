@@ -23,6 +23,7 @@ import {
 } from '@/lib/favourite-trips';
 import { failed, tapped } from '@/lib/haptics';
 import { groupStopAreas, searchStops, type StopArea } from '@/lib/stops-api';
+import { completePlace } from '@/lib/trip-places';
 
 const DEBOUNCE_MS = 220;
 
@@ -87,6 +88,8 @@ export default function NewTripScreen() {
           onPick={(place) => {
             setFrom(place);
             setStep('to');
+            // A starred stop is only the platforms the rider starred; the trip needs them all.
+            void completePlace(place).then((whole) => setFrom((current) => (current === place ? whole : current)));
           }}
         />
       ) : step === 'to' ? (
@@ -98,6 +101,7 @@ export default function NewTripScreen() {
           onPick={(place) => {
             setTo(place);
             setStep('name');
+            void completePlace(place).then((whole) => setTo((current) => (current === place ? whole : current)));
           }}
         />
       ) : (

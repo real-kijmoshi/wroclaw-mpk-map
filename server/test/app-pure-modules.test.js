@@ -282,3 +282,29 @@ describe('countdown colour', () => {
     assert.equal(mod.departureDelaySeconds(departure(600, undefined)), null);
   });
 });
+
+describe('saved trip places', () => {
+  // Live /stops?q=Biskupin on 2026-11-19: the bus loop and the tram loop are
+  // two records 46 m apart, and only the tram one has the 2 and 10 to Reja.
+  const search = [
+    { id: '1231', name: 'BISKUPIN', lat: 51.10098894, lon: 17.10878688, ids: ['1231', '565'] },
+    { id: '1358', name: 'BISKUPIN', lat: 51.10103026, lon: 17.10944837, ids: ['1358', '1684'] },
+    { id: '5308', name: 'Piramowicza (Kampus Biskupin)', lat: 51.10306386, lon: 17.09573701, ids: ['5308', '5309'] },
+  ];
+
+  it('widens a place picked from a starred stop to every platform of it', (t) => {
+    const mod = loadAppModule(t, 'place-platforms.ts', ['withAllPlatforms']);
+    if (!mod) return;
+    const starred = { name: 'BISKUPIN', ids: ['1231', '565'], lat: 51.10098894, lon: 17.10878688 };
+    assert.deepEqual(mod.withAllPlatforms(starred, search).ids.sort(), ['1231', '1358', '1684', '565']);
+  });
+
+  it('leaves a complete place, and a same-named stop elsewhere, alone', (t) => {
+    const mod = loadAppModule(t, 'place-platforms.ts', ['withAllPlatforms']);
+    if (!mod) return;
+    const whole = { name: 'BISKUPIN', ids: ['1231', '565', '1358', '1684'], lat: 51.101, lon: 17.109 };
+    assert.equal(mod.withAllPlatforms(whole, search), whole);
+    const elsewhere = { name: 'BISKUPIN', ids: ['9'], lat: 51.13, lon: 17.0 };
+    assert.equal(mod.withAllPlatforms(elsewhere, search), elsewhere);
+  });
+});
