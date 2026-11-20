@@ -17,6 +17,7 @@ import { StopDetails, StopSummary } from '@/components/stop-details';
 import { TripBanner } from '@/components/trip-banner';
 import { VehicleDetails, VehicleSummary } from '@/components/vehicle-details';
 import { Space } from '@/constants/design';
+import { collapseToHubs } from '@/lib/stop-hubs';
 import { useAreaStops } from '@/hooks/use-area-stops';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePoll } from '@/hooks/use-poll';
@@ -103,7 +104,7 @@ export default function MapScreen() {
 
   const mapRef = useRef<MapSurfaceHandle>(null);
   const selectedLines = useSelectedLines();
-  const { showNearbyStops, followSelectedVehicle, layout } = usePreferences();
+  const { showNearbyStops, groupStops, followSelectedVehicle, layout } = usePreferences();
   /**
    * The classic layout: top bar, button tower, and a sheet that only exists
    * while something is selected. Everything above this line is shared — the
@@ -693,7 +694,12 @@ export default function MapScreen() {
    * panning to a district you were not standing in showed a map with no stops
    * on it at all. Zooming in anywhere now loads what is there.
    */
-  const areaStops = useAreaStops(viewport, showNearbyStops);
+  const loadedStops = useAreaStops(viewport, showNearbyStops);
+  // One dot per interchange when the rider asked for it (Settings → Na mapie).
+  const areaStops = useMemo(
+    () => (groupStops ? collapseToHubs(loadedStops) : loadedStops),
+    [groupStops, loadedStops],
+  );
 
   const selectedStop = selection?.kind === 'stop' ? selection.stop : null;
   // The selected stop is always a map marker, even where the layer is off or

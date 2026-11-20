@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LineBadge } from '@/components/line-badge';
 import { ModalScreen } from '@/components/modal-screen';
 import { StopAreaRow } from '@/components/stop-area-row';
+import { StopHubRow } from '@/components/stop-hub-row';
 import { ThemedText } from '@/components/themed-text';
 import { Motion, Radius, Space, Type, Weight } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
@@ -22,6 +23,7 @@ import {
   type TripPlace,
 } from '@/lib/favourite-trips';
 import { failed, tapped } from '@/lib/haptics';
+import { findHubs, type StopHub } from '@/lib/stop-hubs';
 import { groupStopAreas, searchStops, type StopArea } from '@/lib/stops-api';
 import { completePlace } from '@/lib/trip-places';
 
@@ -253,7 +255,7 @@ function PlacePicker({
   const insets = useSafeAreaInsets();
   const favourites = useFavouriteStops();
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<{ query: string; areas: StopArea[] } | null>(null);
+  const [results, setResults] = useState<{ query: string; areas: StopArea[]; hubs: StopHub[] } | null>(null);
   const [error, setError] = useState(false);
   const needle = query.trim();
 
@@ -265,7 +267,12 @@ function PlacePicker({
         .then((stops) => {
           if (controller.signal.aborted) return;
           setError(false);
-          setResults({ query: needle, areas: groupStopAreas(stops) });
+          setResults({
+            query: needle,
+            areas: groupStopAreas(stops),
+            // Whole interchanges first, so a trip can run hub to hub.
+            hubs: findHubs(stops, (members) => groupStopAreas(members as typeof stops).length),
+          });
         })
         .catch(() => {
           if (!controller.signal.aborted) setError(true);
@@ -287,6 +294,7 @@ function PlacePicker({
     (area) => area.name !== exclude,
   );
   const loading = searching && results?.query !== needle && !error;
+  const hubs = searching && results?.query === needle ? results.hubs.filter((hub) => hub.name !== exclude) : [];
 
   return (
     <View style={styles.picker}>
@@ -325,7 +333,21 @@ function PlacePicker({
         keyboardDismissMode="on-drag"
         contentContainerStyle={{ paddingBottom: insets.bottom + Space.xxl }}
         ListHeaderComponent={
-          !searching && areas.length > 0 ? (
+          hubs.length > 0 ? (
+            <View>
+              {hubs.map((hub) => (
+                <StopHubRow
+                  key={`${hub.name}-${hub.id}`}
+                  hub={hub}
+                  trailing={<Ionicons name="chevron-forward" size={17} color={theme.textTertiary} />}
+                  onPress={() => {
+                    tapped();
+                    onPick({ name: hub.name, ids: hub.ids, lat: hub.lat, lon: hub.lon });
+                  }}
+                />
+              ))}
+            </View>
+          ) : !searching && areas.length > 0 ? (
             <ThemedText type="footnote" weight="semibold" themeColor="textSecondary" style={styles.listTitle}>
               ULUBIONE
             </ThemedText>

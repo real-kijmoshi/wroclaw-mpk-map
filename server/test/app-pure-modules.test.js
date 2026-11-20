@@ -308,3 +308,45 @@ describe('saved trip places', () => {
     assert.equal(mod.withAllPlatforms(elsewhere, search), elsewhere);
   });
 });
+
+describe('stop hubs', () => {
+  // Live /stops?q= on 2026-11-20.
+  const dominikanska = [
+    ['1418', '01', 51.10853, 17.0387], ['841', '01', 51.10853, 17.0387], ['1417', '02', 51.1084, 17.03858],
+    ['1330', '03', 51.10671, 17.03827], ['547', '04', 51.10802, 17.03738], ['546', '05', 51.1074, 17.03975],
+    ['1420', '06', 51.1077, 17.03966], ['1419', '07', 51.10761, 17.03964], ['5876', '08', 51.10892, 17.03991],
+    ['5926', '09', 51.109, 17.04118], ['5963', '10', 51.10901, 17.0417], ['5964', '11', 51.10898, 17.04187],
+  ].map(([id, n, lat, lon]) => ({ id, name: `GALERIA DOMINIKAŃSKA ${n}`, lat, lon }));
+  const grunwaldzki = [
+    { id: '1061', name: 'PL. GRUNWALDZKI', lat: 51.11198, lon: 17.06403, ids: ['1061', '2772'] },
+    { id: '1750', name: 'PL. GRUNWALDZKI', lat: 51.11114, lon: 17.06119, ids: ['1750', '1751'] },
+    { id: '6145', name: 'Most Grunwaldzki', lat: 51.11014, lon: 17.05549, ids: ['6145', '6150'] },
+  ];
+
+  it('offers numbered platforms as one interchange', (t) => {
+    const mod = loadAppModule(t, 'stop-hubs.ts', ['findHubs', 'hubName']);
+    if (!mod) return;
+    assert.equal(mod.hubName('GALERIA DOMINIKAŃSKA 07'), 'GALERIA DOMINIKAŃSKA');
+    const [hub, ...rest] = mod.findHubs(dominikanska);
+    assert.equal(rest.length, 0);
+    assert.equal(hub.name, 'GALERIA DOMINIKAŃSKA');
+    assert.equal(hub.ids.length, 12);
+    assert.equal(hub.stops, 11);
+  });
+
+  it('joins same-named groups a street apart, but not a different name', (t) => {
+    const mod = loadAppModule(t, 'stop-hubs.ts', ['findHubs']);
+    if (!mod) return;
+    const hubs = mod.findHubs(grunwaldzki);
+    assert.equal(hubs.length, 1);
+    assert.deepEqual(hubs[0].ids.sort(), ['1061', '1750', '1751', '2772']);
+  });
+
+  it('collapses the map to one marker per interchange and keeps loners as they are', (t) => {
+    const mod = loadAppModule(t, 'stop-hubs.ts', ['collapseToHubs']);
+    if (!mod) return;
+    const collapsed = mod.collapseToHubs([...dominikanska, ...grunwaldzki]);
+    assert.equal(collapsed.length, 3);
+    assert.equal(collapsed[2], grunwaldzki[2]);
+  });
+});

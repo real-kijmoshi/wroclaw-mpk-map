@@ -84,6 +84,13 @@ export type Preferences = {
    * it now controls is the layer that follows the map's viewport.
    */
   showNearbyStops: boolean;
+  /**
+   * Draw an interchange as one stop (`collapseToHubs()` in `stop-hubs.ts`):
+   * one dot for "Galeria Dominikańska" instead of eleven, whose board is every
+   * platform's departures. Off by default — the separate dots are how a rider
+   * picks the direction — and only the drawing changes.
+   */
+  groupStops: boolean;
   /** Keep the selected vehicle centred and fit its route into view. */
   followSelectedVehicle: boolean;
   /** Light, dark, or follow the system colour scheme. */
@@ -106,6 +113,7 @@ const DEFAULTS: Preferences = {
   mapProvider: 'auto',
   appleMapType: 'standard',
   showNearbyStops: true,
+  groupStops: false,
   followSelectedVehicle: false,
   colorScheme: 'system',
   layout: 'sheet',

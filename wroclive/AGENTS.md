@@ -220,6 +220,15 @@ their own copy of the same `Platform.select` shadow.
   unique in this feed. Every platform keeps its own dot: they are different
   boarding points and tapping the right one is how a rider gets the right
   direction.
+- **An interchange is offered whole, on top of its parts** (`src/lib/stop-hubs.ts`).
+  The feed names some hubs per platform ("GALERIA DOMINIKAŃSKA 01" … "11")
+  and splits others into same-named groups too far apart for
+  `groupStopAreas()` (Plac Grunwaldzki, 220 m). `findHubs()` joins a base
+  name (trailing platform number dropped) chained within `HUB_LINK_METERS`,
+  and search and the new-trip picker show it as a card *above* the separate
+  stops — never instead of them — so a board or a trip can be hub to hub.
+  `preferences.groupStops` (off by default) draws each hub as one map dot via
+  `collapseToHubs()`; its board fetches every platform, one request each.
 
 ## Rules that cost real bugs
 

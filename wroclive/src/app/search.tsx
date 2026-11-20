@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LineBadge } from '@/components/line-badge';
 import { ModalScreen } from '@/components/modal-screen';
 import { StopAreaRow } from '@/components/stop-area-row';
+import { StopHubRow } from '@/components/stop-hub-row';
 import { ThemedText } from '@/components/themed-text';
 import { Motion, Radius, Space, Type, Weight } from '@/constants/design';
 import { useTheme } from '@/hooks/use-theme';
@@ -34,6 +35,7 @@ import { CATEGORY_ORDER, compareLines, LINE_COLOR } from '@/lib/lines';
 import { mapIntentStore } from '@/lib/map-intent';
 import { recentStopsStore, useRecentStops } from '@/lib/recent-stops';
 import { selectionStore } from '@/lib/selection';
+import { findHubs, type StopHub } from '@/lib/stop-hubs';
 import { groupStopAreas, searchStops, type StopArea } from '@/lib/stops-api';
 
 const STOP_MIN_QUERY = 2;
@@ -41,11 +43,12 @@ const DEBOUNCE_MS = 220;
 
 type LineResult = { line: string; type: LineType };
 type SearchResult =
+  | { kind: 'hub'; value: StopHub }
   | { kind: 'stop'; value: StopArea }
   | { kind: 'line'; value: LineResult }
   | { kind: 'vehicle'; value: FleetVehicle };
 type Results = { stops: Stop[]; lines: LineResult[]; vehicles: FleetVehicle[] };
-type ResultSection = { key: SearchResult['kind']; title: string; data: SearchResult[] };
+type ResultSection = { key: 'stop' | 'line' | 'vehicle'; title: string; data: SearchResult[] };
 
 const EMPTY_RESULTS: Results = { stops: [], lines: [], vehicles: [] };
 
@@ -131,15 +134,28 @@ export default function SearchScreen() {
    * function that decides what counts as a single stop anywhere in the app.
    */
   const stopAreas = useMemo(() => groupStopAreas(visibleResults.stops), [visibleResults.stops]);
+  // A whole interchange, on top of its separate stops: "GALERIA DOMINIKAŃSKA
+  // 01" to "11", or Plac Grunwaldzki's two groups (`stop-hubs.ts`).
+  const hubs = useMemo(
+    () => findHubs(visibleResults.stops, (members) => groupStopAreas(members as Stop[]).length),
+    [visibleResults.stops],
+  );
 
   const sections = useMemo<ResultSection[]>(() => {
     const all: ResultSection[] = [
-      { key: 'stop', title: 'Przystanki', data: stopAreas.map((value) => ({ kind: 'stop', value })) },
+      {
+        key: 'stop',
+        title: 'Przystanki',
+        data: [
+          ...hubs.map((value): SearchResult => ({ kind: 'hub', value })),
+          ...stopAreas.map((value): SearchResult => ({ kind: 'stop', value })),
+        ],
+      },
       { key: 'line', title: 'Linie', data: visibleResults.lines.map((value) => ({ kind: 'line', value })) },
       { key: 'vehicle', title: 'Pojazdy na żywo', data: visibleResults.vehicles.map((value) => ({ kind: 'vehicle', value })) },
     ];
     return all.filter((section) => section.data.length > 0);
-  }, [stopAreas, visibleResults]);
+  }, [hubs, stopAreas, visibleResults]);
 
   const openStop = useCallback((stop: Stop) => {
     recentStopsStore.add(stop);
@@ -228,6 +244,7 @@ export default function SearchScreen() {
         <SectionList
           sections={sections}
           keyExtractor={(item) => {
+            if (item.kind === 'hub') return `hub-${item.value.id}`;
             if (item.kind === 'stop') return `stop-${item.value.primary.id}`;
             if (item.kind === 'line') return `line-${item.value.line}`;
             return `vehicle-${item.value.id}`;
@@ -243,6 +260,16 @@ export default function SearchScreen() {
             </View>
           )}
           renderItem={({ item }) => {
+            if (item.kind === 'hub') {
+              const hub = item.value;
+              return (
+                <StopHubRow
+                  hub={hub}
+                  trailing={<Ionicons name="chevron-forward" size={17} color={theme.textTertiary} />}
+                  onPress={() => openStop({ id: hub.id, ids: hub.ids, name: hub.name, lat: hub.lat, lon: hub.lon, lines: hub.lines })}
+                />
+              );
+            }
             if (item.kind === 'stop') {
               return (
                 <StopAreaRow

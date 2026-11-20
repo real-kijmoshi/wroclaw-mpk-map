@@ -532,6 +532,17 @@ export default function SettingsScreen() {
             />
             <Divider />
             <Row
+              label="Łącz przystanki w węzły"
+              hint="Jeden punkt na całą przesiadkę, np. Galeria Dominikańska, z odjazdami ze wszystkich stanowisk"
+              leading={<RowIcon name="git-network-outline" color={theme.textTertiary} />}
+              accessory={
+                <Switch
+                  value={preferences.groupStops}
+                  onValueChange={(value) => preferencesStore.set('groupStops', value)}
+                />
+              }
+            />            <Divider />
+            <Row
               label="Podążaj za pojazdem"
               hint="Przy wyborze utrzymuj pojazd na środku mapy"
               leading={<RowIcon name="locate-outline" color={theme.textTertiary} />}
